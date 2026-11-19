@@ -32,7 +32,10 @@ then strips the document skeleton, because the artifact host adds its own
 - `src/platform/claude.ts`: the only code that calls Claude (the artifact `sample` capability).
 - `src/platform/store.ts`: the only code that touches storage (artifact `db`, or `localStorage` outside claude.ai).
 - `src/chat/`: the chat, side notes, selection popover and composer.
+- `src/mastery/`: grading and mastery rules (streaks, review ladder, mastery, timing, points, grading agent). See `design/grading-and-mastery.md`.
+- `src/platform/masteryStore.ts`: storage for skills, attempts and review items.
 - `src/lib/`: markdown and math rendering, text anchors for highlights, file reading.
+- `design/`: the system design in plain English, one file per module.
 - `types/claude/`: type definitions for the artifact runtime (contract 0.2.96).
 
 Capabilities the artifact declares: `sample` (with images), `db`, `user`.
