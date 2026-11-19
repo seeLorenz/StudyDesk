@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Chat, Message, Note } from "./types";
 import { uid } from "./types";
 import { MessageRow } from "./MessageRow";
-import { Composer } from "./Composer";
+import { InputBox } from "./InputBox";
 import { SelectionReply } from "./SelectionReply";
 import { askClaude, errorCopy, type AskError } from "../platform/claude";
 import { mainTurns, noteTurns, titleFrom } from "./prompts";
@@ -30,19 +30,9 @@ export function ChatView({ initial, save, onSaveError }: Props) {
   const mainCtl = useRef<AbortController | null>(null);
   const noteCtl = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [wide, setWide] = useState(false);
   const [dropped, setDropped] = useState<File[] | null>(null);
   const [dragging, setDragging] = useState(false);
   const stickToBottom = useRef(true);
-
-  // Notes go in a margin column when the chat area is wide enough, otherwise under the message.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([e]) => setWide(e.contentRect.width >= 980));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   const persist = useCallback(() => {
     const c = chatRef.current;
@@ -76,7 +66,7 @@ export function ChatView({ initial, save, onSaveError }: Props) {
       role: "user",
       text,
       createdAt: now,
-      attachments: attachments.map(({ id, name, kind, text, thumb }) => ({ id, name, kind, text, thumb })),
+      attachments: stored(attachments),
     };
     const reply: Message = { id: uid(), role: "assistant", text: "", createdAt: now + 1 };
     update((c) => ({
@@ -90,7 +80,7 @@ export function ChatView({ initial, save, onSaveError }: Props) {
     setGeneratingId(reply.id);
     const ctl = new AbortController();
     mainCtl.current = ctl;
-    const images = attachments.filter((a) => a.kind === "image" && a.blob).map((a) => a.blob!);
+    const images = blobs(attachments);
     try {
       const turns = mainTurns(chatRef.current.messages.filter((m) => m.id !== reply.id));
       const answer = await askClaude(turns, { signal: ctl.signal, images, onText: (t) => patchMessage(reply.id, { text: t }) });
@@ -106,7 +96,7 @@ export function ChatView({ initial, save, onSaveError }: Props) {
     }
   }
 
-  async function runNote(noteId: string) {
+  async function runNote(noteId: string, images: Blob[] = []) {
     const note = chatRef.current.notes.find((n) => n.id === noteId);
     if (!note) return;
     noteCtl.current?.abort();
@@ -115,7 +105,7 @@ export function ChatView({ initial, save, onSaveError }: Props) {
     setBusyNoteId(noteId);
     try {
       const turns = noteTurns(chatRef.current, note);
-      const answer = await askClaude(turns, { signal: ctl.signal, onText: (t) => setLastNoteTurn(noteId, { text: t }) });
+      const answer = await askClaude(turns, { signal: ctl.signal, images, onText: (t) => setLastNoteTurn(noteId, { text: t }) });
       setLastNoteTurn(noteId, { text: answer });
     } catch (e) {
       const err = e as AskError;
@@ -130,7 +120,10 @@ export function ChatView({ initial, save, onSaveError }: Props) {
     }
   }
 
-  function askAboutPassage(messageId: string, anchor: Anchor, question: string) {
+  const stored = (files: PendingAttachment[]) => files.map(({ id, name, kind, text, thumb }) => ({ id, name, kind, text, thumb }));
+  const blobs = (files: PendingAttachment[]) => files.filter((a) => a.kind === "image" && a.blob).map((a) => a.blob!);
+
+  function askAboutPassage(messageId: string, anchor: Anchor, question: string, files: PendingAttachment[]) {
     const note: Note = {
       id: uid(),
       messageId,
@@ -139,16 +132,20 @@ export function ChatView({ initial, save, onSaveError }: Props) {
       nth: anchor.nth,
       collapsed: false,
       createdAt: Date.now(),
-      turns: [{ role: "user", text: question }, { role: "assistant", text: "" }],
+      turns: [{ role: "user", text: question || "Explain this passage.", attachments: stored(files) }, { role: "assistant", text: "" }],
     };
     // Asking about a new passage tucks the other open notes of that message away.
     update((c) => ({ ...c, notes: [...c.notes.map((n) => (n.messageId === messageId ? { ...n, collapsed: true } : n)), note] }));
-    void runNote(note.id);
+    void runNote(note.id, blobs(files));
   }
 
-  const followUp = useCallback((noteId: string, question: string) => {
-    patchNote(noteId, (n) => ({ ...n, collapsed: false, turns: [...n.turns, { role: "user", text: question }, { role: "assistant", text: "" }] }));
-    void runNote(noteId);
+  const followUp = useCallback((noteId: string, question: string, files: PendingAttachment[]) => {
+    patchNote(noteId, (n) => ({
+      ...n,
+      collapsed: false,
+      turns: [...n.turns, { role: "user", text: question, attachments: stored(files) }, { role: "assistant", text: "" }],
+    }));
+    void runNote(noteId, blobs(files));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -205,7 +202,7 @@ export function ChatView({ initial, save, onSaveError }: Props) {
       }}
     >
       <div
-        className={"scroll" + (wide ? " is-wide" : "")}
+        className="scroll"
         ref={scrollRef}
         onScroll={(e) => {
           const el = e.currentTarget;
@@ -234,7 +231,6 @@ export function ChatView({ initial, save, onSaveError }: Props) {
                 key={m.id}
                 message={m}
                 notes={notesByMessage.get(m.id) ?? empty}
-                wide={wide}
                 generating={generatingId === m.id}
                 busyNoteId={busyNoteId}
                 onToggleNote={toggleNote}
@@ -247,14 +243,18 @@ export function ChatView({ initial, save, onSaveError }: Props) {
         )}
       </div>
       <div className="composer-wrap">
-        <Composer
-          busy={generatingId !== null}
-          onSend={sendMain}
-          onStop={() => mainCtl.current?.abort()}
-          dropped={dropped}
-          onDroppedHandled={() => setDropped(null)}
-          autoFocus={chat.messages.length === 0}
-        />
+        <div className="composer">
+          <InputBox
+            id="composer-text"
+            placeholder="Ask anything, or paste a screenshot or notes"
+            busy={generatingId !== null}
+            onSend={sendMain}
+            onStop={() => mainCtl.current?.abort()}
+            dropped={dropped}
+            onDroppedHandled={() => setDropped(null)}
+            autoFocus={chat.messages.length === 0}
+          />
+        </div>
         <p className="hint">Select text in an answer to ask about it in a side note.</p>
       </div>
       <SelectionReply scope={scrollRef} disabled={false} onAsk={askAboutPassage} />

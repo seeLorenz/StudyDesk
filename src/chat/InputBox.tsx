@@ -1,45 +1,72 @@
 import { useEffect, useRef, useState } from "react";
 import { readAttachment, type PendingAttachment } from "../lib/files";
-import { FileIcon } from "./MessageRow";
+import { FileIcon } from "./FileIcon";
+
+// The one input used everywhere in StudyDesk (main chat, Reply popover,
+// follow-ups in side notes): type, paste, drop or attach anything.
 
 type Props = {
-  busy: boolean;
+  id: string;
+  placeholder: string;
+  busy?: boolean;
   onSend: (text: string, attachments: PendingAttachment[]) => void;
-  onStop: () => void;
-  /** Files dropped anywhere on the chat arrive here. */
-  dropped: File[] | null;
-  onDroppedHandled: () => void;
+  onStop?: () => void;
+  /** Files dropped somewhere else (e.g. anywhere on the chat) to add to this box. */
+  dropped?: File[] | null;
+  onDroppedHandled?: () => void;
   autoFocus?: boolean;
+  compact?: boolean;
+  /** "dark" for the floating Reply popover. */
+  tone?: "default" | "dark";
+  sendLabel?: string;
 };
 
-export function Composer({ busy, onSend, onStop, dropped, onDroppedHandled, autoFocus }: Props) {
+export function InputBox({
+  id,
+  placeholder,
+  busy = false,
+  onSend,
+  onStop,
+  dropped,
+  onDroppedHandled,
+  autoFocus,
+  compact,
+  tone = "default",
+  sendLabel = "Send",
+}: Props) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<PendingAttachment[]>([]);
+  const [over, setOver] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const pickRef = useRef<HTMLInputElement>(null);
+  const maxH = compact ? 140 : 240;
 
   const addFiles = (list: File[]) => {
     for (const file of list) {
-      const placeholder: PendingAttachment = { id: Math.random().toString(36).slice(2), name: file.name || "pasted file", kind: "text", status: "reading" };
-      setFiles((f) => [...f, placeholder]);
-      readAttachment(file).then((a) => setFiles((f) => f.map((x) => (x.id === placeholder.id ? a : x))));
+      const placeholderFile: PendingAttachment = { id: Math.random().toString(36).slice(2), name: file.name || "pasted file", kind: "text", status: "reading" };
+      setFiles((f) => [...f, placeholderFile]);
+      readAttachment(file).then((a) => setFiles((f) => f.map((x) => (x.id === placeholderFile.id ? a : x))));
     }
   };
 
   useEffect(() => {
     if (dropped?.length) {
       addFiles(dropped);
-      onDroppedHandled();
+      onDroppedHandled?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dropped]);
 
   useEffect(() => {
+    if (autoFocus) taRef.current?.focus();
+  }, [autoFocus]);
+
+  useEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = Math.min(ta.scrollHeight, 240) + "px";
-  }, [text]);
+    ta.style.height = Math.min(ta.scrollHeight, maxH) + "px";
+  }, [text, maxH]);
 
   const reading = files.some((f) => f.status === "reading");
   const ready = files.filter((f) => f.status === "ready");
@@ -54,14 +81,29 @@ export function Composer({ busy, onSend, onStop, dropped, onDroppedHandled, auto
 
   return (
     <form
-      className="composer"
+      className={"inputbox" + (compact ? " is-compact" : "") + (tone === "dark" ? " is-dark" : "") + (over ? " is-over" : "")}
       onSubmit={(e) => {
         e.preventDefault();
         send();
       }}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes("Files")) {
+          e.preventDefault();
+          e.stopPropagation();
+          setOver(true);
+        }
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        if (!e.dataTransfer.files.length) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setOver(false);
+        addFiles(Array.from(e.dataTransfer.files));
+      }}
     >
       {files.length > 0 && (
-        <div className="composer-files">
+        <div className="inputbox-files">
           {files.map((f) => (
             <span key={f.id} className={"file-chip" + (f.status === "error" ? " is-error" : "")} title={f.error || f.name}>
               {f.thumb ? <img src={f.thumb} alt="" /> : <FileIcon kind={f.kind} />}
@@ -76,7 +118,7 @@ export function Composer({ busy, onSend, onStop, dropped, onDroppedHandled, auto
           ))}
         </div>
       )}
-      <div className="composer-row">
+      <div className="inputbox-row">
         <button type="button" className="icon-btn" onClick={() => pickRef.current?.click()} aria-label="Attach files" title="Attach images, PDFs or text files">
           <svg viewBox="0 0 20 20" aria-hidden="true">
             <path d="M14.5 9.5l-5.3 5.3a3.2 3.2 0 01-4.5-4.5l6-6a2.1 2.1 0 013 3l-6 6a1 1 0 01-1.5-1.5l5.3-5.3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -84,7 +126,7 @@ export function Composer({ busy, onSend, onStop, dropped, onDroppedHandled, auto
         </button>
         <input
           ref={pickRef}
-          id="file-picker"
+          id={`${id}-files`}
           type="file"
           multiple
           hidden
@@ -95,13 +137,12 @@ export function Composer({ busy, onSend, onStop, dropped, onDroppedHandled, auto
           }}
         />
         <textarea
-          id="composer-text"
+          id={id}
           ref={taRef}
           rows={1}
           value={text}
-          autoFocus={autoFocus}
-          placeholder="Ask anything, or paste a screenshot or notes"
-          aria-label="Message"
+          placeholder={placeholder}
+          aria-label={placeholder}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -117,14 +158,14 @@ export function Composer({ busy, onSend, onStop, dropped, onDroppedHandled, auto
             }
           }}
         />
-        {busy ? (
+        {busy && onStop ? (
           <button type="button" className="send-btn stop" onClick={onStop} aria-label="Stop answering">
             <svg viewBox="0 0 20 20" aria-hidden="true">
               <rect x="6" y="6" width="8" height="8" rx="1.5" fill="currentColor" />
             </svg>
           </button>
         ) : (
-          <button type="submit" className="send-btn" disabled={!canSend} aria-label="Send">
+          <button type="submit" className="send-btn" disabled={!canSend} aria-label={sendLabel}>
             <svg viewBox="0 0 20 20" aria-hidden="true">
               <path d="M10 15V5M5.5 9.5L10 5l4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
             </svg>

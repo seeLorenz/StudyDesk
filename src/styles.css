@@ -293,15 +293,9 @@ svg {
   max-width: 720px;
   margin: 0 auto;
 }
-.scroll.is-wide .thread {
-  max-width: 1040px;
-}
 .row-user {
   display: flex;
   justify-content: flex-end;
-}
-.scroll.is-wide .row-user {
-  padding-right: 360px;
 }
 .bubble {
   max-width: min(560px, 88%);
@@ -331,16 +325,6 @@ svg {
 }
 
 .row-assistant {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
-}
-.scroll.is-wide .row-assistant {
-  grid-template-columns: minmax(0, 680px) 330px;
-  column-gap: 30px;
-  justify-content: start;
-}
-.answer {
   min-width: 0;
 }
 
@@ -487,26 +471,13 @@ sup.sd-ref {
 }
 
 /* ---------- side notes ---------- */
-.notes {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
+/* An open note unfolds inside the answer, right under the line it is about. */
+.note-host {
+  margin: 10px 0 14px;
+  font-size: 14px;
 }
-.scroll.is-wide .notes {
-  position: relative;
-  display: block;
-}
-.scroll.is-wide .note-slot {
-  position: absolute;
-  left: 0;
-  right: 0;
-  transition: top 0.18s ease;
-}
-@media (prefers-reduced-motion: reduce) {
-  .scroll.is-wide .note-slot {
-    transition: none;
-  }
+.md li > .note-host {
+  margin: 8px 0 10px;
 }
 .note {
   background: var(--surface);
@@ -515,117 +486,92 @@ sup.sd-ref {
   border-radius: 10px;
   box-shadow: var(--shadow);
   font-size: 14px;
+  animation: note-in 0.16s ease-out;
+  cursor: auto;
+}
+@keyframes note-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .note {
+    animation: none;
+  }
 }
 .note-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 6px 6px 8px;
+  gap: 8px;
+  padding: 8px 6px 4px 10px;
 }
 .note-num {
   flex: none;
+  display: grid;
+  place-items: center;
   min-width: 22px;
   height: 22px;
   border-radius: 999px;
-  border: 0;
   background: var(--hl-edge);
   color: #1a1400;
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-.note-toggle {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: 0;
-  padding: 2px 2px;
-  text-align: left;
-}
 .note-q {
   flex: 1;
   min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 500;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
-.chev {
-  color: var(--ink-3);
-  transition: transform 0.15s;
-}
-.note.is-open .chev {
-  transform: rotate(180deg);
-}
-.note-del {
+.note-btn {
   flex: none;
+  display: grid;
+  place-items: center;
   background: none;
   border: 0;
-  padding: 4px;
+  padding: 5px;
   border-radius: 6px;
   color: var(--ink-3);
 }
-.note-del:hover {
-  color: var(--danger);
+.note-btn:hover {
+  background: var(--sunken);
+  color: var(--ink);
 }
-.note-del.confirm {
+.note-btn.confirm {
   font-size: 12px;
   color: var(--danger);
   border: 1px solid currentColor;
   padding: 2px 8px;
 }
 .note-body {
-  padding: 0 12px 12px;
+  padding: 2px 12px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.note-quote {
-  margin: 0;
-  font-family: var(--font-read);
-  font-style: italic;
-  font-size: 15px;
-  color: var(--ink-2);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.note-quote.is-missing {
-  text-decoration: line-through;
-}
 .note-missing {
-  display: block;
-  font-family: var(--font-ui);
-  font-style: normal;
-  font-size: 12px;
-  text-decoration: none;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-3);
 }
 .note-ask {
-  margin: 4px 0 0;
-  font-weight: 500;
   padding-top: 8px;
   border-top: 1px solid var(--line);
+  font-weight: 600;
+}
+.note-ask p {
+  margin: 0 0 6px;
+}
+.note-files-first:empty {
+  display: none;
+}
+.bubble-thumb.small {
+  height: 48px;
 }
 .note-answer .md {
   font-size: 14px;
-}
-.note-follow {
-  display: flex;
-  gap: 6px;
-  margin-top: 2px;
-}
-.note-follow input {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid var(--line);
-  background: var(--paper);
-  border-radius: 8px;
-  padding: 6px 9px;
-  font-size: 13.5px;
 }
 .mini-btn {
   border: 1px solid var(--line);
@@ -671,28 +617,9 @@ sup.sd-ref {
 .reply-btn:hover {
   background: rgb(255 255 255 / 10%);
 }
-.sel-pop form {
-  display: flex;
-  gap: 6px;
+.sel-pop.is-asking {
+  padding: 6px;
 }
-.sel-pop input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  border-radius: 7px;
-  padding: 7px 9px;
-  background: rgb(255 255 255 / 10%);
-  color: var(--pop-ink);
-}
-.sel-pop input::placeholder {
-  color: rgb(243 244 246 / 60%);
-}
-.sel-pop .mini-btn.primary {
-  background: var(--hl-open);
-  border-color: var(--hl-open);
-  color: #1a1400;
-}
-
 /* ---------- composer ---------- */
 .composer-wrap {
   padding-block: 4px 14px;
@@ -711,23 +638,65 @@ sup.sd-ref {
 .composer:focus-within {
   border-color: var(--ink-3);
 }
-.composer-row {
+.inputbox {
+  border-radius: 12px;
+  transition: box-shadow 0.15s;
+}
+.inputbox.is-over {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.inputbox-row {
   display: flex;
   align-items: flex-end;
   gap: 6px;
 }
-.composer textarea {
+.inputbox textarea {
   flex: 1;
   min-width: 0;
   border: 0;
   background: none;
   resize: none;
   padding: 7px 4px;
-  max-height: 240px;
   line-height: 1.45;
 }
-.composer textarea:focus {
+.inputbox textarea:focus {
   outline: none;
+}
+.inputbox.is-compact {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  padding: 3px;
+}
+.inputbox.is-compact .icon-btn,
+.inputbox.is-compact .send-btn {
+  width: 32px;
+  height: 32px;
+}
+.inputbox.is-compact textarea {
+  padding: 5px 2px;
+  font-size: 14px;
+}
+.inputbox.is-dark {
+  background: rgb(255 255 255 / 8%);
+  border-color: transparent;
+  color: var(--pop-ink);
+}
+.inputbox.is-dark textarea::placeholder {
+  color: rgb(243 244 246 / 60%);
+}
+.inputbox.is-dark .icon-btn {
+  color: rgb(243 244 246 / 75%);
+}
+.inputbox.is-dark .icon-btn:hover {
+  background: rgb(255 255 255 / 10%);
+}
+.inputbox.is-dark .send-btn {
+  background: var(--hl-open);
+  color: #1a1400;
+}
+.inputbox.is-dark .file-chip {
+  background: rgb(255 255 255 / 10%);
+  border-color: transparent;
 }
 .icon-btn {
   display: grid;
@@ -768,7 +737,7 @@ sup.sd-ref {
   background: var(--ink);
   color: var(--paper);
 }
-.composer-files {
+.inputbox-files {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;

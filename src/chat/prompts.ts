@@ -61,7 +61,7 @@ HIGHLIGHTED PASSAGE:
   const turns: Turn[] = [{ role: "user", content: head }];
   for (const t of note.turns) {
     if (t.role === "assistant" && (!t.text.trim() || t.error)) continue;
-    turns.push({ role: t.role, content: t.text });
+    turns.push({ role: t.role, content: t.role === "user" ? messageContent({ id: "", role: "user", text: t.text, attachments: t.attachments, createdAt: 0 }) : t.text });
   }
   return turns;
 }

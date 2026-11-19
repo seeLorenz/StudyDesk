@@ -96,7 +96,7 @@ async function mockAnswer(turns: Turn[], opts: AskOptions): Promise<string> {
   const isNote = last.includes("HIGHLIGHTED PASSAGE") || turns.some((t) => t.content.includes("HIGHLIGHTED PASSAGE"));
   const text = isNote
     ? "**Short answer:** this is a local preview, so no real Claude is connected.\n\nInside claude.ai this box would explain the highlighted passage, using the whole chat as context, without adding anything to the main conversation."
-    : "Here's a sample answer from the local preview.\n\n## Photosynthesis in one paragraph\n\nPlants turn light energy into chemical energy. In the **light-dependent reactions**, water is split and ATP and NADPH are made. In the **Calvin cycle**, that energy fixes CO₂ into glucose:\n\n$$6\\,CO_2 + 6\\,H_2O \\xrightarrow{light} C_6H_{12}O_6 + 6\\,O_2$$\n\nSelect any part of this answer and press **Reply** to ask about it in a side note.";
+    : "Here's a sample answer from the local preview.\n\n## Photosynthesis in one paragraph\n\nPlants turn light energy into chemical energy. In the **light-dependent reactions**, water is split and ATP and NADPH are made. In the **Calvin cycle**, that energy fixes CO₂ into glucose:\n\n$$6\\,CO_2 + 6\\,H_2O \\xrightarrow{light} C_6H_{12}O_6 + 6\\,O_2$$\n\n### Watch out for\n\n- Include **zero coefficients** for missing powers. For $x^3 + 4$, use $1, 0, 0, 4$.\n- A divisor $(x + 2)$ means $c = -2$, so mind the sign.\n\nSelect any part of this answer and press **Reply** to ask about it in a side note.";
   let out = "";
   for (const word of text.split(/(?<= )/)) {
     if (opts.signal?.aborted) throw { code: "cancelled", message: "aborted", text: out } satisfies AskError;

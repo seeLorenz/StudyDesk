@@ -8,12 +8,42 @@
 
 export type Anchor = { quote: string; label: string; nth: number };
 
-/** Character offset of (node, offset) within root's text. */
-function offsetIn(root: Node, node: Node, offset: number): number {
+/** Open side notes and note numbers live inside the message DOM; their text is never part of the message's text. */
+const NOTE_HOST = ".note-host, sup.sd-ref";
+
+/** The message's own text: every text node except those inside open side notes. */
+export function messageText(root: HTMLElement): string {
+  if (!root.querySelector(NOTE_HOST)) return root.textContent ?? "";
+  const clone = root.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll(NOTE_HOST).forEach((n) => n.remove());
+  return clone.textContent ?? "";
+}
+
+/** Character offset of (node, offset) within the message's own text. */
+function offsetIn(root: HTMLElement, node: Node, offset: number): number {
   const r = document.createRange();
   r.setStart(root, 0);
   r.setEnd(node, offset);
-  return r.toString().length;
+  const frag = r.cloneContents();
+  frag.querySelectorAll(NOTE_HOST).forEach((n) => n.remove());
+  return frag.textContent?.length ?? 0;
+}
+
+/**
+ * The selection as a person reads it: math becomes its TeX source ($x^3 + 4$)
+ * instead of KaTeX's doubled screen-reader and visual text.
+ */
+export function readableText(range: Range): string {
+  const frag = range.cloneContents();
+  frag.querySelectorAll(NOTE_HOST).forEach((n) => n.remove());
+  frag.querySelectorAll(".katex").forEach((k) => {
+    const tex = k.querySelector('annotation[encoding="application/x-tex"]')?.textContent;
+    const visual = k.querySelector(".katex-html")?.textContent ?? k.textContent ?? "";
+    k.replaceWith(document.createTextNode(tex ? `$${tex.trim()}$` : visual));
+  });
+  // A formula cut by the selection edge: keep only its visual part.
+  frag.querySelectorAll(".katex-mathml").forEach((n) => n.remove());
+  return (frag.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 
 /** Count how often `needle` occurs in `hay` before position `end`. */
@@ -35,8 +65,8 @@ export function findNth(hay: string, needle: string, nth: number): number {
 }
 
 /** Build an anchor from a range that lies inside root. Returns null for empty or whitespace-only selections. */
-export function anchorFromRange(root: HTMLElement, range: Range, label: string): Anchor | null {
-  const full = root.textContent ?? "";
+export function anchorFromRange(root: HTMLElement, range: Range, label: string = readableText(range)): Anchor | null {
+  const full = messageText(root);
   let start = offsetIn(root, range.startContainer, range.startOffset);
   let end = offsetIn(root, range.endContainer, range.endOffset);
   while (start < end && /\s/.test(full[start])) start++;
@@ -53,12 +83,14 @@ export function anchorFromRange(root: HTMLElement, range: Range, label: string):
  * no longer in the message.
  */
 export function drawAnchor(root: HTMLElement, noteId: string, anchor: Anchor, number: number, open: boolean): boolean {
-  const full = root.textContent ?? "";
+  const full = messageText(root);
   const start = findNth(full, anchor.quote, anchor.nth);
   if (start === -1) return false;
   const end = start + anchor.quote.length;
 
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement?.closest(NOTE_HOST) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
   const pieces: Array<{ node: Text; from: number; to: number }> = [];
   let pos = 0;
   for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
@@ -91,5 +123,33 @@ export function drawAnchor(root: HTMLElement, noteId: string, anchor: Anchor, nu
   ref.dataset.note = noteId;
   ref.textContent = String(number);
   last.after(ref);
+  return true;
+}
+
+/**
+ * Put an open note's container right under the line it is about: after the
+ * paragraph, list item, heading or formula that holds the end of its marked
+ * passage. Several notes on the same block stack in the order placed.
+ */
+export function placeHost(root: HTMLElement, noteId: string, host: HTMLElement): boolean {
+  const marks = root.querySelectorAll<HTMLElement>(`mark[data-note="${noteId}"]`);
+  const last = marks[marks.length - 1];
+  if (!last) return false;
+  let block = last.closest<HTMLElement>("li, p, h1, h2, h3, h4, h5, h6, blockquote, pre, table, .katex-display");
+  if (block?.classList.contains("katex-display") && block.parentElement?.tagName === "P") block = block.parentElement;
+  if (!block || !root.contains(block)) {
+    block = last;
+    while (block.parentElement && block.parentElement !== root) block = block.parentElement;
+  }
+  if (block.tagName === "LI") {
+    // Inside the item, before any nested list, so the note stays with its line.
+    const nested = Array.from(block.children).find((c) => c.tagName === "UL" || c.tagName === "OL");
+    if (nested) block.insertBefore(host, nested);
+    else block.appendChild(host);
+    return true;
+  }
+  let after: Element = block;
+  while (after.nextElementSibling?.classList.contains("note-host")) after = after.nextElementSibling;
+  after.after(host);
   return true;
 }

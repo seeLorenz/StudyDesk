@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { anchorFromRange, type Anchor } from "../lib/highlight";
+import { InputBox } from "./InputBox";
+import type { PendingAttachment } from "../lib/files";
 
 type Pending = { messageId: string; anchor: Anchor; rect: DOMRect; range: Range };
 
@@ -7,7 +9,7 @@ type Props = {
   /** The scrolling chat area: selections are only picked up inside it. */
   scope: React.RefObject<HTMLElement>;
   disabled: boolean;
-  onAsk: (messageId: string, anchor: Anchor, question: string) => void;
+  onAsk: (messageId: string, anchor: Anchor, question: string, attachments: PendingAttachment[]) => void;
 };
 
 const supportsHighlights = typeof CSS !== "undefined" && "highlights" in CSS;
@@ -19,9 +21,7 @@ const supportsHighlights = typeof CSS !== "undefined" && "highlights" in CSS;
 export function SelectionReply({ scope, disabled, onAsk }: Props) {
   const [pending, setPending] = useState<Pending | null>(null);
   const [asking, setAsking] = useState(false);
-  const [question, setQuestion] = useState("");
   const boxRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let timer = 0;
@@ -33,7 +33,9 @@ export function SelectionReply({ scope, disabled, onAsk }: Props) {
       const startBody = (range.startContainer.nodeType === 1 ? (range.startContainer as Element) : range.startContainer.parentElement)?.closest<HTMLElement>("[data-selectable]");
       const endBody = (range.endContainer.nodeType === 1 ? (range.endContainer as Element) : range.endContainer.parentElement)?.closest<HTMLElement>("[data-selectable]");
       if (!startBody || startBody !== endBody || !scope.current?.contains(startBody)) return setPending(null);
-      const anchor = anchorFromRange(startBody, range, sel.toString());
+      const inNote = (n: Node) => (n.nodeType === 1 ? (n as Element) : n.parentElement)?.closest(".note-host");
+      if (inNote(range.startContainer) || inNote(range.endContainer)) return setPending(null);
+      const anchor = anchorFromRange(startBody, range);
       if (!anchor) return setPending(null);
       setPending({ messageId: startBody.dataset.msgBody!, anchor, rect: range.getBoundingClientRect(), range: range.cloneRange() });
     };
@@ -65,7 +67,6 @@ export function SelectionReply({ scope, disabled, onAsk }: Props) {
 
   useEffect(() => {
     if (!asking) return;
-    inputRef.current?.focus();
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
     const onDown = (e: MouseEvent) => {
       if (boxRef.current && !boxRef.current.contains(e.target as Node)) close();
@@ -81,44 +82,34 @@ export function SelectionReply({ scope, disabled, onAsk }: Props) {
   function close() {
     setAsking(false);
     setPending(null);
-    setQuestion("");
   }
 
   if (!pending || disabled) return null;
 
   const coarse = window.matchMedia?.("(pointer: coarse)").matches;
   const r = pending.rect;
-  const width = asking ? Math.min(360, window.innerWidth - 32) : 92;
+  const width = asking ? Math.min(420, window.innerWidth - 32) : 92;
   const left = Math.max(16, Math.min(window.innerWidth - width - 16, r.left + r.width / 2 - width / 2));
   // On touch screens the system's own copy menu sits above the selection, so go below it.
   const below = coarse || r.top < 72;
-  const style: React.CSSProperties = below ? { left, top: r.bottom + 10, width } : { left, top: r.top - (asking ? 58 : 46), width };
+  const style: React.CSSProperties = below ? { left, top: r.bottom + 10, width } : { left, bottom: window.innerHeight - r.top + 10, width };
 
   return (
     <div className={"sel-pop" + (asking ? " is-asking" : "")} style={style} ref={boxRef} role="dialog" aria-label="Ask about the selected text">
       {asking ? (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const q = question.trim();
-            if (!q) return;
-            onAsk(pending.messageId, pending.anchor, q);
+        <InputBox
+          id="selection-question"
+          placeholder="Ask about this passage"
+          compact
+          tone="dark"
+          autoFocus
+          sendLabel="Ask"
+          onSend={(text, files) => {
+            onAsk(pending.messageId, pending.anchor, text, files);
             window.getSelection()?.removeAllRanges();
             close();
           }}
-        >
-          <input
-            id="selection-question"
-            ref={inputRef}
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            placeholder="Ask about this passage"
-            autoComplete="off"
-          />
-          <button type="submit" className="mini-btn primary" disabled={!question.trim()}>
-            Ask
-          </button>
-        </form>
+        />
       ) : (
         <button
           type="button"

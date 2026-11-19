@@ -20,7 +20,7 @@ export type Message = {
   error?: string;
 };
 
-export type NoteTurn = { role: "user" | "assistant"; text: string; error?: string };
+export type NoteTurn = { role: "user" | "assistant"; text: string; error?: string; attachments?: Attachment[] };
 
 /** A side note: a question about a passage of one message, answered outside the main chat. */
 export type Note = {

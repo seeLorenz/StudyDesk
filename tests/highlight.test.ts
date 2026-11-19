@@ -49,3 +49,42 @@ describe("anchors", () => {
     expect(drawAnchor(el, "n2", a, 1, false)).toBe(false);
   });
 });
+
+import { placeHost, readableText } from "../src/lib/highlight";
+
+describe("notes inside the message", () => {
+  it("ignores note numbers and open notes when anchoring", () => {
+    const el = body("<p>alpha beta gamma</p><p>delta beta</p>");
+    const first = { quote: "alpha", label: "alpha", nth: 0 };
+    drawAnchor(el, "a", first, 1, true);
+    const host = document.createElement("div");
+    host.className = "note-host";
+    host.textContent = "beta beta beta";
+    placeHost(el, "a", host);
+    expect(el.children[1]).toBe(host); // right under the first paragraph
+    // Select "beta" in the second paragraph: it is still the 2nd "beta" of the message.
+    const t = el.querySelectorAll("p")[1].firstChild!;
+    const r = document.createRange();
+    r.setStart(t, 6);
+    r.setEnd(t, 10);
+    const a = anchorFromRange(el, r)!;
+    expect(a).toMatchObject({ quote: "beta", nth: 1 });
+  });
+
+  it("puts a note inside its list item, before nested lists", () => {
+    const el = body("<ul><li>one <ul><li>sub</li></ul></li></ul>");
+    drawAnchor(el, "n", { quote: "one", label: "one", nth: 0 }, 1, true);
+    const host = document.createElement("div");
+    host.className = "note-host";
+    placeHost(el, "n", host);
+    expect(host.parentElement!.tagName).toBe("LI");
+    expect(host.nextElementSibling!.tagName).toBe("UL");
+  });
+
+  it("reads math as TeX", () => {
+    const el = body('<p>use <span class="katex"><span class="katex-mathml"><math><semantics><mrow><mi>x</mi></mrow><annotation encoding="application/x-tex">x^3</annotation></semantics></math></span><span class="katex-html">x3</span></span> here</p>');
+    const r = document.createRange();
+    r.selectNodeContents(el.querySelector("p")!);
+    expect(readableText(r)).toBe("use $x^3$ here");
+  });
+});
