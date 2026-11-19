@@ -30,5 +30,6 @@ export function normalizeMath(src: string): string {
 
 export function renderMarkdown(src: string): string {
   const html = md.parse(normalizeMath(src), { async: false }) as string;
-  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true, mathMl: true, svg: true } });
+  // <annotation> keeps each formula's TeX source, which side notes send to Claude.
+  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true, mathMl: true, svg: true }, ADD_TAGS: ["annotation"], ADD_ATTR: ["encoding"] });
 }

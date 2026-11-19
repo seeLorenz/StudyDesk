@@ -130,6 +130,7 @@ export function ChatView({ initial, save, onSaveError }: Props) {
       quote: anchor.quote,
       label: anchor.label,
       nth: anchor.nth,
+      ...(anchor.context ? { context: anchor.context } : {}),
       collapsed: false,
       createdAt: Date.now(),
       turns: [{ role: "user", text: question || "Explain this passage.", attachments: stored(files) }, { role: "assistant", text: "" }],

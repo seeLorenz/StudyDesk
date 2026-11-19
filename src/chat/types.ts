@@ -32,6 +32,8 @@ export type Note = {
   label: string;
   /** Which occurrence of `quote` in the message's visible text (0 = first). */
   nth: number;
+  /** Where the passage sits in the answer (sent to Claude so it knows exactly what was marked). */
+  context?: { excerpt: string; section?: string; formula?: string };
   collapsed: boolean;
   createdAt: number;
   turns: NoteTurn[];

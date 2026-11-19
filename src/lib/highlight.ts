@@ -6,7 +6,7 @@
 // always renders to the same DOM, an anchor stored as (quote, nth occurrence)
 // finds the same text again on every load.
 
-export type Anchor = { quote: string; label: string; nth: number };
+export type Anchor = { quote: string; label: string; nth: number; context?: PassageContext };
 
 /** Open side notes and note numbers live inside the message DOM; their text is never part of the message's text. */
 const NOTE_HOST = ".note-host, sup.sd-ref";
@@ -33,8 +33,10 @@ function offsetIn(root: HTMLElement, node: Node, offset: number): number {
  * The selection as a person reads it: math becomes its TeX source ($x^3 + 4$)
  * instead of KaTeX's doubled screen-reader and visual text.
  */
-export function readableText(range: Range): string {
+export function readableText(range: Range, keepLines = false): string {
   const frag = range.cloneContents();
+  // Keep blocks apart ("Step 2" and the paragraph under it must not run together).
+  frag.querySelectorAll("p, li, h1, h2, h3, h4, h5, h6, pre, blockquote, tr, .katex-display").forEach((b) => b.append("\n"));
   frag.querySelectorAll(NOTE_HOST).forEach((n) => n.remove());
   frag.querySelectorAll(".katex").forEach((k) => {
     const tex = k.querySelector('annotation[encoding="application/x-tex"]')?.textContent;
@@ -43,7 +45,10 @@ export function readableText(range: Range): string {
   });
   // A formula cut by the selection edge: keep only its visual part.
   frag.querySelectorAll(".katex-mathml").forEach((n) => n.remove());
-  return (frag.textContent ?? "").replace(/\s+/g, " ").trim();
+  const text = frag.textContent ?? "";
+  return keepLines
+    ? text.replace(/[^\S\n]+/g, " ").replace(/ *\n[\s]*/g, "\n").trim()
+    : text.replace(/\s+/g, " ").trim();
 }
 
 /** Count how often `needle` occurs in `hay` before position `end`. */
@@ -152,4 +157,47 @@ export function placeHost(root: HTMLElement, noteId: string, host: HTMLElement):
   while (after.nextElementSibling?.classList.contains("note-host")) after = after.nextElementSibling;
   after.after(host);
   return true;
+}
+
+export type PassageContext = {
+  /** The part of the answer around the passage, with the passage between ⟦ and ⟧. */
+  excerpt: string;
+  /** The heading of the section the passage is in, if any. */
+  section?: string;
+  /** When the selection was part of a formula: the whole formula, as TeX. */
+  formula?: string;
+};
+
+/**
+ * Where the passage sits in the answer, so Claude knows exactly which "3"
+ * the student means. A selection that starts or ends inside a formula is
+ * widened to the whole formula for the excerpt.
+ */
+export function passageContext(root: HTMLElement, range: Range): PassageContext {
+  const katexOf = (n: Node) => (n.nodeType === 1 ? (n as Element) : n.parentElement)?.closest(".katex");
+  const wide = range.cloneRange();
+  const kStart = katexOf(range.startContainer);
+  const kEnd = katexOf(range.endContainer);
+  if (kStart && root.contains(kStart)) wide.setStartBefore(kStart);
+  if (kEnd && root.contains(kEnd)) wide.setEndAfter(kEnd);
+
+  const before = document.createRange();
+  before.setStart(root, 0);
+  before.setEnd(wide.startContainer, wide.startOffset);
+  const after = document.createRange();
+  after.setStart(wide.endContainer, wide.endOffset);
+  after.setEnd(root, root.childNodes.length);
+
+  const pre = readableText(before, true);
+  const mid = readableText(wide);
+  const post = readableText(after, true);
+  const excerpt = `${pre.length > 1500 ? "…" + pre.slice(-1500) : pre} ⟦${mid}⟧ ${post.length > 700 ? post.slice(0, 700) + "…" : post}`.trim();
+
+  let section: string | undefined;
+  for (const h of Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6"))) {
+    if (h.closest(NOTE_HOST)) continue;
+    const pos = h.compareDocumentPosition(wide.startContainer);
+    if (pos & Node.DOCUMENT_POSITION_FOLLOWING || h.contains(wide.startContainer)) section = (h.textContent ?? "").trim();
+  }
+  return { excerpt, section, formula: kStart || kEnd ? mid : undefined };
 }

@@ -88,3 +88,20 @@ describe("notes inside the message", () => {
     expect(readableText(r)).toBe("use $x^3$ here");
   });
 });
+
+import { passageContext } from "../src/lib/highlight";
+
+describe("passage context", () => {
+  it("marks the exact spot, widens to the whole formula and names the section", () => {
+    const el = body('<h3>Step 2</h3><p>x = 3 first</p><h3>Step 3</h3><p>so <span class="katex"><span class="katex-mathml"><math><annotation encoding="application/x-tex">x = 3</annotation></math></span><span class="katex-html"><span>x</span><span>=</span><span>3</span></span></span> again</p>');
+    const three = el.querySelectorAll(".katex-html span")[2].firstChild!;
+    const r = document.createRange();
+    r.setStart(three, 0);
+    r.setEnd(three, 1);
+    const c = passageContext(el, r);
+    expect(c.section).toBe("Step 3");
+    expect(c.formula).toBe("$x = 3$");
+    expect(c.excerpt).toContain("so ⟦$x = 3$⟧ again");
+    expect(c.excerpt.startsWith("Step 2\nx = 3 first\nStep 3\nso")).toBe(true);
+  });
+});

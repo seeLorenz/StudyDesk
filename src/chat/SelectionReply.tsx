@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { anchorFromRange, type Anchor } from "../lib/highlight";
+import { anchorFromRange, passageContext, type Anchor } from "../lib/highlight";
 import { InputBox } from "./InputBox";
 import type { PendingAttachment } from "../lib/files";
 
@@ -35,8 +35,9 @@ export function SelectionReply({ scope, disabled, onAsk }: Props) {
       if (!startBody || startBody !== endBody || !scope.current?.contains(startBody)) return setPending(null);
       const inNote = (n: Node) => (n.nodeType === 1 ? (n as Element) : n.parentElement)?.closest(".note-host");
       if (inNote(range.startContainer) || inNote(range.endContainer)) return setPending(null);
-      const anchor = anchorFromRange(startBody, range);
-      if (!anchor) return setPending(null);
+      const found = anchorFromRange(startBody, range);
+      if (!found) return setPending(null);
+      const anchor = { ...found, context: passageContext(startBody, range) };
       setPending({ messageId: startBody.dataset.msgBody!, anchor, rect: range.getBoundingClientRect(), range: range.cloneRange() });
     };
     const onChange = () => {
@@ -91,7 +92,8 @@ export function SelectionReply({ scope, disabled, onAsk }: Props) {
   const width = asking ? Math.min(420, window.innerWidth - 32) : 92;
   const left = Math.max(16, Math.min(window.innerWidth - width - 16, r.left + r.width / 2 - width / 2));
   // On touch screens the system's own copy menu sits above the selection, so go below it.
-  const below = coarse || r.top < 72;
+  // The question box always opens under the selected text, so the passage stays readable.
+  const below = asking || coarse || r.top < 72;
   const style: React.CSSProperties = below ? { left, top: r.bottom + 10, width } : { left, bottom: window.innerHeight - r.top + 10, width };
 
   return (
