@@ -83,12 +83,14 @@ The attempt log is the only source of truth. Every other number (streaks, review
 | --- | --- | --- |
 | Skill | Organization agent | `id`, `courseId`, `topicId`, `name`, `difficulty` (normal or hard), `isFundamental`, `prereqSkillIds[]`, `tier` (lowest target grade that needs it), `weight` (how much it counts for the exam), `streakTarget` (default 3), `estMinutes` (first guess per problem) |
 | Course target | Onboarding or Orchestrator | `courseId`, `targetGrade`, `gradeScale` |
-| Attempt | App code, from the grading agent's verdict | `id`, `skillId`, `questId`, `part` (practice, assignment, review, check), `verdict` (solved, slip, not understood), `slipConfirmed` (yes, no, not asked yet), `points`, `maxPoints`, `hintsUsed`, `sawWorkedExample`, `activeSeconds`, `startedAt`, `gradedAt` |
-| Review item | App code | `attemptId`, `kind` (slip or real error), `status` (open, confirmed, disputed, talked through, resolved), `chatId` |
+| Attempt | App code, from the grading agent's verdict | `id`, `skillId`, `questId`, `part` (practice, assignment, review, check, assessment), `day`, `verdict` (solved, slip, not understood), `points`, `maxPoints`, `hintsUsed`, `sawWorkedExample`, `activeSeconds`, `startedAt`, `gradedAt` |
+| Review item | App code | `attemptId`, `kind` (slip or real error), `status` (open, answered, talked through, resolved), `slipAnswer` (confirmed, disputed, or not answered yet), `slipQuestion`, `chatId` |
 | Skill state | App code (a cache, rebuilt from attempts) | `skillId`, `stage` (new, learning, mastered, lapsed), `streak`, `ladderStep`, `dueAt`, `lapses`, `medianSeconds` |
 | Assessment result | Student, through the Orchestrator | `assessmentId`, `courseId`, `component`, `points`, `maxPoints`, `date` |
 
-Attempts are never edited. A confirmed or disputed slip is stored on the review item, and the skill state is recomputed.
+Attempts are never edited. The student's answer to a slip question is stored on the review item, and the skill state is recomputed.
+
+Code: the rules live in `src/mastery/` (tunable numbers in `config.ts`), storage in `src/platform/masteryStore.ts`, and the worked example below is the first test in `tests/mastery.test.ts`.
 
 ## Grading agent
 
