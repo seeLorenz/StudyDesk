@@ -6,8 +6,9 @@ This folder explains how StudyDesk works, in plain English. It's meant for anyon
 | --- | --- | --- |
 | [grading-and-mastery.md](grading-and-mastery.md) | How answers are judged, how mastery is measured, reviews, timing, points | Spec drafted |
 | [quest-creation.md](quest-creation.md) | What a daily quest looks like and how it's stored | Example drafted |
+| [onboarding.md](onboarding.md) | Start New Semester: what the student is asked, the setup session, the placement check | Design drafted |
 
-Modules still to come: Start New Semester onboarding, the Orchestrator agent, and the organization agent. Notes for them are collected at the end of the grading file.
+Modules still to come: the Orchestrator agent and the organization agent. Notes for them are collected at the end of the grading file.
 
 ## The big picture
 
