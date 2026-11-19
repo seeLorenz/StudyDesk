@@ -5,7 +5,7 @@ A study assistant for high school and university students that runs as a
 Claude plan, and chats are saved privately per user in the artifact's database.
 
 Experimental: tested by a small group before deciding whether to build a
-version with its own API key.
+standalone version
 
 ## What's here so far
 
