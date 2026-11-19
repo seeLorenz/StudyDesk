@@ -1,0 +1,108 @@
+// The only module that talks to Claude. Everything else calls askClaude().
+// Today it uses the claude.ai artifact `sample` capability (runs on the
+// viewer's own Claude plan). Moving to an API key later means changing this
+// file only.
+
+export type Turn = { role: "user" | "assistant"; content: string };
+
+export type AskOptions = {
+  images?: Blob[];
+  signal?: AbortSignal;
+  onText?: (text: string) => void;
+  tier?: "quick" | "default" | "complex";
+};
+
+export type AskError = { code: string; message: string; text?: string };
+
+type SampleFn = typeof Claude.sample;
+
+let samplePromise: Promise<SampleFn | null> | null = null;
+
+function getSample(): Promise<SampleFn | null> {
+  if (!samplePromise) {
+    const c = (window as Window & { claude?: Claude }).claude;
+    samplePromise = c?.use ? c.use("sample").catch(() => null) : Promise.resolve(null);
+  }
+  return samplePromise;
+}
+
+/** True when this view can reach Claude (inside a claude.ai artifact). */
+export async function claudeAvailable(): Promise<boolean> {
+  return (await getSample()) !== null;
+}
+
+export async function canSendImages(): Promise<boolean> {
+  const sample = await getSample();
+  if (!sample) return false;
+  const limits = await sample.limits().catch(() => null);
+  return !!limits?.images;
+}
+
+/**
+ * Ask Claude. `turns` must start and end with a user turn. Resolves with the
+ * full answer; streams through onText. Rejects with an AskError.
+ */
+export async function askClaude(turns: Turn[], opts: AskOptions = {}): Promise<string> {
+  const sample = await getSample();
+  if (!sample) return mockAnswer(turns, opts);
+  try {
+    const { text, truncated } = await sample(turns, {
+      cache: false,
+      signal: opts.signal,
+      modelTier: opts.tier ?? "default",
+      images: opts.images && opts.images.length ? opts.images : undefined,
+      onText: opts.onText ? ({ text }) => opts.onText!(text) : undefined,
+    });
+    return truncated ? text + "\n\n*(The answer was cut short. Ask for less at a time.)*" : text;
+  } catch (e) {
+    throw normalize(e);
+  }
+}
+
+function normalize(e: unknown): AskError {
+  if (e && typeof e === "object" && "code" in e) return e as AskError;
+  return { code: "upstream_error", message: String(e) };
+}
+
+/** What to tell the viewer for each failure. */
+export function errorCopy(e: AskError): string {
+  switch (e.code) {
+    case "cancelled":
+      return "Stopped.";
+    case "not_granted":
+    case "sampling_disabled":
+      return "StudyDesk isn't allowed to use Claude in this view. Allow it in the artifact's permissions, then try again.";
+    case "rate_limited":
+      return "You've hit your Claude usage limit for now. Try again in a little while.";
+    case "session_expired":
+      return "Your claude.ai session expired. Sign in again, then retry.";
+    case "prompt_too_large":
+      return "That's too much text for one question. Start a new chat or attach a smaller file.";
+    case "image_rejected":
+      return "One of the images couldn't be used. Try a JPEG or PNG under 20 MB.";
+    case "images_unavailable":
+      return "Images can't be sent from this view. Describe the image in text instead.";
+    case "refused":
+      return "Claude declined to answer that. Try rephrasing the question.";
+    default:
+      return "Something went wrong reaching Claude. Try again.";
+  }
+}
+
+// Outside claude.ai (local development) there is no Claude: answer with a
+// canned reply so the interface can still be exercised.
+async function mockAnswer(turns: Turn[], opts: AskOptions): Promise<string> {
+  const last = turns[turns.length - 1]?.content ?? "";
+  const isNote = last.includes("HIGHLIGHTED PASSAGE") || turns.some((t) => t.content.includes("HIGHLIGHTED PASSAGE"));
+  const text = isNote
+    ? "**Short answer:** this is a local preview, so no real Claude is connected.\n\nInside claude.ai this box would explain the highlighted passage, using the whole chat as context, without adding anything to the main conversation."
+    : "Here's a sample answer from the local preview.\n\n## Photosynthesis in one paragraph\n\nPlants turn light energy into chemical energy. In the **light-dependent reactions**, water is split and ATP and NADPH are made. In the **Calvin cycle**, that energy fixes CO₂ into glucose:\n\n$$6\\,CO_2 + 6\\,H_2O \\xrightarrow{light} C_6H_{12}O_6 + 6\\,O_2$$\n\nSelect any part of this answer and press **Reply** to ask about it in a side note.";
+  let out = "";
+  for (const word of text.split(/(?<= )/)) {
+    if (opts.signal?.aborted) throw { code: "cancelled", message: "aborted", text: out } satisfies AskError;
+    await new Promise((r) => setTimeout(r, 12));
+    out += word;
+    opts.onText?.(out);
+  }
+  return out;
+}
