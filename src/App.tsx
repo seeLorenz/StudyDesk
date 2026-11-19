@@ -3,6 +3,7 @@ import { ChatView } from "./chat/ChatView";
 import type { Chat } from "./chat/types";
 import { uid } from "./chat/types";
 import { openStore, type ChatStore } from "./platform/store";
+import { QuestPage } from "./quests/QuestPage";
 
 const newChat = (): Chat => ({ id: uid(), title: "New chat", createdAt: Date.now(), updatedAt: Date.now(), messages: [], notes: [] });
 
@@ -21,6 +22,7 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [view, setView] = useState<"chat" | "quest">("chat");
 
   useEffect(() => {
     let stop = () => {};
@@ -49,6 +51,7 @@ export function App() {
 
   const open = (c: Chat) => {
     setCurrent(c);
+    setView("chat");
     setMenuOpen(false);
   };
 
@@ -59,6 +62,19 @@ export function App() {
           <span className="brand-mark" aria-hidden="true" />
           StudyDesk
         </div>
+        <button
+          type="button"
+          className={"quest-link" + (view === "quest" ? " is-current" : "")}
+          onClick={() => {
+            setView("quest");
+            setMenuOpen(false);
+          }}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3 2.5h10v11H3zM5.5 6l1.5 1.5L10.5 4M5.5 10.5h5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Today's quest
+        </button>
         <button type="button" className="new-chat" onClick={() => open(newChat())}>
           <svg viewBox="0 0 16 16" aria-hidden="true">
             <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
@@ -69,7 +85,7 @@ export function App() {
           {!loaded && <p className="side-empty">Loading your chats…</p>}
           {loaded && chats.length === 0 && <p className="side-empty">Your chats will show up here.</p>}
           {chats.map((c) => (
-            <div key={c.id} className={"chat-item" + (c.id === current.id ? " is-current" : "")}>
+            <div key={c.id} className={"chat-item" + (view === "chat" && c.id === current.id ? " is-current" : "")}>
               <button type="button" className="chat-open" onClick={() => open(c)}>
                 <span className="chat-title">{c.title}</span>
                 <span className="chat-meta">
@@ -117,7 +133,7 @@ export function App() {
               <path d="M3.5 6h13M3.5 10h13M3.5 14h13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
             </svg>
           </button>
-          <span className="topbar-title">{chats.find((c) => c.id === current.id)?.title ?? "New chat"}</span>
+          <span className="topbar-title">{view === "quest" ? "Today's quest" : chats.find((c) => c.id === current.id)?.title ?? "New chat"}</span>
         </header>
         {notice && (
           <div className="notice" role="status">
@@ -127,7 +143,7 @@ export function App() {
             </button>
           </div>
         )}
-        <ChatView key={current.id} initial={current} save={save} onSaveError={onSaveError} />
+        {view === "quest" ? <QuestPage /> : <ChatView key={current.id} initial={current} save={save} onSaveError={onSaveError} />}
       </main>
     </div>
   );

@@ -13,6 +13,9 @@ standalone version
 - **Select to reply:** select any part of an answer, press Reply, and ask
   about it. The answer opens in a collapsible side note next to that passage
   instead of growing the main chat. Notes can take follow-up questions.
+- **Today's quest:** a daily quest sized to the student's time, built around
+  homework that's due, with explanations, practice, hints and grading. Uses
+  sample course data until Start New Semester exists.
 
 ## Develop
 
@@ -34,6 +37,8 @@ then strips the document skeleton, because the artifact host adds its own
 - `src/chat/`: the chat, side notes, selection popover and composer.
 - `src/mastery/`: grading and mastery rules (streaks, review ladder, mastery, timing, points, grading agent). See `design/grading-and-mastery.md`.
 - `src/platform/masteryStore.ts`: storage for skills, attempts and review items.
+- `src/quests/`: quest planning (code), writing (Claude), hand-in and the quest page. See `design/quest-creation.md`.
+- `src/platform/questStore.ts`: storage for quests and the semester they're built from.
 - `src/lib/`: markdown and math rendering, text anchors for highlights, file reading.
 - `design/`: the system design in plain English, one file per module.
 - `types/claude/`: type definitions for the artifact runtime (contract 0.2.96).

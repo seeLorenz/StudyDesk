@@ -100,3 +100,37 @@ These will be settled once quests run in practice.
 - **Learn parts:** should each end with a one-minute check question?
 - **One course per quest:** one quest per course per day, or one mixed quest across courses?
 - **Hints:** are 3 hints and then a solved similar problem the right amount of help?
+
+## First version (built)
+
+The quest module is in `src/quests/` and the quest page is reachable from **Today's quest** in the sidebar. It's deliberately rough: the overall app layout comes later.
+
+**How a quest is made**
+
+1. **Code plans it** (`plan.ts`). Today's budget comes from the timing rules in the grading spec (study goal minus lectures, then 80% of that or 1.2 × recent pace, half of it for a new student). Then it fills the budget in this order:
+   1. fundamentals a recent grading named as the cause of a mistake,
+   2. homework due within 2 days, task by task; each task brings the fundamentals it needs (a gate), the concepts it builds on, and an explanation of its own skill if the student hasn't learned it yet,
+   3. skills coming back today (still learning, lapsed, or due on the review ladder) as a short warm-up,
+   4. homework due later in the week,
+   5. if there's no homework at all, the next one or two new skills, those on the nearest exam first.
+   A group is only added if it fits (10% over budget is allowed rather than splitting a task from what it needs). Urgent homework always gets at least one task. Anything left out is named, with a warning if the sheet is due tomorrow.
+2. **Claude writes it** (`write.ts`). One call per part, in parallel: learn parts get the StudyDesk explanation style and what comes later in the quest; practice parts get one fresh problem and worked answer per skill; homework gets three hints, a worked answer and a solved similar problem. Replies use plain `=== SECTION ===` blocks instead of JSON (math breaks JSON), are checked, and retried once.
+3. **The page** builds the quest on the first open of the day (the in-page fallback; the scheduled routine comes later).
+
+**Working through it.** Each problem has its own answer box (type, paste, drop or attach photos and files) and its own timer, which runs for one problem at a time, starts when the student starts on it, and pauses after 2 minutes in the background. Each problem part is handed in on its own, so a gate can stop the quest before the homework. Grading goes through `gradeProblems`; attempts and review items go into the grading module's store, so streaks, points and time estimates update straight away. A slip asks the student to confirm. Worked answers to open homework stay hidden until the hand-in date.
+
+**Sample data.** Until Start New Semester exists, the page creates a sample semester (Calculus 1, Sheet 4 due tomorrow, Sheet 5 next week, a midterm in a month) with the same records onboarding will write. "Restart the sample semester" re-dates it to today. Outside claude.ai, a built-in stand-in writes and grades so the page can be clicked through.
+
+**Defaults chosen for the open questions** (all in `src/quests/config.ts` or noted here, to be revisited after real use):
+
+| Question | Default for now |
+| --- | --- |
+| Shape and length | Whatever fits the budget; for the sample's first day that's learn, practice (gate), learn, homework at about 59 min |
+| The gate | A missed fundamental pauses the quest and offers a fix-it (short explanation plus one fresh problem). A "continue without the fix-it" link exists so nobody gets stuck |
+| Check question after learn parts | Not added yet |
+| One course per quest | One quest per day, for the course with the most urgent homework |
+| Hints | 3 hints, then a solved similar problem (no streak credit for that problem) |
+| Reviews | Placed first as a warm-up, after urgent homework in priority |
+| Learn part time | 6 min plus 3 per skill, not scaled by the student's speed |
+| Points per problem for grading | 2 per practice problem, the sheet's own points for homework |
+| Photos of answers | Sent to grading, but only a small preview is saved; after a reload, only the typed text and file text can be graded |

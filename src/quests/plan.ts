@@ -1,0 +1,366 @@
+// Plans one day's quest in plain code: which skills, which homework tasks,
+// how many minutes. Claude only writes the text afterwards (write.ts).
+// design/quest-creation.md and design/grading-and-mastery.md, "Main design
+// choices" 5 to 7.
+
+import { CONFIG } from "../mastery/config";
+import { addDays, daysBetween } from "../mastery/days";
+import { isRequired } from "../mastery/mastery";
+import { dueSkills, replay, type Exam } from "../mastery/replay";
+import { expectedMinutes, questBudget, slownessFactor } from "../mastery/timing";
+import type { Attempt, Day, ReviewItem, Skill, SkillState } from "../mastery/types";
+import { QUEST_CONFIG, learnMinutes } from "./config";
+import type { Assignment, AssignmentTask, LearnPart, ProblemPart, Quest, QuestProblem, Semester, TimetableEntry } from "./types";
+
+export type PlanInput = {
+  semester: Semester;
+  today: Day;
+  /** Local time now, "YYYY-MM-DDTHH:MM", to tell which deadlines have passed. */
+  nowLocal: string;
+  attempts: Attempt[];
+  reviews: ReviewItem[];
+  /** Assignment tasks already handed in through a quest. */
+  doneTaskIds: Set<string>;
+  /** Fundamentals a recent grading named as the cause of a wrong answer. They go first. */
+  blockerSkillIds: string[];
+  /** Plan this course instead of the most urgent one. */
+  courseId?: string;
+  /** Minutes to plan instead of the computed budget (e.g. the student asks for a quest on a rest day). */
+  budgetOverride?: number;
+  questId?: string;
+};
+
+export type PlanResult =
+  | { kind: "quest"; quest: Quest }
+  | { kind: "no_time"; freeMinutes: number; goalMinutes: number }
+  | { kind: "nothing_to_do"; courseId: string };
+
+const minutesOf = (hhmm: string) => {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+};
+
+export function weekdayOf(day: Day): number {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+export function busyMinutes(timetable: TimetableEntry[], weekday: number): number {
+  return timetable.filter((t) => t.weekday === weekday).reduce((s, t) => s + Math.max(0, minutesOf(t.end) - minutesOf(t.start)), 0);
+}
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** "Wednesday 11:00", or "today 11:00" / "tomorrow 11:00". */
+export function formatDue(dueAt: string, today: Day): string {
+  const [day, time] = dueAt.split("T");
+  const diff = daysBetween(today, day);
+  const when = diff === 0 ? "today" : diff === 1 ? "tomorrow" : WEEKDAYS[weekdayOf(day)];
+  return time ? `${when} ${time}` : when;
+}
+
+const known = (st: SkillState | undefined) => st?.stage === "mastered" || st?.stage === "retained";
+/** Never tried, or forgotten: needs an explanation, not just a problem. */
+const needsTeaching = (st: SkillState | undefined) => !st || st.stage === "new" || st.stage === "lapsed";
+
+const openTasks = (a: Assignment, done: Set<string>) => a.tasks.filter((t) => !done.has(t.id));
+
+/** Open homework due from now to the lookahead, most urgent first. */
+export function upcomingAssignments(semester: Semester, today: Day, nowLocal: string, done: Set<string>, courseId?: string): Assignment[] {
+  const until = addDays(today, QUEST_CONFIG.assignmentLookaheadDays);
+  return semester.assignments
+    .filter((a) => (!courseId || a.courseId === courseId) && a.dueAt >= nowLocal && a.dueAt.slice(0, 10) <= until)
+    .filter((a) => openTasks(a, done).length > 0)
+    .sort((a, b) => (a.dueAt < b.dueAt ? -1 : 1));
+}
+
+/** The course that needs today's quest most: earliest homework due, else the first course. */
+export function pickCourse(input: PlanInput): string {
+  if (input.courseId) return input.courseId;
+  const urgent = upcomingAssignments(input.semester, input.today, input.nowLocal, input.doneTaskIds)[0];
+  return urgent?.courseId ?? input.semester.courses[0].id;
+}
+
+export function planQuest(input: PlanInput): PlanResult {
+  const { semester, today, attempts, reviews } = input;
+  const courseId = pickCourse(input);
+  const course = semester.courses.find((c) => c.id === courseId)!;
+  const target = semester.targets.find((t) => t.courseId === courseId);
+  const skills = semester.skills;
+  const byId = new Map(skills.map((s) => [s.id, s]));
+  const courseSkills = skills.filter((s) => s.courseId === courseId);
+  const required = (s: Skill) => !target || isRequired(s, target);
+
+  const { states } = replay(skills, attempts, reviews);
+  const slowness = slownessFactor(skills, attempts);
+  const expMin = (s: Skill) => Math.max(1, Math.round(expectedMinutes(s, attempts, slowness)));
+
+  // ---- time ----
+  const weekday = weekdayOf(today);
+  const goal = semester.studyGoal[weekday] ?? 0;
+  const busy = busyMinutes(semester.timetable, weekday);
+  const budget = questBudget(goal, busy, attempts, today);
+  const budgetMinutes = input.budgetOverride ?? budget.budgetMinutes;
+  if (budgetMinutes <= 0) return { kind: "no_time", freeMinutes: budget.freeMinutes, goalMinutes: goal };
+  const limit = budgetMinutes * (1 + QUEST_CONFIG.overBudgetTolerance);
+
+  // ---- what goes in, in priority order ----
+  const gate: string[] = []; // fundamentals checked before the homework
+  const concepts: string[] = []; // non-fundamental prerequisites taught first
+  const taskLearn: string[] = []; // skills taught right before the homework
+  const tasks: Array<{ assignment: Assignment; task: AssignmentTask }> = [];
+  const reviewIds: string[] = [];
+  const newIds: string[] = [];
+  const planned = new Set<string>();
+  const leftOut: string[] = [];
+
+  const minutes = () => {
+    let m = learnMinutes(concepts.length) + learnMinutes(taskLearn.length) + learnMinutes(newIds.length);
+    for (const id of [...gate, ...reviewIds, ...newIds]) m += expMin(byId.get(id)!);
+    for (const t of tasks) m += expMin(byId.get(t.task.skillId)!);
+    return m;
+  };
+  /** Adds a group if it fits (or if `force`); rolls it back otherwise. */
+  const tryAdd = (apply: () => void, rollback: () => void, force = false) => {
+    apply();
+    if (force || minutes() <= limit) return true;
+    rollback();
+    return false;
+  };
+
+  // 1. Fundamentals that recent mistakes were traced back to.
+  for (const id of input.blockerSkillIds) {
+    const s = byId.get(id);
+    if (!s || s.courseId !== courseId || planned.has(id) || known(states.get(id))) continue;
+    tryAdd(
+      () => (gate.push(id), planned.add(id)),
+      () => (gate.pop(), planned.delete(id)),
+    );
+  }
+
+  // 2. Real homework: each task brings the prerequisites and explanation it needs.
+  //    Homework due within a couple of days comes before reviews; later homework after them.
+  const assignments = upcomingAssignments(semester, today, input.nowLocal, input.doneTaskIds, courseId);
+  const urgentUntil = addDays(today, QUEST_CONFIG.urgentWithinDays);
+  const addHomework = (list: Assignment[], urgent: boolean) => {
+    for (const a of list) {
+      for (const task of openTasks(a, input.doneTaskIds)) {
+        const skill = byId.get(task.skillId);
+        if (!skill) continue;
+        const added = { gate: [] as string[], concepts: [] as string[], learn: [] as string[] };
+        for (const pid of skill.prereqSkillIds) {
+          const p = byId.get(pid);
+          if (!p || planned.has(pid) || !needsTeaching(states.get(pid))) continue;
+          (p.isFundamental ? added.gate : added.concepts).push(pid);
+        }
+        if (!planned.has(skill.id) && needsTeaching(states.get(skill.id))) added.learn.push(skill.id);
+        const ok = tryAdd(
+          () => {
+            gate.push(...added.gate);
+            concepts.push(...added.concepts);
+            taskLearn.push(...added.learn);
+            tasks.push({ assignment: a, task });
+            [...added.gate, ...added.concepts, ...added.learn].forEach((id) => planned.add(id));
+          },
+          () => {
+            gate.splice(gate.length - added.gate.length);
+            concepts.splice(concepts.length - added.concepts.length);
+            taskLearn.splice(taskLearn.length - added.learn.length);
+            tasks.pop();
+            [...added.gate, ...added.concepts, ...added.learn].forEach((id) => planned.delete(id));
+          },
+          urgent && tasks.length === 0, // urgent homework always gets at least one task
+        );
+        if (!ok) leftOut.push(`${a.title} ${task.label}`);
+      }
+    }
+    for (const t of tasks) planned.add(t.task.skillId);
+  };
+  addHomework(assignments.filter((a) => a.dueAt.slice(0, 10) <= urgentUntil), true);
+
+  // 3. Reviews: skills still being learned, lapsed, or due on the review ladder.
+  const exams: Exam[] = semester.keyDates.map((k) => ({ courseId: k.courseId, date: k.date, skillIds: k.skillIds }));
+  const stageOrder = { lapsed: 0, mastered: 1, learning: 2, retained: 3, new: 4 } as const;
+  const due = dueSkills(courseSkills, states, attempts, exams, today)
+    .filter((id) => !planned.has(id))
+    .sort((a, b) => stageOrder[states.get(a)!.stage] - stageOrder[states.get(b)!.stage]);
+  for (const id of due) {
+    const ok = tryAdd(
+      () => (reviewIds.push(id), planned.add(id)),
+      () => (reviewIds.pop(), planned.delete(id)),
+    );
+    if (!ok) leftOut.push(`review: ${byId.get(id)!.name}`);
+  }
+
+  addHomework(
+    assignments.filter((a) => a.dueAt.slice(0, 10) > urgentUntil),
+    !gate.length && !tasks.length && !reviewIds.length,
+  );
+
+  // 4. Nothing due at all: start the next new skills, those on the nearest exam first.
+  if (tasks.length === 0) {
+    const examRank = (s: Skill) => {
+      const e = exams.filter((x) => x.date >= today && x.skillIds.includes(s.id)).sort((a, b) => (a.date < b.date ? -1 : 1))[0];
+      return e ? daysBetween(today, e.date) : 9999;
+    };
+    const topicRank = (s: Skill) => course.topics.findIndex((t) => t.id === s.topicId);
+    const fresh = courseSkills
+      .filter((s) => required(s) && !planned.has(s.id) && (states.get(s.id)?.stage ?? "new") === "new")
+      .filter((s) => s.prereqSkillIds.every((p) => known(states.get(p)) || planned.has(p) || !byId.has(p)))
+      .sort((a, b) => examRank(a) - examRank(b) || topicRank(a) - topicRank(b) || Number(b.isFundamental) - Number(a.isFundamental));
+    for (const s of fresh.slice(0, QUEST_CONFIG.maxNewSkills)) {
+      tryAdd(
+        () => (newIds.push(s.id), planned.add(s.id)),
+        () => (newIds.pop(), planned.delete(s.id)),
+        reviewIds.length === 0 && newIds.length === 0 && gate.length === 0,
+      );
+    }
+  }
+
+  if (!gate.length && !tasks.length && !reviewIds.length && !newIds.length) return { kind: "nothing_to_do", courseId };
+
+  // ---- assemble the parts ----
+  let pn = 0;
+  let partN = 0;
+  const names = (ids: string[]) => ids.map((id) => byId.get(id)!.name);
+  const practiceProblem = (id: string): QuestProblem => ({
+    id: `p${++pn}`,
+    skillId: id,
+    prompt: "",
+    answerKey: "",
+    hints: [],
+    similarSolved: null,
+    expMinutes: expMin(byId.get(id)!),
+    maxPoints: QUEST_CONFIG.practiceMaxPoints,
+  });
+  const learn = (ids: string[], title: string): LearnPart => ({
+    kind: "learn",
+    id: `part${++partN}`,
+    title,
+    skillIds: ids,
+    estMinutes: learnMinutes(ids.length),
+    body: "",
+  });
+  const practice = (ids: string[], title: string, isGate: boolean): ProblemPart => ({
+    kind: "practice",
+    id: `part${++partN}`,
+    title,
+    gate: isGate,
+    problems: ids.map(practiceProblem),
+  });
+
+  const parts: Quest["parts"] = [];
+  if (reviewIds.length) parts.push(practice(reviewIds, "Warm-up: skills coming back today", false));
+  if (concepts.length) parts.push(learn(concepts, names(concepts).join(", ")));
+  if (gate.length) parts.push(practice(gate, "The fundamentals the next steps need", true));
+  if (taskLearn.length) parts.push(learn(taskLearn, names(taskLearn).join(", ")));
+  if (newIds.length) {
+    parts.push(learn(newIds, names(newIds).join(", ")));
+    parts.push(practice(newIds, "Try it yourself", false));
+  }
+  for (const a of assignments) {
+    const mine = tasks.filter((t) => t.assignment.id === a.id);
+    if (!mine.length) continue;
+    parts.push({
+      kind: "assignment",
+      id: `part${++partN}`,
+      title: `${a.title}, ${mine.length === 1 ? "task" : "tasks"} ${mine.map((t) => t.task.label).join(" and ")}`,
+      gate: false,
+      assignmentId: a.id,
+      handedInToSchool: false,
+      problems: mine.map(({ task }) => ({
+        id: `p${++pn}`,
+        skillId: task.skillId,
+        label: task.label,
+        assignmentTaskId: task.id,
+        prompt: task.prompt,
+        answerKey: "",
+        hints: [],
+        similarSolved: null,
+        expMinutes: expMin(byId.get(task.skillId)!),
+        maxPoints: task.maxPoints,
+      })),
+    });
+  }
+
+  // ---- why today ----
+  let reason: string;
+  if (tasks.length) {
+    const a = tasks[0].assignment;
+    const mine = tasks.filter((t) => t.assignment.id === a.id);
+    const lower = (x: string) => x.charAt(0).toLowerCase() + x.slice(1);
+    const needs = [...new Set(mine.map((t) => lower(byId.get(t.task.skillId)!.name)))];
+    reason = `${a.title} is due ${formatDue(a.dueAt, today)}. ${mine.map((t) => t.task.label).join(" and ")} need the ${needs.join(" and the ")}.`;
+  } else if (gate.length) {
+    reason = `Recent mistakes came from ${names(gate).join(" and ")}, so today fixes that first.`;
+  } else if (reviewIds.length && !newIds.length) {
+    reason = `${reviewIds.length} ${reviewIds.length === 1 ? "skill is" : "skills are"} due to come back today.`;
+  } else {
+    reason = `No homework is due this week, so today starts ${names(newIds).join(" and ")}.`;
+  }
+
+  const notes: string[] = [];
+  if (input.budgetOverride !== undefined) {
+    notes.push(`You asked for a quest today, so it's about ${budgetMinutes} min.`);
+  } else {
+    notes.push(
+      `Your time today: ${budget.freeMinutes} min free (study goal ${goal} min${busy ? `, minus ${busy} min of lectures` : ""}).`,
+    );
+    notes.push(
+      budget.paceMinutes === null
+        ? `StudyDesk doesn't know your pace yet, so this quest uses half of it.`
+        : `You've been finishing about ${Math.round(budget.paceMinutes)} min a day, so this quest is sized to ${budgetMinutes} min.`,
+    );
+  }
+  for (const a of assignments) {
+    const missing = openTasks(a, input.doneTaskIds).filter((t) => !tasks.some((x) => x.task.id === t.id));
+    if (missing.length && daysBetween(today, a.dueAt.slice(0, 10)) <= 1) {
+      notes.push(
+        `${a.title} ${missing.map((t) => t.label).join(", ")} ${missing.length === 1 ? "doesn't" : "don't"} fit today and ${a.title} is due ${formatDue(a.dueAt, today)}. Ask for a longer quest if you want to finish it.`,
+      );
+    }
+  }
+
+  const plannedMinutes = parts.reduce(
+    (s, p) => s + (p.kind === "learn" ? p.estMinutes : p.problems.reduce((x, q) => x + q.expMinutes, 0)),
+    0,
+  );
+
+  return {
+    kind: "quest",
+    quest: {
+      id: input.questId ?? `qst_${today}_${courseId}`,
+      date: today,
+      courseId,
+      budgetMinutes,
+      plannedMinutes,
+      reason,
+      notes,
+      parts,
+      createdAt: Date.now(),
+    },
+  };
+}
+
+/** Fundamentals named as the cause of a wrong answer in the last few days, newest first. */
+export function recentBlockers(records: Array<{ quest: Quest; progress: { work: Record<string, { fundamentalSkillId?: string | null; verdict?: string }> } }>, today: Day): string[] {
+  const since = addDays(today, -CONFIG.examCheckWindowDays);
+  const out: string[] = [];
+  for (const r of [...records].sort((a, b) => (a.quest.date < b.quest.date ? 1 : -1))) {
+    if (r.quest.date < since) continue;
+    for (const w of Object.values(r.progress.work)) {
+      if (w.verdict && w.verdict !== "solved" && w.fundamentalSkillId && !out.includes(w.fundamentalSkillId)) out.push(w.fundamentalSkillId);
+    }
+  }
+  return out;
+}
+
+/** Assignment tasks handed in through any quest. */
+export function doneTasks(records: Array<{ quest: Quest; progress: { work: Record<string, { attemptId?: string }> } }>): Set<string> {
+  const done = new Set<string>();
+  for (const r of records)
+    for (const p of r.quest.parts)
+      if (p.kind === "assignment")
+        for (const q of p.problems) if (q.assignmentTaskId && r.progress.work[q.id]?.attemptId) done.add(q.assignmentTaskId);
+  return done;
+}

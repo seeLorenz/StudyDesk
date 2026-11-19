@@ -1,0 +1,112 @@
+// Storage for quests and the semester they're built from. Inside a claude.ai
+// artifact it uses the artifact database, in each user's private area:
+//   data/users/<uid>/semester              the semester (sample data until onboarding exists)
+//   data/users/<uid>/quests/records/<id>   one quest plus the student's work on it
+// Elsewhere it falls back to this browser's localStorage.
+
+import type { QuestRecord, Semester } from "../quests/types";
+
+export interface QuestStore {
+  mode: "cloud" | "local";
+  loadSemester(): Promise<Semester | null>;
+  saveSemester(s: Semester): Promise<void>;
+  loadRecords(): Promise<QuestRecord[]>;
+  saveRecord(r: QuestRecord): Promise<void>;
+}
+
+const plain = <T>(x: T) => JSON.parse(JSON.stringify(x)) as Record<string, unknown>;
+
+export async function openQuestStore(): Promise<QuestStore> {
+  const c = (window as Window & { claude?: Claude }).claude;
+  if (c?.use) {
+    const [db, user] = await Promise.all([c.use("db").catch(() => null), c.use("user").catch(() => null)]);
+    const uid = user ? await user.id().catch(() => null) : null;
+    if (db && uid) return cloudQuestStore(db, uid);
+  }
+  return localQuestStore();
+}
+
+function cloudQuestStore(db: DB, uid: string): QuestStore {
+  const semester = db.doc(`data/users/${uid}/semester`);
+  const records = db.doc(`data/users/${uid}/quests`).collection("records");
+  // One write at a time per record; only the latest pending version is written.
+  const pending = new Map<string, { running: boolean; next: QuestRecord | null; waiters: Array<(e?: unknown) => void> }>();
+  async function drain(id: string) {
+    const q = pending.get(id)!;
+    if (q.running) return;
+    q.running = true;
+    while (q.next) {
+      const r = q.next;
+      const waiters = q.waiters;
+      q.next = null;
+      q.waiters = [];
+      let err: unknown;
+      try {
+        await records.doc(id).set(plain(r));
+      } catch (e) {
+        err = e;
+      }
+      waiters.forEach((w) => w(err));
+    }
+    q.running = false;
+  }
+  return {
+    mode: "cloud",
+    async loadSemester() {
+      const snap = await semester.get();
+      return snap.exists ? (snap.data() as unknown as Semester) : null;
+    },
+    async saveSemester(s) {
+      await semester.set(plain(s));
+    },
+    async loadRecords() {
+      return (await records.get()).docs.filter((d) => d.exists).map((d) => d.data() as unknown as QuestRecord);
+    },
+    saveRecord(r) {
+      const id = r.quest.id;
+      if (!pending.has(id)) pending.set(id, { running: false, next: null, waiters: [] });
+      const q = pending.get(id)!;
+      q.next = r;
+      const done = new Promise<void>((resolve, reject) => q.waiters.push((e) => (e ? reject(e) : resolve())));
+      void drain(id);
+      return done;
+    },
+  };
+}
+
+function localQuestStore(): QuestStore {
+  const KEY = "studydesk.quests.v1";
+  const mem: { semester: Semester | null; records: QuestRecord[] } = { semester: null, records: [] };
+  const read = (): typeof mem => {
+    try {
+      return { ...mem, ...JSON.parse(localStorage.getItem(KEY) || "{}") };
+    } catch {
+      return mem;
+    }
+  };
+  const write = (d: typeof mem) => {
+    mem.semester = d.semester;
+    mem.records = d.records;
+    try {
+      localStorage.setItem(KEY, JSON.stringify(d));
+    } catch {
+      /* storage unavailable: keep in memory */
+    }
+  };
+  return {
+    mode: "local",
+    async loadSemester() {
+      return read().semester;
+    },
+    async saveSemester(s) {
+      write({ ...read(), semester: s });
+    },
+    async loadRecords() {
+      return read().records;
+    },
+    async saveRecord(r) {
+      const d = read();
+      write({ ...d, records: [...d.records.filter((x) => x.quest.id !== r.quest.id), r] });
+    },
+  };
+}
