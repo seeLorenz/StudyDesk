@@ -27,6 +27,8 @@ export type OrchMessage = {
   text: string;
   createdAt: number;
   files?: string[];
+  /** The kept files of this message, so later turns can send its images again. */
+  uploadIds?: string[];
   /** What the dropped files turned into (zips opened, videos found). */
   intake?: import("../onboarding/types").IntakeReport;
   error?: string;

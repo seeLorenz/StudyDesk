@@ -200,7 +200,7 @@ export const ASK_TOOL = {
 
 export const CALENDAR_TOOL = {
   name: "read_calendar",
-  description: "Reads the student's Google Calendar through their own connector: repeating weekly events of the next two weeks and one-off events of the next four months. Use when the student asks to import or update from their calendar, then add or remove weekly slots and exam dates with change.",
+  description: "Reads the student's Google Calendar through their own connector: repeating weekly events of the next two weeks and one-off events of the next four months. Use when the student asks to import or update from their calendar, then add or remove weekly slots and exam dates with change. It reads every calendar the student has in Google Calendar, including subscribed ones (a university timetable added by URL, like TUGonline's iCal link). You can't open links yourself: if the student pastes an iCal link, tell them to add it in Google Calendar (Other calendars, +, From URL) and don't repeat the link, since it holds a private token; then read again. A newly added subscription can take a few minutes to fill.",
   inputSchema: { type: "object", properties: {} },
 } as const;
 

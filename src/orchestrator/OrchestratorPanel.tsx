@@ -8,7 +8,7 @@ import { InputBox } from "../chat/InputBox";
 import { SelectionReply } from "../chat/SelectionReply";
 import { passageNoteTurns } from "../chat/prompts";
 import type { PendingAttachment } from "../lib/files";
-import { describedVideos, describeVideo, keepDrop } from "../lib/keep";
+import { describedVideos, describeVideo, keepDrop, READ_FILE_TOOL, readKeptFile, recallImages } from "../lib/keep";
 import { IntakeCard } from "../chat/IntakeCard";
 import { toDay } from "../mastery/days";
 import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
@@ -398,7 +398,7 @@ export function OrchestratorPanel(props: Props) {
     onClearQuote();
     const kept = files.length ? await keepFiles(files) : { uploads: [], zips: [], previews: [], images: [], failed: [], report: null };
     if (kept.uploads.length || kept.zips.length) await commitDesk({ draft: { ...draftRef.current!, uploads: [...draftRef.current!.uploads, ...kept.uploads], zips: [...(draftRef.current!.zips ?? []), ...kept.zips] }, profile: profileRef.current! });
-    if (kept.report) saveMessages((ms) => ms.map((m) => (m.id === userMsg.id ? { ...m, intake: kept.report! } : m)));
+    if (kept.report || kept.uploads.length) saveMessages((ms) => ms.map((m) => (m.id === userMsg.id ? { ...m, intake: kept.report ?? m.intake, uploadIds: kept.uploads.length ? kept.uploads.map((u) => u.id) : m.uploadIds } : m)));
     const reply: OrchMessage = { id: uid(), role: "assistant", text: "", createdAt: Date.now() + 1 };
     saveMessages((ms) => [...ms, reply], false);
     setBusy("Thinking…");
@@ -408,10 +408,14 @@ export function OrchestratorPanel(props: Props) {
         patch({ text: await localAnswer(text, applyChange, launchJob, (c) => addCard(reply.id, c)) });
       } else {
         if (!(await canUseTools())) throw new Error("This view can't let StudyDesk make changes. Open StudyDesk on claude.ai in a browser or the desktop app.");
-        const sendImages = (await canSendImages()) ? kept.images : [];
+        const imagesOk = await canSendImages();
+        const nowIds = new Set(kept.uploads.map((u) => u.id));
+        const earlier = imagesOk ? await recallImages(messagesRef.current, draftRef.current!.uploads, kept.images.length, nowIds, (id) => env.os.loadUploadContent(id)) : { images: [], note: "" };
+        const sendImages = imagesOk ? [...kept.images, ...earlier.images] : [];
         const extra = [
           kept.previews.length ? `The student just dropped these files (saved as unsortedFiles). New files start a job: assign each to its course in start_job; a zip as a whole by its zip id, unless its folders clearly hold several courses.\n${kept.previews.join("\n\n")}` : "",
-          kept.images.length && !sendImages.length ? "Images can't be sent in this view; ask the student what the images show." : "",
+          kept.images.length && !imagesOk ? "Images can't be sent in this view; ask the student what the images show." : "",
+          earlier.note,
           kept.failed.length ? `These files couldn't be kept: ${kept.failed.join("; ")}` : "",
         ]
           .filter(Boolean)
@@ -475,6 +479,7 @@ export function OrchestratorPanel(props: Props) {
                 return `${r.note} Job ${r.job.id}. The student sees its progress on a card; say in one line what you're doing.`;
               },
             },
+            { ...READ_FILE_TOOL, inputSchema: READ_FILE_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema, execute: (input) => readKeptFile(input, draftRef.current!.uploads, (id) => env.os.loadUploadContent(id)) },
             {
               ...LOOKUP_TOOL,
               inputSchema: LOOKUP_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema,

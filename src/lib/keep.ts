@@ -9,10 +9,10 @@
 import { uid } from "../chat/types";
 import type { IntakeReport, Upload, ZipRecord } from "../onboarding/types";
 import type { StorageUsage, UploadContent } from "../platform/onboardingStore";
-import { compressImage } from "../quests/images";
+import { compressImage, dataUrlToBlob } from "../quests/images";
 import type { PendingAttachment } from "./files";
 import { readPdf } from "./files";
-import { breathe, buildOutline, classify, walkZip, zipEntries, type FileClass, type IntakeFile, type ZipEntry } from "./intake";
+import { breathe, buildOutline, classify, selectPart, walkZip, zipEntries, type FileClass, type IntakeFile, type ZipEntry } from "./intake";
 import { officeText } from "./office";
 
 export const MAX_FILE_CHARS = 240_000;
@@ -322,4 +322,80 @@ export function unsortedList(uploads: Upload[], zips: ZipRecord[] | undefined): 
   const byZip = new Map<string, number>();
   for (const u of open) if (u.zipId) byZip.set(u.zipId, (byZip.get(u.zipId) ?? 0) + 1);
   return [...loose, ...[...byZip].map(([id, n]) => ({ uploadId: id, name: zips?.find((z) => z.id === id)?.fileName ?? "zip", files: n }))];
+}
+
+/**
+ * Images the student dropped in earlier messages, newest first, so Claude
+ * still sees them in later turns (each turn only carries text otherwise).
+ * Older messages without upload ids are matched by file name. Pure.
+ */
+export function earlierImageIds(messages: Array<{ role: string; files?: string[]; uploadIds?: string[] }>, uploads: Upload[], exclude: Set<string>, max = 4): string[] {
+  const images = uploads.filter((u) => u.type === "image");
+  const out: string[] = [];
+  for (const m of [...messages].reverse()) {
+    if (m.role !== "user") continue;
+    const ids = m.uploadIds ?? (m.files ?? []).flatMap((name) => images.filter((u) => u.fileName === name).map((u) => u.id));
+    for (const id of ids) {
+      if (out.length >= max) return out;
+      if (!exclude.has(id) && !out.includes(id) && images.some((u) => u.id === id)) out.push(id);
+    }
+  }
+  return out;
+}
+
+/** The chat's read_file tool: any kept file's outline, or the pages or lines asked for. */
+export const READ_FILE_TOOL = {
+  name: "read_file",
+  description:
+    'Reads a file the student dropped earlier (any upload id from the sheet, unsortedFiles or a zip inventory): without "part" its outline, with "part" the text of pages "3-5", slides the same way, or lines "l. 40-80". Use it when you need what a file says (a timetable, a syllabus\'s dates) instead of asking the student. Images can\'t be read this way.',
+  inputSchema: {
+    type: "object",
+    properties: { file: { type: "string", description: "Upload id (up_…)" }, part: { type: "string", description: 'Optional: "1-3", "l. 1-80" or "all"' } },
+    required: ["file"],
+  },
+} as const;
+
+/** Runs read_file against the kept content. */
+export async function readKeptFile(input: Record<string, unknown>, uploads: Upload[], load: (id: string) => Promise<UploadContent | null>): Promise<string> {
+  const id = String(input.file ?? "").trim();
+  const u = uploads.find((x) => x.id === id);
+  if (!u) return `No file ${id}.`;
+  if (u.type === "image") return "An image: it's attached to the conversation when the student drops it; ask them if it isn't there.";
+  if (u.state === "listed") return u.type === "video" ? `A video: Claude can't watch or listen. ${u.studentNote ? `The student says: "${u.studentNote}"` : "Go by its title, or ask the student."}` : "StudyDesk couldn't open this file; only its name is known.";
+  const c = await load(id);
+  if (!c?.text) return u.state === "agent" ? "A scan without text: a cloud session reads it during setup. Ask the student what it says if you need it now." : "Nothing readable is kept for this file.";
+  const part = input.part ? String(input.part) : "";
+  if (!part) return c.outline || selectPart(c.text, "1-2").text;
+  return selectPart(c.text, part, 30_000).text;
+}
+
+/**
+ * Loads the earlier images to send again this turn, with a line telling
+ * Claude which attached image is which file. Images sent this turn come first
+ * (they're numbered by keepDrop), so earlier ones are numbered after them.
+ */
+export async function recallImages(
+  messages: Array<{ role: string; files?: string[]; uploadIds?: string[] }>,
+  uploads: Upload[],
+  sentNow: number,
+  exclude: Set<string>,
+  load: (id: string) => Promise<UploadContent | null>,
+  max = 5,
+): Promise<{ images: Blob[]; note: string }> {
+  const room = Math.max(0, max - sentNow);
+  if (!room) return { images: [], note: "" };
+  const images: Blob[] = [];
+  const lines: string[] = [];
+  for (const id of earlierImageIds(messages, uploads, exclude, room)) {
+    try {
+      const c = await load(id);
+      if (!c?.image) continue;
+      images.push(dataUrlToBlob(c.image));
+      const u = uploads.find((x) => x.id === id);
+      lines.push(`Image ${sentNow + images.length}: file ${id} "${u?.fileName ?? "image"}", dropped earlier.`);
+    } catch {
+      /* a missing image just isn't sent again */
+    }
+  }
+  return { images, note: lines.length ? `Images the student dropped earlier, attached again so you can still see them:\n${lines.join("\n")}` : "" };
 }
