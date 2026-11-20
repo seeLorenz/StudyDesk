@@ -2,13 +2,15 @@
 
 The Orchestrator is the only agent the student talks to about their desk. The one exception is the tutor: when the student asks about a problem, an explanation or any passage through the improved interface (Ask and select-to-reply), or works through the mistake review after grading, a separate Claude instance answers there. Everything else goes through the Orchestrator. It answers questions about their StudyDesk, takes every change to their semester, and passes the heavy work on to the organization agent, which the student never sees. This file covers what the Orchestrator does after setup. Setting up a semester ([onboarding.md](onboarding.md)) is its first job and stays as designed there.
 
-Status: design draft, nothing built yet beyond the setup chat.
+Status: design agreed in principle (see Decisions), nothing built yet beyond the setup chat.
 
 ## The idea in short
 
 - **One chat, reachable from every screen.** The student opens it from anywhere, types, pastes or drops files, and the Orchestrator knows which screen they're on and what they selected.
 - **It talks; others do the work.** Small changes (a new date, a different target grade, a new study goal) it makes itself through page tools, checked by code. Big changes (new material to read, a new course, a course to re-map) it hands to the organization agent as a job, and reports back when the job is done.
-- **It's the organization agent's only voice.** When the organization agent needs something from the student (a missing date, a question about grading), the question reaches the student through the Orchestrator, never on its own.
+- **It's the organization agent's only voice.** When the organization agent needs something from the student (a missing date, a question about grading), a notification appears and the question reaches the student through the Orchestrator, never on its own.
+- **It acts like a teacher.** Grading only produces numbers. The Orchestrator turns them into words: it tells the student how they're doing, notices when they're slow or stuck, and says so when they're doing exceptionally well.
+- **It's the only agent with a lasting memory.** It keeps a running summary of what matters about the student and throws out what doesn't.
 - **It never makes up a number.** Mastery, streaks, points, time estimates and due dates come from code. The Orchestrator reads and explains them; it doesn't compute or guess them (**agents judge, code counts**).
 - **Everything it changes is logged and can be undone.** Each change keeps the student's words, what changed, and who did it, so the organization agent, the quest routine and the student all see the same history.
 
@@ -84,12 +86,41 @@ The organization agent's own design (how it reads, maps and decides) is its own 
 ## The chat itself
 
 - **One chat per semester.** The setup chat simply continues as the Orchestrator chat when setup is done; nothing new to learn. Old messages fold away by day, and a new semester starts a fresh chat (the old one is kept in the archive).
-- **Reachable everywhere.** A button in the sidebar and a keyboard shortcut open it as a side panel over the current screen. When the student has text selected, "Ask StudyDesk about this" puts the selection in the message (a quest problem, a date on the overview).
+- **Reachable everywhere.** A button in the sidebar and a keyboard shortcut open it as a side panel over the current screen, and the panel can be expanded to a full window for longer talks (to be tuned once it's used in production). When the student has text selected, "Ask StudyDesk about this" puts the selection in the message (a quest problem, a date on the overview).
 - **Knows where the student is.** Each message carries the current screen and, when there is one, the quest part or course on it, so "this is too long" or "move this to Friday" needs no explanation.
 - **Accepts everything** (guideline 2): typed text, dropped files, pasted images.
 - **Select-to-reply works on its messages and cards** (guideline 4), including change cards, job cards and job logs.
 - **Short by default.** Answers are a few sentences. Lists of what changed sit in the change card, not in the text.
-- **Speaks first only when something needs the student.** When the page opens and a job finished, a question from the organization agent is waiting, or a date the student should check is near, the Orchestrator shows one short line with what it is. Nothing otherwise, and no daily messages.
+- **Speaks first when there's a reason.** See "Notifications and check-ins" below.
+
+## Notifications and check-ins
+
+The Orchestrator speaks first, like a good teacher or assistant would. **Code decides when** there's a reason (each trigger is a plain rule on the stats, so it's testable and never guessed); **Claude writes what to say**, short and personal.
+
+| Trigger (checked by code) | Example of what the Orchestrator says |
+| --- | --- |
+| The organization agent needs something (a to-do item from a job or a scheduled run) | "Your Analysis syllabus doesn't say how homework counts. Do you know?" |
+| A job finished | "I've read sheet 5: 4 tasks, due Thursday." |
+| Too slow: actual time over planned time by a set margin over the last few quests | "Your last three quests took about 40% longer than planned. Integration problems are where the time goes. Want me to plan a bit less per day, or should we train speed on those?" |
+| Stats bad: a course falls off track for its target grade, or lapses pile up | "Linear Algebra is slipping behind what a 2 needs. Two eigenvalue skills lapsed this week. I'd put more of them into the next quests." |
+| Stats exceptionally good: ahead of plan, long clean streak, a topic fully mastered | "All of chapter 3 mastered, a week before plan. Nice work." |
+| A date the student should check is near | "The Analysis exam is in 14 days. Is 4 Feb still right?" |
+| After each grading run | One short note on the day: what went well, what to look at in the mistake review. |
+
+- **Where it shows.** A badge on the Orchestrator button on every screen, and the message waiting in the chat. A question from the organization agent stays marked until it's answered.
+- **Not nagging.** At most one unprompted message per kind per day, the post-grading note included. Needs (questions, finished jobs) always show.
+- **The margins** (how slow is "too slow", what counts as "exceptionally good") are tunable numbers in code, like the other mastery settings.
+
+## Memory
+
+The Orchestrator is the only agent with a lasting memory. Everyone else (grading agent, tutor, organization agent jobs) starts fresh each time and reads records.
+
+- **What goes into each call:** the desk snapshot, the memory summary, and the last 30 messages.
+- **The memory summary** is a short document the Orchestrator keeps about the student: preferences ("prefers short evening sessions"), what's been agreed ("no studying on Sundays during exam weeks"), how they're doing and feeling, open threads ("waiting for the professor's answer on the oral exam"), and anything the student asked it to remember.
+- **When it's refreshed:** once the messages not yet summarized pass a set size (about 6,000 words), and at the end of each day the chat was used. Claude rewrites the summary from the old summary plus those messages.
+- **What it throws out:** questions that led nowhere, small talk, and explanations it gave because the student asked a learning question in the wrong place (those belong to the tutor). Changes don't need to stay in the summary either: they're in the change log and the records.
+- **What's never lost:** student facts are stored word for word as their own records, and the full chat stays in the student's data (folded away), so the summary can be rebuilt or checked.
+- **The student can see it.** "What do you remember about me?" shows the summary, and the student can correct it by talking.
 
 ## What the Orchestrator sees and can do
 
@@ -102,6 +133,7 @@ The same pattern as the setup chat: a compact summary of the desk in the prompt,
 - Per course: mastery and on-track status as code computed them, and a count of open review items.
 - Open jobs and their status, open to-do items.
 - The last few changes from the change log.
+- Signals code computed for check-ins: planned against actual time, on-track status, recent lapses and streaks.
 - The current screen and selection.
 
 This stays small. Anything detailed is fetched with a look-up tool only when the question needs it.
@@ -130,7 +162,9 @@ This stays small. Anything detailed is fetched with a look-up tool only when the
 | Job | `id`, `kind` (new material, new course, re-map, drop course, look-up), `courseId`, `studentWords`, `uploadIds[]`, `changesSince`, `status` (queued, running, done, failed), `log[]`, `result`, `runsIn` (cloud, page) | Uses the existing job document for cloud hand-off |
 | To-do item | already exists from onboarding | Gains `jobId`, so questions from later jobs use the same list |
 | Day off | `date`, `reason` | Quest budget for that day is 0; reviews move to the next study day |
-| Orchestrator chat | `semesterId`, messages with attachments, change and job cards inline | Continues the setup chat |
+| Orchestrator chat | `semesterId`, messages with attachments, change and job cards inline, `summarizedUpTo` | Continues the setup chat |
+| Orchestrator memory | `text`, `updatedAt`, `coversUpTo` | The running summary, one per student, carried across semesters |
+| Notification | `id`, `kind` (needs answer, job done, too slow, off track, doing great, check date, day note), `at`, `courseId` or none, `seenAt`, `answeredAt` | Code writes the trigger; the Orchestrator writes the text |
 
 **Used as they are:** profile, semester, course, course target, weekly timetable, study goal, upload, student facts (onboarding); assessment result, skill state (grading spec); quest settings (quest creation).
 
@@ -168,20 +202,25 @@ This stays small. Anything detailed is fetched with a look-up tool only when the
 
 ## Notes for the other modules
 
-- **Organization agent:** must accept the job kinds above (new material, new course, re-map, drop course, look-up), read the `changesSince` it's given, write the same records as the setup run, return at most 3 questions per job as to-do items, and never talk to the student directly.
+- **Organization agent:** needs regular runs, not only jobs started by changes, so the student and the system stay up to date. Proposal for its own design: one scheduled run per day before the morning quest routine (for example 05:30) that checks dates, open homework and anything that changed, plus a weekly deeper check per course (new material online, upcoming exam formats). Questions from these runs reach the student as notifications through the Orchestrator. It also must accept the job kinds above (new material, new course, re-map, drop course, look-up), read the `changesSince` it's given, write the same records as the setup run, return at most 3 questions per job as to-do items, and never talk to the student directly.
 - **Quest creation / morning routine:** read days off and the change log; respect "started quests are never rewritten"; offer a `rebuild_quest` entry point for an unstarted quest.
 - **Grading and mastery:** assessment results now arrive through `change`. Nothing else changes. The Orchestrator needs one code function that answers "on track for the target grade?" with the numbers, so it never computes them itself.
 - **Ask interface and tutor (including the mistake review):** needs an "open with this question" entry point for `open_ask`, and one tool, `pass_to_orchestrator`, that hands an organizing remark on word for word with where it was said.
 - **Onboarding:** the setup chat becomes the first part of the Orchestrator chat; its prompt switches to the everyday prompt once setup is done. `update_sheet` stays the setup-time tool.
 
+## Decisions
+
+Settled with Lorenz on 2026-11-20.
+
+1. **Learning questions go to the tutor.** The Orchestrator sends them to Ask (`open_ask`) and doesn't teach. The tutor is the only other agent the student talks to, and it passes organizing remarks on to the Orchestrator.
+2. **Small changes apply at once with Undo.** Only deletes, dropping a course and full re-reads ask first.
+3. **The student sees it as "StudyDesk".** "Orchestrator" is only the internal name.
+4. **It speaks first like a teacher:** when it needs something, when the student is too slow, when stats are bad or exceptionally good, and with a short note after each grading run. See "Notifications and check-ins".
+5. **Side panel, expandable to a full window.** The exact layout is decided once it's used in production.
+6. **New files start a job automatically.** Re-reading everything a course already has asks first.
+7. **Each call gets the snapshot, the memory summary and the last 30 messages.** See "Memory".
+
 ## Open questions
 
-Each has a recommendation; nothing is built until these are settled.
-
-1. **Should the Orchestrator also teach, or send learning questions to Ask?** Recommendation: send them to Ask (`open_ask`). One place to learn keeps notes and history together, and the Orchestrator's prompt stays about organizing.
-2. **Apply small changes at once with Undo, or confirm every change first?** Recommendation: at once with Undo; confirm only deletes, dropping a course and full re-reads. Confirming every date change makes the chat slow and teaches the student to click yes without reading.
-3. **What does the student call it?** "Orchestrator" is the internal name. Recommendation: the student just sees "StudyDesk" on the chat button and messages ("Ask StudyDesk about this"), so there's no agent to learn about.
-4. **Should it ever message first?** Recommendation: only on page open, one line, and only when something needs the student (job done, question waiting, date to check). No daily summaries; the quest overview already does that job.
-5. **Where does the chat live on screen?** Recommendation: a side panel opened from the sidebar or a shortcut, over any screen, rather than its own page, so the student never loses their place in a quest.
-6. **Should new files start a job automatically?** Recommendation: yes for new files (the student dropped them for a reason), with the job card showing at once; ask first only before re-reading everything a course already has.
-7. **How much chat history goes into each call?** Recommendation for the MVP: the snapshot plus the last 30 messages and all student facts; older messages fold away and aren't sent. Smarter trimming belongs to the token optimization after the MVP.
+1. **When does the organization agent run on its own?** Proposed above under "Notes for the other modules" (daily before the quest routine, weekly deeper check); decided in the organization agent's own design.
+2. **Exact margins for the check-ins** (how much slower counts as too slow, over how many quests). Recommendation: start with 30% over planned time across the last 3 quests, and tune from real use.
