@@ -202,7 +202,7 @@ This stays small. Anything detailed is fetched with a look-up tool only when the
 
 ## Notes for the other modules
 
-- **Organization agent:** needs regular runs, not only jobs started by changes, so the student and the system stay up to date. Proposal for its own design: one scheduled run per day before the morning quest routine (for example 05:30) that checks dates, open homework and anything that changed, plus a weekly deeper check per course (new material online, upcoming exam formats). Questions from these runs reach the student as notifications through the Orchestrator. It also must accept the job kinds above (new material, new course, re-map, drop course, look-up), read the `changesSince` it's given, write the same records as the setup run, return at most 3 questions per job as to-do items, and never talk to the student directly.
+- **Organization agent:** needs regular runs, not only jobs started by changes, so the student and the system stay up to date. Agreed with Lorenz: a shallow run every day before the morning quest routine (dates, open homework, anything that changed). Deep sweeps per course are scheduled by the organization agent itself: after setup, and after each sweep, it decides when the next one is due (for example before an exam phase). New material from the student doesn't wait for a sweep: the Orchestrator starts a job for it at once. Questions from these runs reach the student as notifications through the Orchestrator. It also must accept the job kinds above (new material, new course, re-map, drop course, look-up), read the `changesSince` it's given, write the same records as the setup run, return at most 3 questions per job as to-do items, and never talk to the student directly.
 - **Quest creation / morning routine:** read days off and the change log; respect "started quests are never rewritten"; offer a `rebuild_quest` entry point for an unstarted quest.
 - **Grading and mastery:** assessment results now arrive through `change`. Nothing else changes. The Orchestrator needs one code function that answers "on track for the target grade?" with the numbers, so it never computes them itself.
 - **Ask interface and tutor (including the mistake review):** needs an "open with this question" entry point for `open_ask`, and one tool, `pass_to_orchestrator`, that hands an organizing remark on word for word with where it was said.
@@ -219,8 +219,5 @@ Settled with Lorenz on 2026-11-20.
 5. **Side panel, expandable to a full window.** The exact layout is decided once it's used in production.
 6. **New files start a job automatically.** Re-reading everything a course already has asks first.
 7. **Each call gets the snapshot, the memory summary and the last 30 messages.** See "Memory".
-
-## Open questions
-
-1. **When does the organization agent run on its own?** Proposed above under "Notes for the other modules" (daily before the quest routine, weekly deeper check); decided in the organization agent's own design.
-2. **Exact margins for the check-ins** (how much slower counts as too slow, over how many quests). Recommendation: start with 30% over planned time across the last 3 quests, and tune from real use.
+8. **Organization agent runs:** a shallow run daily; deep sweeps scheduled by the organization agent itself after setup and after each sweep; new material from the student starts a job at once. Details belong to its own design.
+9. **Check-in margin:** "too slow" starts at 30% over planned time across the last 3 quests, tunable in code.
