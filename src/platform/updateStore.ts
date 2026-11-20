@@ -11,7 +11,7 @@ import { contentTypeOf, ImportError, parseBackupZip, prepareImport, relink } fro
 import { countDocs, diffSnapshots, toSnapshot, type Snapshot, type SnapshotWrite } from "../updates/layout";
 import { dataVersionOf, upgrade } from "../updates/migrations";
 import { validateSnapshot } from "../updates/validate";
-import { emptyUpdates, keepBackups, planLoad, publishJobBody, UPDATE_TIMEOUT_MS, readUpdates, type Backup, type Failure, type Pending, type ReleaseDoc, type UpdatesDoc } from "../updates/plan";
+import { checkJobBody, emptyUpdates, keepBackups, parseCheckAnswer, planLoad, publishJobBody, type UpdateCheck, UPDATE_TIMEOUT_MS, readUpdates, type Backup, type Failure, type Pending, type ReleaseDoc, type UpdatesDoc } from "../updates/plan";
 import { APP_VERSION, DATA_VERSION } from "../updates/version";
 
 export type UpdateEnv = { db: DB; uid: string; assets: Claude.Assets | null };
@@ -49,7 +49,9 @@ export async function changeUpdates(e: UpdateEnv, fn: (d: UpdatesDoc) => Updates
 export async function loadRelease(e: UpdateEnv): Promise<ReleaseDoc | null> {
   const s = await ref(e, "release").get();
   const d = s.exists ? (s.data() as Partial<ReleaseDoc>) : null;
-  return d && typeof d.latest === "string" ? { latest: d.latest, notes: typeof d.notes === "string" ? d.notes : null, dataVersion: typeof d.dataVersion === "number" ? d.dataVersion : null, checkedAt: Number(d.checkedAt) || 0 } : null;
+  return d && typeof d.latest === "string"
+    ? { latest: d.latest, notes: typeof d.notes === "string" ? d.notes : null, dataVersion: typeof d.dataVersion === "number" ? d.dataVersion : null, checkedAt: Number(d.checkedAt) || 0, ...(Array.isArray(d.releases) ? { releases: d.releases } : {}) }
+    : null;
 }
 
 // ---------- backups ----------
@@ -335,4 +337,58 @@ export async function importBackup(zip: Uint8Array, onProgress: (line: string) =
   await applyWrites(e, writes, onProgress);
   await changeUpdates(e, (d) => ({ ...d, dataVersion: DATA_VERSION, pending: null, failure: null, lastUpdate: null }));
   return { documents: countDocs(target), files: newIds.size, notRestored };
+}
+
+// ---------- "Check for updates" (the version panel) ----------
+
+/** Fired on the window when the release note changed, so every update notice re-reads it at once. */
+export const RELEASE_EVENT = "studydesk:release";
+
+async function saveRelease(e: UpdateEnv, doc: ReleaseDoc): Promise<void> {
+  await ref(e, "release").set(plain(doc));
+  window.dispatchEvent(new Event(RELEASE_EVENT));
+}
+
+/**
+ * Starts a quick cloud session that reads the releases branch, instead of
+ * waiting for the nightly run. Works any time, also during setup.
+ */
+export async function startUpdateCheck(onProgress: (line: string) => void): Promise<UpdateCheck> {
+  const e = await updateEnv();
+  if (!e) throw new Error("Checking for updates only works inside StudyDesk on claude.ai.");
+  onProgress("Checking that Claude sessions can start…");
+  const setup = await readyHandoff(e);
+  onProgress("Starting a Claude session to look for updates…");
+  const job = await startJob(setup, "Check for StudyDesk updates", checkJobBody());
+  const check: UpdateCheck = { jobId: job.jobId, startedAt: Date.now() };
+  await changeUpdates(e, (d) => ({ ...d, check }));
+  return check;
+}
+
+/**
+ * Where a check stands. When it's done, the answer is read by code and saved
+ * as the release note; the check is then cleared either way.
+ */
+export async function followUpdateCheck(check: UpdateCheck): Promise<{ status: "working" | "done" | "failed"; line: string | null; release: ReleaseDoc | null; error: string | null }> {
+  const e = await updateEnv();
+  if (!e) return { status: "failed", line: null, release: null, error: "Not on claude.ai." };
+  const doc = await readJobDoc(check.jobId).catch(() => null);
+  const p = jobProgress(doc, { startedAt: check.startedAt, changedAt: Number(doc?.updatedAt) || check.startedAt }, Date.now());
+  const clear = async () => {
+    await changeUpdates(e, (d) => (d.check?.jobId === check.jobId ? { ...d, check: null } : d)).catch(() => undefined);
+    await removeJob(check.jobId);
+  };
+  if (p.status === "done") {
+    const release = p.answer !== null ? parseCheckAnswer(p.answer, Date.now()) : null;
+    const empty = /^\s*\[\s*\]\s*$/.test(p.answer ?? "");
+    if (release) await saveRelease(e, release);
+    await clear();
+    if (release || empty) return { status: "done", line: null, release, error: null };
+    return { status: "failed", line: null, release: null, error: "The answer from the check couldn't be read." };
+  }
+  if (p.status === "failed") {
+    await clear();
+    return { status: "failed", line: null, release: null, error: p.error };
+  }
+  return { status: "working", line: p.status === "waiting" ? "Waiting for the Claude session to start…" : p.log[p.log.length - 1] ?? "Looking at the releases…", release: null, error: null };
 }
