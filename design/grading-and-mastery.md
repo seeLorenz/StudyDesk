@@ -85,7 +85,7 @@ The attempt log is the only source of truth. Every other number (streaks, review
 | Course target | Onboarding or Orchestrator | `courseId`, `targetGrade`, `gradeScale` |
 | Attempt | App code, from the grading agent's verdict | `id`, `skillId`, `questId`, `part` (practice, assignment, review, check, assessment), `day`, `verdict` (solved, slip, not understood), `points`, `maxPoints`, `hintsUsed`, `sawWorkedExample`, `activeSeconds`, `startedAt`, `gradedAt` |
 | Review item | App code | `attemptId`, `kind` (slip or real error), `status` (open, answered, talked through, resolved), `slipAnswer` (confirmed, disputed, or not answered yet), `slipQuestion`, `chatId` |
-| Skill state | App code (a cache, rebuilt from attempts) | `skillId`, `stage` (new, learning, mastered, lapsed), `streak`, `ladderStep`, `dueAt`, `lapses`, `medianSeconds` |
+| Skill state | App code (a cache, rebuilt from attempts) | `skillId`, `stage` (new, learning, mastered, lapsed), `streak`, `ladderStep`, `dueAt`, `lapses`, `fastTrackFrom` (day of a first-sight clean solve while every attempt since was clean), `medianSeconds` |
 | Assessment result | Student, through the Orchestrator | `assessmentId`, `courseId`, `component`, `points`, `maxPoints`, `date` |
 
 Attempts are never edited. The student's answer to a slip question is stored on the review item, and the skill state is recomputed.
@@ -123,6 +123,10 @@ The grading agent judges one handed-in quest and returns plain data. It has no m
 
 A skill is mastered after `streakTarget` clean solves (default 3) on different days. After that it climbs a review ladder, and a real miss sends it back to learning.
 
+**Fast track for skills the student already knows.** Solving a skill clean on first sight does not count as mastered on its own: it could be luck or short-term memory. But if the very first attempt is a clean solve, the skill comes back after 3 days instead of the next day, and a second clean solve then masters it (with the usual mastery bonus). The track closes for good on anything that isn't a clean solve (hints, a worked example, a slip, a miss); from then on the normal streak target applies. Extra clean solves in between don't break it, and two clean solves less than 3 days apart simply count toward the normal streak. A skill relearned after a lapse never takes the fast track. The 2 solves and the 3-day gap live in the config (`fastTrack`).
+
+**Placement check exception.** In the fundamentals check right after onboarding, a skill solved on first sight counts as mastered at once (no mastery bonus, only its solve points).
+
 Skill stages: **new → learning → mastered → retained**, with **lapsed** as the one way back (a mastered skill that was not understood on review returns to learning).
 
 **How each result changes the streak**
@@ -144,7 +148,7 @@ The once-per-day limit makes sure a streak means "can still do it tomorrow", not
 | Normal | 3 | 7 | 16 | 35 | | Retained: one check before its exam |
 | Hard | 2 | 4 | 8 | 16 | 35 | Retained: one check before its exam |
 
-- While a skill is still learning, it comes back the next study day until the streak target is reached.
+- While a skill is still learning, it comes back the next study day until the streak target is reached. The one exception is a first-sight clean solve, which comes back after 3 days (the fast track).
 - A retained skill gets one check in the 7 days before any exam that covers it.
 - The ladder values live in one config table, so they can be tuned after testing without touching anything else.
 
