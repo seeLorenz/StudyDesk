@@ -379,3 +379,13 @@ describe("setup to-do list", () => {
     expect(staleCourses(d).map((c) => c.id)).toEqual(["c1"]);
   });
 });
+
+describe("setup in a cloud session", () => {
+  it("asks for web research and caps file text", () => {
+    const si = { ...input, draft: { name: "WS", startDate: "2026-10-01", endDate: "2027-02-28" }, facts: [], files: [] };
+    const web = setupTurns(si, { web: true }).turns[0].content;
+    expect(web).toContain("## Web research");
+    expect(web).toContain("Search the web for the official description");
+    expect(setupTurns(si).turns[0].content).not.toContain("## Web research");
+  });
+});

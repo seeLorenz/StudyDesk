@@ -21,6 +21,8 @@ export type Profile = {
   program: string;
   year: string;
   updatedAt: number;
+  /** The cloud environment and saved "StudyDesk agent" task used for hand-off. */
+  handoff?: { environmentId: string; triggerId: string };
 };
 
 export type CourseSetupStatus = "waiting" | "reading" | "ready" | "needs_check" | "failed";
@@ -36,6 +38,21 @@ export type DraftCourse = {
   targetGrade: number | null;
   setupStatus: CourseSetupStatus;
   setupError?: string;
+  /** The cloud session reading this course right now, if it was handed off. */
+  job?: CloudJob;
+  /** Why this course is read in the page instead of a cloud session. */
+  cloudFailed?: string;
+};
+
+/** A setup run handed to a cloud session (src/platform/handoff.ts). */
+export type CloudJob = {
+  sessionId: string;
+  startedAt: number;
+  /** The last session event already shown, so following it resumes after a reload. */
+  lastEventId: string | null;
+  /** The F1, F2… keys the session's answer uses for files, mapped to upload ids. */
+  fileKeys: Record<string, string>;
+  readIds: string[];
 };
 
 /** One original file the student dropped in. The file itself stays in the student's StudyDesk. */
@@ -113,6 +130,8 @@ export type SemesterDraft = {
   notes?: Note[];
   /** To-do items on the done screen the student ticked off ("upload", "q-<courseId>"). */
   todoDone?: string[];
+  /** The student chose to set up without cloud sessions for now. */
+  handoffSkipped?: boolean;
   createdAt: number;
   updatedAt: number;
 };

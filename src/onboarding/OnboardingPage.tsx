@@ -25,8 +25,9 @@ import { SHEET_TOOL_DESCRIPTION, SHEET_TOOL_SCHEMA, applySheetUpdate, chatTurns,
 import { placementWriter, planPlacement } from "./placement";
 import { gradeSteps } from "./scales";
 import { setupTodo, staleCourses, type TodoItem } from "./todo";
-import { buildSemester, localSetup, runCourseSetup, type FileForSetup, liveProgress, type LiveProgress } from "./setup";
-import type { DraftCourse, Profile, SemesterDraft, SetupMessage, SetupStep, Upload } from "./types";
+import { buildSemester, CLOUD_CHARS, localSetup, parseSetup, runCourseSetup, setupTurns, type FileForSetup, type SetupInput, liveProgress, type LiveProgress } from "./setup";
+import { archiveJob, byteLength, checkHandoff, MAX_JOB_BYTES, readJob, sessionUrl, startJob, type HandoffSetup, type HandoffState } from "../platform/handoff";
+import type { CloudJob, CourseSetup, DraftCourse, Profile, SemesterDraft, SetupMessage, SetupStep, Upload } from "./types";
 
 // Start New Semester: one chat with the Orchestrator, with the semester sheet
 // beside it. design/onboarding.md. The student talks, pastes and drops files;
@@ -172,6 +173,24 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   );
   const go = (setupStep: SetupStep) => update((d) => ({ ...d, setupStep }));
 
+  // ---- hand-off: can long work go to cloud sessions? ----
+  const [handoff, setHandoff] = useState<HandoffState | null>(null);
+  const recheckHandoff = useCallback(
+    async (connect: boolean) => {
+      if (!env?.live) return setHandoff({ kind: "unavailable", detail: "local preview" });
+      const st = await checkHandoff(profileRef.current.handoff, connect);
+      setHandoff(st);
+      const saved = profileRef.current.handoff;
+      if (st.kind === "ready" && (saved?.environmentId !== st.setup.environmentId || saved?.triggerId !== st.setup.triggerId)) {
+        updateProfile((p) => ({ ...p, handoff: st.setup }));
+      }
+    },
+    [env, updateProfile],
+  );
+  useEffect(() => {
+    if (env) void recheckHandoff(false);
+  }, [env, recheckHandoff]);
+
   // ---- select-to-reply on the chat and the setup report ----
   const blocks = useMemo(() => {
     const m = new Map<string, { text: string; label: string }>();
@@ -203,7 +222,7 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   if (!env || !draft) return <div className="quest-page"><p className="quest-muted">Loading…</p></div>;
 
   const returning = env.current?.source === "onboarding" && env.current.id !== draft.id;
-  const props: StepProps = { env, draft, profile, update, updateProfile, go, today, flush, md, onDone, setEnv, returning, draftRef, profileRef };
+  const props: StepProps = { env, draft, profile, update, updateProfile, go, today, flush, md, onDone, setEnv, returning, draftRef, profileRef, handoff, recheckHandoff };
 
   return (
     <div className="quest-page setup-page" ref={scroller} data-select-scope="">
@@ -214,6 +233,7 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
       </header>
       <div className="setup-grid">
         <section className="setup-main">
+          {draft.setupStep !== "running" && <HandoffCard {...props} />}
           <SetupChat {...props} />
           {draft.setupStep === "running" && <Running {...props} />}
           {draft.setupStep === "done" && <Done {...props} />}
@@ -241,15 +261,77 @@ type StepProps = {
   returning: boolean;
   draftRef: React.MutableRefObject<SemesterDraft | null>;
   profileRef: React.MutableRefObject<Profile>;
+  /** Whether long work can go to cloud sessions (null while checking). */
+  handoff: HandoffState | null;
+  recheckHandoff: (connect: boolean) => Promise<void>;
 };
 
 function Actions({ children }: { children?: React.ReactNode }) {
   return <div className="setup-actions">{children}</div>;
 }
 
+// ---------- hand-off: Claude Code on the web ----------
+
+const HANDOFF_WHY =
+  "Setting up a semester means reading many files and looking courses up online. StudyDesk hands that to Claude sessions in the cloud (Claude Code on the web). They can search the web, keep working when this page is closed, and stay out of your normal Claude chat list: they're tagged StudyDesk and archived when they finish. Without them, StudyDesk reads your files here in the page and can only guess courses you have no files for.";
+
+function HandoffCard({ handoff, recheckHandoff, draft, update }: StepProps) {
+  const [checking, setChecking] = useState(false);
+  if (!handoff || handoff.kind === "unavailable" || handoff.kind === "ready" || draft.handoffSkipped) return null;
+  const check = async (connect: boolean) => {
+    setChecking(true);
+    try {
+      await recheckHandoff(connect);
+    } finally {
+      setChecking(false);
+    }
+  };
+  const steps: Record<string, { title: string; body: string; action?: "connect" | "open" }> = {
+    ask: { title: "Let StudyDesk start cloud sessions", body: "One click: allow the “Claude Code Remote” connector when claude.ai asks.", action: "connect" },
+    no_connector: {
+      title: "Turn on Claude Code on the web",
+      body: "1. Open claude.ai/code and finish its short first-time setup.\n2. Come back here and press “Check again”, then allow access when claude.ai asks.",
+      action: "open",
+    },
+    no_environment: { title: "Finish setting up Claude Code on the web", body: "Open claude.ai/code once and finish its setup: StudyDesk needs one cloud environment there. Then press “Check again”.", action: "open" },
+    no_tools: { title: "Cloud sessions aren't allowed here", body: "Your plan or organization doesn't let apps start Claude Code sessions. StudyDesk still works: it reads your files here in the page." },
+    declined: { title: "Cloud sessions are turned off", body: "You said no when claude.ai asked. To allow them, open this page's Permissions in the artifact menu, then press “Check again”." },
+  };
+  const key = handoff.kind === "off" ? handoff.reason : handoff.kind;
+  const st = steps[key];
+  if (!st) return null;
+  return (
+    <div className="handoff-card" role="note">
+      <h3>{st.title}</h3>
+      <p className="handoff-why">{HANDOFF_WHY}</p>
+      <p className="handoff-steps">{st.body}</p>
+      <div className="handoff-actions">
+        {st.action === "connect" && (
+          <button type="button" className="mini-btn primary" disabled={checking} onClick={() => void check(true)}>
+            {checking ? "Connecting…" : "Allow cloud sessions"}
+          </button>
+        )}
+        {st.action === "open" && (
+          <a className="mini-btn primary" href="https://claude.ai/code" target="_blank" rel="noreferrer">
+            Open claude.ai/code
+          </a>
+        )}
+        {key !== "ask" && key !== "no_tools" && (
+          <button type="button" className="mini-btn" disabled={checking} onClick={() => void check(true)}>
+            {checking ? "Checking…" : "Check again"}
+          </button>
+        )}
+        <button type="button" className="link-btn" onClick={() => update((d) => ({ ...d, handoffSkipped: true }))}>
+          Not now
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---------- the setup chat ----------
 
-function SetupChat({ env, draft, update, updateProfile, today, flush, md, returning, draftRef, profileRef }: StepProps) {
+function SetupChat({ env, draft, update, updateProfile, today, flush, md, returning, draftRef, profileRef, handoff }: StepProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const ctl = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -324,7 +406,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
           .join("\n\n");
         const c = new AbortController();
         ctl.current = c;
-        const turns = chatTurns(draftRef.current!.chat!.filter((m) => m.id !== reply.id), sheetSnapshot(draftRef.current!, profileRef.current, today), returning, extra);
+        const turns = chatTurns(draftRef.current!.chat!.filter((m) => m.id !== reply.id), sheetSnapshot(draftRef.current!, profileRef.current, today, handoff?.kind === "ready" ? "on" : handoff && handoff.kind !== "unavailable" ? "off" : "unknown"), returning, extra);
         const answer = await askClaude(turns, {
           signal: c.signal,
           images: sendImages,
@@ -377,7 +459,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
       ctl.current = null;
       setBusy(null);
       if (startNow && setupReady(draftRef.current!).ok) {
-        update((d) => ({ ...d, setupStep: "running", courses: d.courses.map((c) => ((c.setupStatus === "ready" || c.setupStatus === "needs_check") && !staleCourses(d).some((s) => s.id === c.id) ? c : { ...c, setupStatus: "waiting" })) }));
+        update((d) => ({ ...d, setupStep: "running", courses: d.courses.map((c) => ((c.setupStatus === "ready" || c.setupStatus === "needs_check") && !staleCourses(d).some((s) => s.id === c.id) ? c : { ...c, setupStatus: "waiting", cloudFailed: undefined })) }));
       }
       void flush();
     }
@@ -434,11 +516,13 @@ function addDaysLocal(day: string, n: number): string {
 
 // ---------- 6b. the setup run ----------
 
-function Running({ env, draft, profile, update, go, today, flush, md, draftRef: pageDraftRef }: StepProps) {
+type FeedEntry = { prep: string[]; live: LiveProgress | null; model?: string; log?: string[] };
+
+function Running({ env, draft, profile, update, go, today, flush, md, draftRef: pageDraftRef, handoff }: StepProps) {
   const running = useRef(false);
   const [finishError, setFinishError] = useState<string | null>(null);
   // The live feed: what the org agent is doing right now, per course. Not saved.
-  const [feed, setFeed] = useState<Record<string, { prep: string[]; live: LiveProgress | null; model?: string }>>({});
+  const [feed, setFeed] = useState<Record<string, FeedEntry>>({});
   const setPrep = (id: string, prep: string[]) => setFeed((f) => ({ ...f, [id]: { prep, live: null } }));
   // The page's own draft ref: updated the moment update() runs, not on the next render.
   const draftRef = pageDraftRef as React.MutableRefObject<SemesterDraft>;
@@ -452,68 +536,159 @@ function Running({ env, draft, profile, update, go, today, flush, md, draftRef: 
     return env.mastery.skills.filter((s): s is Skill => s.isFundamental && ["mastered", "retained"].includes(states.get(s.id)?.stage ?? ""));
   }, [env.mastery]);
 
+  const cloud = env.live && handoff?.kind === "ready" ? handoff.setup : null;
+  const pageBusy = useRef(false);
+
+  /** Loads a course's kept files and builds the run's input. */
+  const prepare = useCallback(
+    async (c: DraftCourse, d: SemesterDraft, images: boolean) => {
+      const files: FileForSetup[] = [];
+      const all = d.uploads.filter((x) => x.courseId === c.id);
+      for (const u of all) {
+        const content = await env.os.loadUploadContent(u.id);
+        if (!content) continue;
+        if (content.image && !images) continue;
+        files.push({ upload: u, text: content.text ?? null, image: content.image ? dataUrlToBlob(content.image) : null });
+      }
+      const facts = d.facts.filter((f) => f.courseId === c.id);
+      const input: SetupInput = { profile, draft: d, course: c, facts, files, today, priorFundamentals: prior };
+      const prep: string[] = [];
+      for (const f of files) prep.push(`Opened ${f.upload.fileName}${f.text && f.text.includes("--- page ") ? `, ${(f.text.match(/--- page \d+ ---/g) ?? []).length} pages` : f.image ? ", an image" : ""}`);
+      if (all.length > files.length) prep.push(`${all.length - files.length} ${all.length - files.length === 1 ? "file" : "files"} couldn't be opened in this view and are skipped`);
+      if (facts.length) prep.push(`Using ${facts.length} ${facts.length === 1 ? "thing" : "things"} you told me about this course`);
+      return { input, files, prep };
+    },
+    [env, profile, today, prior],
+  );
+
+  const saveResult = useCallback(
+    (c: DraftCourse, res: CourseSetup & { clipped: string[] }, readIds: string[]) => {
+      const { clipped, ...result } = res;
+      if (clipped.length) result.questions.push(`Only the first part of ${clipped.join(", ")} fit into one reading. Tell StudyDesk which chapters matter most.`);
+      const check = result.conflicts.length > 0 || result.questions.length > 0 || result.truncated || result.basis === "general";
+      const now = Date.now();
+      update((x) => ({
+        ...x,
+        results: { ...x.results, [c.id]: result },
+        uploads: x.uploads.map((u) => (readIds.includes(u.id) ? { ...u, cataloguedAt: now } : u)),
+        courses: x.courses.map((k) => (k.id === c.id ? { ...k, setupStatus: check ? "needs_check" : "ready", teachingLanguage: result.teachingLanguage, job: undefined } : k)),
+      }));
+    },
+    [update],
+  );
+
+  /** One course, read here in the page (no cloud session, or it doesn't fit one). */
+  const runInPage = useCallback(
+    async (c: DraftCourse) => {
+      pageBusy.current = true;
+      try {
+        setCourse(c.id, { setupStatus: "reading", setupError: undefined });
+        await flush();
+        const { input, files, prep } = await prepare(c, draftRef.current, await canSendImages());
+        if (!files.length) prep.unshift("No files for this course, so this is an estimate from the course name and your program, not your syllabus.");
+        setPrep(c.id, prep);
+        let lastKey = "";
+        const onText = (t: string) => {
+          const live = liveProgress(t);
+          const key = `${live.log.length}|${live.stage}|${live.topics}|${live.skills}`;
+          if (key === lastKey) return;
+          lastKey = key;
+          setFeed((f) => ({ ...f, [c.id]: { ...f[c.id], prep, live } }));
+        };
+        const res = env.live ? await runCourseSetup(input, askClaude, undefined, onText) : await previewRun(input, onText);
+        const used = lastModel();
+        if (env.live && used) setFeed((f) => ({ ...f, [c.id]: { ...f[c.id], model: used.opus ? "Opus" : `most capable model available (${used.tier} tier) answered instead` } }));
+        saveResult(c, res, files.map((f) => f.upload.id));
+      } catch (e) {
+        setCourse(c.id, { setupStatus: "failed", setupError: message(e) });
+      } finally {
+        pageBusy.current = false;
+        await flush();
+      }
+    },
+    [env, prepare, saveResult, setCourse, flush],
+  );
+
+  /** Hands one course to a cloud session. False when it has to be read in the page instead. */
+  const startCloud = useCallback(
+    async (c: DraftCourse, setup: HandoffSetup): Promise<boolean> => {
+      const { input, files, prep } = await prepare(c, draftRef.current, false);
+      if (files.some((f) => f.image)) return false; // images only go through the page
+      const built = setupTurns(input, { web: true, maxChars: CLOUD_CHARS });
+      if (built.clipped.length || byteLength(built.turns[0].content) > MAX_JOB_BYTES) return false; // too long: the page reads more at once
+      setCourse(c.id, { setupStatus: "reading", setupError: undefined });
+      const sessionId = await startJob(setup, `Set up the course "${c.name}"`, built.turns[0].content);
+      const job: CloudJob = { sessionId, startedAt: Date.now(), lastEventId: null, fileKeys: Object.fromEntries(built.fileKeys), readIds: files.map((f) => f.upload.id) };
+      setCourse(c.id, { job });
+      setFeed((f) => ({ ...f, [c.id]: { prep: [...prep, "Handed to a cloud session: it reads your files and looks the course up online"], live: null, log: [] } }));
+      await flush();
+      return true;
+    },
+    [prepare, setCourse, flush],
+  );
+
+  /** Follows one cloud session; saves its result when it has finished. */
+  const pollCloud = useCallback(
+    async (c: DraftCourse) => {
+      const job = c.job!;
+      const p = await readJob(job.sessionId, job.lastEventId);
+      if (p.log.length) setFeed((f) => ({ ...f, [c.id]: { prep: f[c.id]?.prep ?? ["Working in a cloud session"], live: null, log: [...(f[c.id]?.log ?? []), ...p.log].slice(-12) } }));
+      if (p.lastEventId !== job.lastEventId) setCourse(c.id, { job: { ...job, lastEventId: p.lastEventId } });
+      if (p.status === "working") return;
+      void archiveJob(job.sessionId);
+      try {
+        if (p.status !== "done" || !p.answer) throw new Error("The cloud session stopped without an answer.");
+        const d = draftRef.current;
+        const input: SetupInput = { profile, draft: d, course: c, facts: d.facts.filter((f) => f.courseId === c.id), files: [], today, priorFundamentals: prior };
+        const result = parseSetup(p.answer, input, new Map(Object.entries(job.fileKeys)));
+        saveResult(c, { ...result, clipped: [] }, job.readIds);
+      } catch (e) {
+        // The page reads it instead.
+        setCourse(c.id, { job: undefined, cloudFailed: `${message(e)} Reading it here instead.`, setupStatus: "waiting" });
+      }
+      await flush();
+    },
+    [profile, today, prior, saveResult, setCourse, flush],
+  );
+
   const runAll = useCallback(async () => {
     if (running.current) return;
     running.current = true;
-    const images = await canSendImages();
     try {
       for (;;) {
         const d = draftRef.current;
-        const c = d.courses.find((x) => x.setupStatus === "waiting" || x.setupStatus === "reading");
-        if (!c) break;
-        setCourse(c.id, { setupStatus: "reading", setupError: undefined });
-        await flush();
-        try {
-          const files: FileForSetup[] = [];
-          for (const u of d.uploads.filter((x) => x.courseId === c.id)) {
-            const content = await env.os.loadUploadContent(u.id);
-            if (!content) continue;
-            if (content.image && !images) continue;
-            files.push({ upload: u, text: content.text ?? null, image: content.image ? dataUrlToBlob(content.image) : null });
+        const open = d.courses.filter((x) => x.setupStatus === "waiting" || x.setupStatus === "reading");
+        if (!open.length && !pageBusy.current) break;
+        // Start a cloud session for every course that can have one.
+        if (cloud) {
+          for (const c of open.filter((x) => x.setupStatus === "waiting" && !x.job && !x.cloudFailed)) {
+            try {
+              if (!(await startCloud(c, cloud))) setCourse(c.id, { cloudFailed: "Too big or has images for a cloud session." });
+            } catch (e) {
+              setCourse(c.id, { setupStatus: "waiting", cloudFailed: message(e) });
+            }
           }
-          const facts = d.facts.filter((f) => f.courseId === c.id);
-          const allFiles = d.uploads.filter((x) => x.courseId === c.id);
-          const prep: string[] = [];
-          if (files.length) {
-            for (const f of files) prep.push(`Opened ${f.upload.fileName}${f.text && f.text.includes("--- page ") ? `, ${(f.text.match(/--- page \d+ ---/g) ?? []).length} pages` : f.image ? ", an image" : ""}`);
-            if (allFiles.length > files.length) prep.push(`${allFiles.length - files.length} ${allFiles.length - files.length === 1 ? "file" : "files"} couldn't be opened in this view and are skipped`);
-          } else {
-            prep.push("No files for this course, so this is an estimate from the course name and your program, not your syllabus.");
-          }
-          if (facts.length) prep.push(`Using ${facts.length} ${facts.length === 1 ? "thing" : "things"} you told me about this course`);
-          setPrep(c.id, prep);
-          let lastKey = "";
-          const onText = (t: string) => {
-            const live = liveProgress(t);
-            const key = `${live.log.length}|${live.stage}|${live.topics}|${live.skills}`;
-            if (key === lastKey) return;
-            lastKey = key;
-            setFeed((f) => ({ ...f, [c.id]: { prep, live } }));
-          };
-          const input = { profile, draft: d, course: c, facts, files, today, priorFundamentals: prior };
-          const res = env.live ? await runCourseSetup(input, askClaude, undefined, onText) : await previewRun(input, onText);
-          const used = lastModel();
-          if (env.live && used) setFeed((f) => ({ ...f, [c.id]: { ...f[c.id], model: used.opus ? "Opus" : `most capable model available (${used.tier} tier) answered instead` } }));
-          const { clipped, ...result } = res;
-          if (clipped.length) result.questions.push(`Only the first part of ${clipped.join(", ")} fit into one reading. Tell StudyDesk which chapters matter most.`);
-          const check = result.conflicts.length > 0 || result.questions.length > 0 || result.truncated || result.basis === "general";
-          const now = Date.now();
-          update((x) => ({
-            ...x,
-            results: { ...x.results, [c.id]: result },
-            uploads: x.uploads.map((u) => (u.courseId === c.id && files.some((f) => f.upload.id === u.id) ? { ...u, cataloguedAt: now } : u)),
-            courses: x.courses.map((k) => (k.id === c.id ? { ...k, setupStatus: check ? "needs_check" : "ready", teachingLanguage: result.teachingLanguage } : k)),
-          }));
-        } catch (e) {
-          setCourse(c.id, { setupStatus: "failed", setupError: message(e) });
-          if ((e as AskError)?.code === "rate_limited" || (e as AskError)?.code === "not_granted") break;
         }
-        await flush();
+        // Follow the running sessions.
+        for (const c of draftRef.current.courses.filter((x) => x.setupStatus === "reading" && x.job)) {
+          try {
+            await pollCloud(c);
+          } catch {
+            // A failed check is retried on the next round.
+          }
+        }
+        // The page reads one course at a time itself.
+        if (!pageBusy.current) {
+          const next = draftRef.current.courses.find((x) => (x.setupStatus === "waiting" || x.setupStatus === "reading") && !x.job && (!cloud || x.cloudFailed));
+          if (next) void runInPage(next);
+        }
+        const anyCloud = draftRef.current.courses.some((x) => x.setupStatus === "reading" && x.job);
+        await new Promise((r) => setTimeout(r, anyCloud ? 10_000 : 400));
       }
     } finally {
       running.current = false;
     }
-  }, [env, profile, today, prior, update, setCourse, flush]);
+  }, [cloud, startCloud, pollCloud, runInPage, setCourse]);
 
   useEffect(() => {
     void runAll();
@@ -551,17 +726,23 @@ function Running({ env, draft, profile, update, go, today, flush, md, draftRef: 
     }
   }, [pending, failed.length, doneCount, finish]);
 
-  const current = draft.courses.find((c) => c.setupStatus === "reading");
+  const reading = draft.courses.filter((c) => c.setupStatus === "reading");
   const next = draft.courses.filter((c) => c.setupStatus === "waiting");
   const finished = draft.courses.filter((c) => draft.results[c.id] && (c.setupStatus === "ready" || c.setupStatus === "needs_check"));
-  const fb = current ? feed[current.id] : undefined;
-  const nowText = fb
-    ? [
-        ...[...fb.prep, ...(fb.live?.log ?? [])].map((l) => `- ${l}`),
-        "",
-        `*${!fb.live?.stage || fb.live.stage === "reading" ? "Reading…" : `Now ${fb.live.stage}`}${fb.live && fb.live.skills > 0 ? ` · ${fb.live.topics} topics, ${fb.live.skills} skills so far` : ""}*`,
-      ].join("\n")
-    : "*Opening the files…*";
+  const nowText = (c: DraftCourse) => {
+    const fb = feed[c.id];
+    if (c.job) {
+      const lines = [...(fb?.prep ?? ["Working in a cloud session"]), ...(fb?.log ?? [])];
+      const mins = Math.max(1, Math.round((Date.now() - c.job.startedAt) / 60_000));
+      return [...lines.map((l) => `- ${l}`), "", `*Working in a cloud session · ${mins} min so far*`].join("\n");
+    }
+    if (!fb) return "*Opening the files…*";
+    return [
+      ...[...(c.cloudFailed && cloud ? [`Not in a cloud session: ${c.cloudFailed}`] : []), ...fb.prep, ...(fb.live?.log ?? [])].map((l) => `- ${l}`),
+      "",
+      `*${!fb.live?.stage || fb.live.stage === "reading" ? "Reading…" : `Now ${fb.live.stage}`}${fb.live && fb.live.skills > 0 ? ` · ${fb.live.topics} topics, ${fb.live.skills} skills so far` : ""}*`,
+    ].join("\n");
+  };
   const doneText = finished
     .map((c) => {
       const r = draft.results[c.id];
@@ -576,25 +757,31 @@ function Running({ env, draft, profile, update, go, today, flush, md, draftRef: 
     <div className="setup-card setup-run">
       <h1>Setting up your semester</h1>
       <p>
-        The organization agent (Claude Opus) works through your courses one at a time. It reads each file page by page and turns it into topics, skills, dates,
-        homework and grading rules. Courses without files are only an estimate, and nothing is looked up online yet.
+        {cloud
+          ? "The organization agent (Claude Opus) now works on every course at once, each in its own cloud session: it reads your files page by page, looks the course up online, and turns it into topics, skills, dates, homework and grading rules. The sessions keep working if you close this page, and they're archived when they finish."
+          : "The organization agent (Claude Opus) works through your courses one at a time, right here in the page. It reads each file page by page and turns it into topics, skills, dates, homework and grading rules. Without cloud sessions, courses without files are only an estimate and nothing is looked up online."}
       </p>
       <p className="setup-count">
         <strong>
           {finished.length} of {draft.courses.length}
         </strong>{" "}
-        courses done{pending ? ". Keep this page open; if you close it, it carries on when you come back." : "."}
+        courses done{pending ? (cloud && !draft.courses.some((c) => c.cloudFailed && (c.setupStatus === "waiting" || c.setupStatus === "reading")) ? ". You can close this page; it picks up the results when you come back." : ". Keep this page open; if you close it, it carries on when you come back.") : "."}
       </p>
       {fallback && <p className="quest-muted">Opus wasn't available on your plan here, so the {fallback}.</p>}
 
-      {current && (
-        <div className="setup-now">
+      {reading.map((c) => (
+        <div key={c.id} className="setup-now">
           <h3>
-            <span className="setup-spin" aria-hidden="true" /> {current.name}
+            <span className="setup-spin" aria-hidden="true" /> {c.name}
+            {c.job && (
+              <a className="setup-session-link" href={sessionUrl(c.job.sessionId)} target="_blank" rel="noreferrer">
+                Open the session
+              </a>
+            )}
           </h3>
-          {md("run-now", nowText, `the live log of the setup run for ${current.name}`)}
+          {md(`run-now-${c.id}`, nowText(c), `the live log of the setup run for ${c.name}`)}
         </div>
-      )}
+      ))}
 
       {failed.map((c) => (
         <p key={c.id} className="setup-failed">
@@ -736,7 +923,7 @@ function Done({ env, draft, md, onDone, setEnv, today, update }: StepProps) {
   const reread = () =>
     update((d) => {
       const ids = new Set(staleCourses(d).map((c) => c.id));
-      return { ...d, setupStep: "running", courses: d.courses.map((c) => (ids.has(c.id) ? { ...c, setupStatus: "waiting" } : c)) };
+      return { ...d, setupStep: "running", courses: d.courses.map((c) => (ids.has(c.id) ? { ...c, setupStatus: "waiting", cloudFailed: undefined, job: undefined } : c)) };
     });
 
   return (

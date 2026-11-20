@@ -21,7 +21,7 @@ export function setupReady(d: SemesterDraft): { ok: boolean; missing: string[] }
 }
 
 /** The sheet as Claude sees it each turn: small and plain. */
-export function sheetSnapshot(d: SemesterDraft, p: Profile, today: string): string {
+export function sheetSnapshot(d: SemesterDraft, p: Profile, today: string, cloudSessions: "on" | "off" | "unknown" = "unknown"): string {
   const slots = d.timetable.map((t, i) => `#${i} ${DAY[t.weekday]} ${t.start}-${t.end} ${t.kind}: ${t.title}${t.courseId ? ` [course ${t.courseId}]` : ""}`);
   return JSON.stringify(
     {
@@ -44,6 +44,7 @@ export function sheetSnapshot(d: SemesterDraft, p: Profile, today: string): stri
       calendarImported: !!d.calendarImportedAt,
       readyToStart: setupReady(d),
       setupDone: d.setupStep === "done",
+      cloudSessions,
     },
     null,
     1,
@@ -60,6 +61,7 @@ What setup needs (in this order, but follow the student's lead):
 4. For each course: the target grade (required) on their scale, then optionally how it's graded, known exam and hand-in dates, and materials. Ask for materials in order of value: the syllabus or course overview first, then homework sheets, past exams, slides. Many files at once is fine.
 5. Their time: how much they want to study per weekday, lectures included. Their Google Calendar is the main source for lectures and fixed commitments: offer to import it, and when they agree or ask, call read_calendar, then turn the repeating events into weekly slots (lecture or exercise linked to a course, or fixed for jobs, sport and the like). Exams found in the calendar become facts of their course.
 6. When readyToStart is ok, show a short summary of what's set up and ask if you should start. Only when they say yes, call start_setup.
+   Before that, if cloudSessions is "off": remind them once, in one or two lines, that turning on Claude Code on the web (the card above the chat explains how) lets setup look their courses up online and keep working with the page closed. Starting without it is fine.
 
 How to talk:
 - Short messages, one or two questions at a time, friendly and plain. Use real line breaks and short lists, not walls of text.

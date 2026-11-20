@@ -2330,3 +2330,40 @@ sup.sd-ref {
   border: 1px solid var(--accent);
   font-size: 14px;
 }
+.handoff-card {
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin: 0 0 16px;
+  background: var(--paper);
+}
+.handoff-card h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.handoff-why {
+  font-size: 14px;
+  color: var(--ink-2);
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+.handoff-steps {
+  white-space: pre-line;
+  font-size: 14px;
+  margin: 0 0 12px;
+  line-height: 1.6;
+}
+.handoff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.handoff-actions a.mini-btn {
+  text-decoration: none;
+}
+.setup-session-link {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 500;
+}

@@ -37,13 +37,23 @@ export type SetupInput = {
 
 const CUT_SHORT = "The answer was cut short";
 
-export function setupTurns(input: SetupInput): { turns: Turn[]; images: Blob[]; fileKeys: Map<string, string>; clipped: string[] } {
+/** A cloud session gets the files inside its instructions, which hold at most about 60 KB. */
+export const CLOUD_CHARS = 45_000;
+
+export type SetupTurnOptions = {
+  /** The run happens in a cloud session that can search the web. */
+  web?: boolean;
+  /** At most this much file text (default MAX_COURSE_CHARS). */
+  maxChars?: number;
+};
+
+export function setupTurns(input: SetupInput, opts: SetupTurnOptions = {}): { turns: Turn[]; images: Blob[]; fileKeys: Map<string, string>; clipped: string[] } {
   const { profile, course, facts, files, today, draft } = input;
   const scale = profile.gradeScale;
   const fileKeys = new Map<string, string>();
   const clipped: string[] = [];
   const images: Blob[] = [];
-  let budget = MAX_COURSE_CHARS;
+  let budget = opts.maxChars ?? MAX_COURSE_CHARS;
   const fileBlocks = files.map((f, i) => {
     const key = `F${i + 1}`;
     fileKeys.set(key, f.upload.id);
@@ -80,7 +90,17 @@ export function setupTurns(input: SetupInput): { turns: Turn[]; images: Blob[]; 
 ${facts.length ? facts.map((f) => `- "${f.text}"`).join("\n") : "- nothing"}
 ${prior}
 ## Files
-${files.length ? fileBlocks.join("\n\n") : "No files. Use what a course with this name usually covers in this program and country, and say so in the summary. Don't ask for files under QUESTIONS: StudyDesk asks for missing materials itself."}
+${
+    files.length
+      ? fileBlocks.join("\n\n")
+      : opts.web
+        ? "No files. Search the web for the official description of this course at this school (curriculum, course catalogue entry, syllabus, weekly schedule, exam rules) and build the map from it. If nothing official turns up, use what a course with this name usually covers in this program and country, and say which in the summary. Don't ask for files under QUESTIONS: StudyDesk asks for missing materials itself."
+        : "No files. Use what a course with this name usually covers in this program and country, and say so in the summary. Don't ask for files under QUESTIONS: StudyDesk asks for missing materials itself."
+  }${
+    opts.web
+      ? "\n\n## Web research\nYou can search the web. Before writing, look this course up: its official page or catalogue entry at the student's school, for topics, schedule, grading and exam dates. Prefer official sources. The student's words and files win where they say something; the web fills what they don't. Name the sites you used in the SUMMARY (site names, no links)."
+      : ""
+  }
 
 ## What to write
 
