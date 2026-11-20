@@ -114,9 +114,9 @@ The nightly run is set up on its own once cloud sessions are allowed and the sem
 
 Releases are git tags (`v1`, `v1.1`, …). Changes on `main` never reach anyone's StudyDesk on their own.
 
-**Planned, not built yet:** when a new release is out, StudyDesk will show "Update to v1.1" in Organize. Pressing it has your own Claude session publish the new version onto the same link, so your data stays, then checks and upgrades your data in code, with a way back if anything fails. The full plan is in [`design/updates.md`](design/updates.md).
+**Planned, not built yet:** when a new release is out, StudyDesk will show "Update to v1.1" in Organize. Pressing it has your own Claude session put the new version onto your StudyDesk link, so your data stays, then checks and upgrades your data in code, with a way back if anything fails. The full plan is in [`design/updates.md`](design/updates.md).
 
-Until then, you can update by asking Claude the same way as in setup: "Update my StudyDesk from github.com/seeLorenz/studydesk. Follow its INSTALL.md." Claude publishes the new version onto your existing link, so your data stays.
+Until then, you can update by asking Claude the same way as in setup: "Update my StudyDesk from github.com/seeLorenz/studydesk. Follow its INSTALL.md." Claude puts the new version onto your existing StudyDesk link, so your data stays.
 
 <br>
 
