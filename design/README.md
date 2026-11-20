@@ -8,7 +8,7 @@ Start with [guidelines.md](guidelines.md): the design rules that apply to the wh
 | --- | --- | --- |
 | [grading-and-mastery.md](grading-and-mastery.md) | How answers are judged, how mastery is measured, reviews, timing, points | Spec drafted |
 | [quest-creation.md](quest-creation.md) | What a daily quest looks like and how it's stored | First version built |
-| [onboarding.md](onboarding.md) | Start New Semester: what the student is asked, the setup session, the placement check | Design drafted |
+| [onboarding.md](onboarding.md) | Start New Semester: what the student is asked, the setup session, the placement check | First version built |
 
 Modules still to come: the Orchestrator agent and the organization agent. Notes for them are collected at the end of the grading file.
 

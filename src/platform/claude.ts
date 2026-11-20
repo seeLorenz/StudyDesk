@@ -9,8 +9,26 @@ export type AskOptions = {
   images?: Blob[];
   signal?: AbortSignal;
   onText?: (text: string) => void;
+  /** Kept for later token tuning; today every call asks for Opus (see MODEL). */
   tier?: "quick" | "default" | "complex";
+  /** Page functions Claude may call while answering (never cached). */
+  tools?: Claude.sample.SampleTool[];
 };
+
+/**
+ * Every agent in StudyDesk asks for Opus (the student's choice, 2026-11-20).
+ * If this viewer's plan or app can't run it, the call falls back to the most
+ * capable tier instead, and lastModel() says so.
+ */
+export const MODEL = "claude-opus-5-5";
+const FALLBACK_TIER = "complex" as const;
+
+export type ModelUsed = { opus: boolean; tier: string } | null;
+let lastUsed: ModelUsed = null;
+/** Which model answered the most recent call (null before the first one). */
+export function lastModel(): ModelUsed {
+  return lastUsed;
+}
 
 export type AskError = { code: string; message: string; text?: string };
 
@@ -31,6 +49,14 @@ export async function claudeAvailable(): Promise<boolean> {
   return (await getSample()) !== null;
 }
 
+/** True when this view lets Claude call page functions. */
+export async function canUseTools(): Promise<boolean> {
+  const sample = await getSample();
+  if (!sample) return false;
+  const limits = await sample.limits().catch(() => null);
+  return !!limits?.tools;
+}
+
 export async function canSendImages(): Promise<boolean> {
   const sample = await getSample();
   if (!sample) return false;
@@ -46,13 +72,16 @@ export async function askClaude(turns: Turn[], opts: AskOptions = {}): Promise<s
   const sample = await getSample();
   if (!sample) return mockAnswer(turns, opts);
   try {
-    const { text, truncated } = await sample(turns, {
-      cache: false,
+    const res = await sample(turns, {
+      ...(opts.tools ? { tools: opts.tools } : { cache: false }),
       signal: opts.signal,
-      modelTier: opts.tier ?? "default",
+      model: MODEL,
+      modelTier: FALLBACK_TIER,
       images: opts.images && opts.images.length ? opts.images : undefined,
       onText: opts.onText ? ({ text }) => opts.onText!(text) : undefined,
     });
+    const { text, truncated } = res;
+    lastUsed = { opus: res.modelApplied === MODEL, tier: res.modelTierApplied };
     return truncated ? text + "\n\n*(The answer was cut short. Ask for less at a time.)*" : text;
   } catch (e) {
     throw normalize(e);
@@ -73,7 +102,7 @@ export function errorCopy(e: AskError): string {
     case "sampling_disabled":
       return "StudyDesk isn't allowed to use Claude in this view. Allow it in the artifact's permissions, then try again.";
     case "rate_limited":
-      return "You've hit your Claude usage limit for now. Try again in a little while.";
+      return "Claude is busy: StudyDesk sent too many requests at once, or your Claude plan reached its usage limit for now. Wait a minute, then try again.";
     case "session_expired":
       return "Your claude.ai session expired. Sign in again, then retry.";
     case "prompt_too_large":

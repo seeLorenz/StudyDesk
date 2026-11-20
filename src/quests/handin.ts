@@ -41,7 +41,7 @@ export function gradingProblem(
       .map((id) => skills.get(id))
       .filter((f): f is Skill => !!f && f.isFundamental)
       .map((f) => ({ skillId: f.id, name: f.name })),
-    part: part !== "fixit" && part.kind === "assignment" ? "assignment" : "practice",
+    part: part !== "fixit" && part.kind === "assignment" ? "assignment" : part !== "fixit" && part.check ? "check" : "practice",
     prompt: p.prompt,
     answerKey: p.answerKey,
     maxPoints: p.maxPoints,

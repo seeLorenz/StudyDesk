@@ -28,6 +28,8 @@ export type PlanInput = {
   /** Minutes to plan instead of the computed budget (e.g. the student asks for a quest on a rest day). */
   budgetOverride?: number;
   questId?: string;
+  /** Minutes already taken today according to the student's calendar, when it's connected. */
+  calendarBusyMinutes?: number;
 };
 
 export type PlanResult =
@@ -98,7 +100,9 @@ export function planQuest(input: PlanInput): PlanResult {
   // ---- time ----
   const weekday = weekdayOf(today);
   const goal = semester.studyGoal[weekday] ?? 0;
-  const busy = busyMinutes(semester.timetable, weekday);
+  const fixedBusy = busyMinutes(semester.timetable, weekday);
+  // Today's calendar is the live source; the weekly timetable covers lectures that aren't in it.
+  const busy = input.calendarBusyMinutes !== undefined ? Math.max(input.calendarBusyMinutes, fixedBusy) : fixedBusy;
   const budget = questBudget(goal, busy, attempts, today);
   const budgetMinutes = input.budgetOverride ?? budget.budgetMinutes;
   if (budgetMinutes <= 0) return { kind: "no_time", freeMinutes: budget.freeMinutes, goalMinutes: goal };
@@ -305,7 +309,7 @@ export function planQuest(input: PlanInput): PlanResult {
     notes.push(`You asked for a quest today, so it's about ${budgetMinutes} min.`);
   } else {
     notes.push(
-      `Your time today: ${budget.freeMinutes} min free (study goal ${goal} min${busy ? `, minus ${busy} min of lectures` : ""}).`,
+      `Your time today: ${budget.freeMinutes} min free (study goal ${goal} min${busy ? `, minus ${busy} min ${input.calendarBusyMinutes !== undefined ? "in your calendar" : "of lectures"}` : ""}).`,
     );
     notes.push(
       budget.paceMinutes === null

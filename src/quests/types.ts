@@ -6,10 +6,17 @@
 
 import type { CourseTarget, Day, Skill } from "../mastery/types";
 import type { Note } from "../chat/types";
+import type { GradeRules } from "../mastery/grades";
+import type { CatalogEntry, Upload } from "../onboarding/types";
 
 // ---------- course data (written by onboarding and the setup session) ----------
 
-export type Topic = { id: string; name: string };
+export type Topic = {
+  id: string;
+  name: string;
+  /** Already taught in class when the semester was set up (the placement check covers it). */
+  taught?: boolean;
+};
 
 export type Course = {
   id: string;
@@ -68,6 +75,21 @@ export type Semester = {
   timetable: TimetableEntry[];
   /** Study goal in minutes per weekday, index 0 = Sunday. */
   studyGoal: number[];
+  /** Written by onboarding; absent on the sample semester. */
+  startDate?: Day;
+  endDate?: Day;
+  /** "student" until the student accepts the workload recommended after the placement check. */
+  studyGoalSource?: "student" | "recommended";
+  /** Set once the student has answered the workload recommendation. */
+  studyGoalDecidedAt?: number;
+  gradeRules?: GradeRules[];
+  /** The original files and where each skill is covered in them. */
+  uploads?: Upload[];
+  catalog?: CatalogEntry[];
+  /** Read today's Google Calendar when sizing quests (set when the student imported it during setup). */
+  calendarSync?: boolean;
+  /** The id of the placement check quest. */
+  placementQuestId?: string;
 };
 
 // ---------- the quest itself ----------
@@ -122,6 +144,8 @@ export type ProblemPart = {
   skillIds?: string[];
   /** Lessons only: the key rule in one line, revealed after the student writes theirs. */
   keyRule?: string;
+  /** Placement check: answers count as "check" attempts, and a solve masters the skill at once. */
+  check?: boolean;
 };
 
 export type QuestPart = LearnPart | ProblemPart;

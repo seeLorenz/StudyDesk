@@ -4,6 +4,8 @@ import type { Chat } from "./chat/types";
 import { uid } from "./chat/types";
 import { openStore, type ChatStore } from "./platform/store";
 import { QuestPage } from "./quests/QuestPage";
+import { OnboardingPage } from "./onboarding/OnboardingPage";
+import { openQuestStore } from "./platform/questStore";
 
 const newChat = (): Chat => ({ id: uid(), title: "New chat", createdAt: Date.now(), updatedAt: Date.now(), messages: [], notes: [] });
 
@@ -22,7 +24,17 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
-  const [view, setView] = useState<"chat" | "quest">("chat");
+  const [view, setView] = useState<"chat" | "quest" | "setup">("chat");
+
+  // A new student (no semester yet) starts in the setup chat.
+  useEffect(() => {
+    openQuestStore()
+      .then((qs) => qs.loadSemester())
+      .then((sem) => {
+        if (!sem) setView((v) => (v === "chat" ? "setup" : v));
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let stop = () => {};
@@ -74,6 +86,19 @@ export function App() {
             <path d="M3 2.5h10v11H3zM5.5 6l1.5 1.5L10.5 4M5.5 10.5h5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           Today's quest
+        </button>
+        <button
+          type="button"
+          className={"quest-link" + (view === "setup" ? " is-current" : "")}
+          onClick={() => {
+            setView("setup");
+            setMenuOpen(false);
+          }}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2.5 4h11v9.5h-11zM2.5 7h11M5.5 2.5v3M10.5 2.5v3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Start New Semester
         </button>
         <button type="button" className="new-chat" onClick={() => open(newChat())}>
           <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -133,7 +158,7 @@ export function App() {
               <path d="M3.5 6h13M3.5 10h13M3.5 14h13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
             </svg>
           </button>
-          <span className="topbar-title">{view === "quest" ? "Today's quest" : chats.find((c) => c.id === current.id)?.title ?? "New chat"}</span>
+          <span className="topbar-title">{view === "quest" ? "Today's quest" : view === "setup" ? "Start New Semester" : chats.find((c) => c.id === current.id)?.title ?? "New chat"}</span>
         </header>
         {notice && (
           <div className="notice" role="status">
@@ -143,7 +168,13 @@ export function App() {
             </button>
           </div>
         )}
-        {view === "quest" ? <QuestPage /> : <ChatView key={current.id} initial={current} save={save} onSaveError={onSaveError} />}
+        {view === "quest" ? (
+          <QuestPage onStartSetup={() => setView("setup")} />
+        ) : view === "setup" ? (
+          <OnboardingPage onDone={() => setView("quest")} />
+        ) : (
+          <ChatView key={current.id} initial={current} save={save} onSaveError={onSaveError} />
+        )}
       </main>
     </div>
   );

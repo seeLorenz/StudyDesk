@@ -21,6 +21,8 @@ import type { AnswerFile, ProblemPart, ProblemWork, Quest, QuestPart, QuestProgr
 import { claudeWriter, writeQuest, type WriteStatus } from "./write";
 import { compressImage, dataUrlToBlob } from "./images";
 import { applyChecks, checkResults, isResolved, newReviewChat, questMistakes, reviewRules } from "./review";
+import { WorkloadCard } from "../onboarding/WorkloadCard";
+import { busyMinutesFromEvents, readCalendar } from "../platform/calendar";
 
 // The quest page: builds today's quest on the first open of the day (the
 // in-page fallback from the design), then lets the student work through it
@@ -43,14 +45,15 @@ function nowLocal(d = new Date()): string {
 
 function message(e: unknown): string {
   if (e instanceof GradingFailed) return "The grading agent's answer couldn't be used, even after a retry. Try handing in again.";
-  if (e && typeof e === "object" && "code" in e) return errorCopy(e as AskError);
+  if (e && typeof e === "object" && typeof (e as { code?: unknown }).code === "string") return errorCopy(e as AskError);
   return e instanceof Error ? e.message : "Something went wrong.";
 }
 
 const WEEKDAY = (day: string) => new Date(`${day}T12:00`).toLocaleDateString("en", { weekday: "long" });
 
-export function QuestPage() {
+export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
   const [data, setData] = useState<Data | null>(null);
+  const [needsSetup, setNeedsSetup] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [building, setBuilding] = useState<{ plan: Quest; status: Record<string, WriteStatus> } | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
@@ -60,14 +63,20 @@ export function QuestPage() {
   const scroller = useRef<HTMLDivElement>(null);
   const today = toDay();
 
-  useEffect(() => {
+  const load = useCallback((useSample = false) => {
     (async () => {
       const [qs, ms, live] = await Promise.all([openQuestStore(), openMasteryStore(), claudeAvailable()]);
       let semester = await qs.loadSemester();
+      if (!semester && !useSample) {
+        // A new student: StudyDesk needs Start New Semester before it can build quests.
+        setNeedsSetup(true);
+        return;
+      }
       if (!semester) {
         semester = sampleSemester(toDay());
         await qs.saveSemester(semester);
       }
+      setNeedsSetup(false);
       const mastery = await ms.load();
       const newSkills = semester.skills.filter((s) => !mastery.skills.some((x) => x.id === s.id));
       if (newSkills.length) {
@@ -84,6 +93,18 @@ export function QuestPage() {
       setData({ qs, ms, semester, records, reviewChats, mastery, live });
     })().catch((e) => setLoadError(message(e)));
   }, []);
+  useEffect(() => load(), [load]);
+
+  /** Set up through onboarding, but the placement check hasn't been written yet. */
+  const needsPlacement = !!data && data.semester.source === "onboarding" && !data.semester.placementQuestId;
+  /** The placement check is graded and the workload recommendation is waiting for an answer. */
+  const workloadDue = useMemo(() => {
+    if (!data) return false;
+    const s = data.semester;
+    if (s.source !== "onboarding" || !s.placementQuestId || s.placementQuestId === "none" || s.studyGoalDecidedAt) return false;
+    const r = data.records.find((x) => x.quest.id === s.placementQuestId);
+    return !!r && isFinished(r.quest, r.progress);
+  }, [data]);
 
   const current = useMemo(
     () => data?.records.filter((r) => r.quest.date === today).sort((a, b) => b.quest.createdAt - a.quest.createdAt)[0] ?? null,
@@ -119,7 +140,17 @@ export function QuestPage() {
       setBuildError(null);
       setPlanNotice(null);
       const { semester, records, mastery } = data;
+      // A semester set up from the calendar sizes today's quest from today's real calendar.
+      let calendarBusyMinutes: number | undefined;
+      if (semester.calendarSync && data.live) {
+        try {
+          calendarBusyMinutes = busyMinutesFromEvents(await readCalendar(today, 1), today);
+        } catch {
+          calendarBusyMinutes = undefined; // not reachable now: the weekly timetable is used
+        }
+      }
       const res = planQuest({
+        calendarBusyMinutes,
         semester,
         today,
         nowLocal: nowLocal(),
@@ -159,11 +190,11 @@ export function QuestPage() {
   );
 
   useEffect(() => {
-    if (data && !current && !building && !autoBuilt.current && !planNotice) {
+    if (data && !current && !building && !autoBuilt.current && !planNotice && !needsPlacement) {
       autoBuilt.current = true;
       void build();
     }
-  }, [data, current, building, build]);
+  }, [data, current, building, build, needsPlacement]);
 
   const restartSample = async () => {
     if (!data) return;
@@ -176,12 +207,56 @@ export function QuestPage() {
   };
 
   if (loadError) return <div className="quest-page"><p className="quest-error">Your quests couldn't be loaded: {loadError}</p></div>;
+  if (needsSetup)
+    return (
+      <div className="quest-page">
+        <section className="setup-card setup-welcome">
+          <p className="quest-kicker">Welcome to StudyDesk</p>
+          <h1>Set up your semester first</h1>
+          <p>StudyDesk builds a quest for you every day, around your real courses, homework and exams. For that it needs a short setup: your courses, the grade you're aiming for in each, and how much time you have. About ten minutes, saved as you go.</p>
+          <div className="setup-actions">
+            <button type="button" className="link-btn" onClick={() => load(true)}>
+              Look around with sample data first
+            </button>
+            <button type="button" className="mini-btn primary big" onClick={onStartSetup}>
+              Start New Semester
+            </button>
+          </div>
+        </section>
+      </div>
+    );
   if (!data) return <div className="quest-page"><p className="quest-muted">Loading today's quest…</p></div>;
 
   return (
     <div className="quest-page" ref={scroller} data-select-scope="">
       {!data.live && (
         <p className="quest-banner">Preview mode: no Claude here, so quests use sample text and a stand-in grader (an empty answer is "not yet", an answer with the word "typo" is a slip).</p>
+      )}
+
+      {needsPlacement && (
+        <section className="setup-card setup-welcome">
+          <p className="quest-kicker">{data.semester.name}</p>
+          <h1>Your semester is set up</h1>
+          <p>Your first quest is a placement check: it finds out where you stand, so StudyDesk can plan the right amount each day.</p>
+          <div className="setup-actions">
+            <button type="button" className="mini-btn primary big" onClick={onStartSetup}>
+              Start the placement check
+            </button>
+          </div>
+        </section>
+      )}
+
+      {workloadDue && (
+        <WorkloadCard
+          semester={data.semester}
+          attempts={data.mastery.attempts}
+          reviews={data.mastery.reviews}
+          today={today}
+          onSave={async (semester) => {
+            await data.qs.saveSemester(semester);
+            setData((d) => (d ? { ...d, semester } : d));
+          }}
+        />
       )}
 
       {review && (
@@ -262,11 +337,11 @@ export function QuestPage() {
           <p className="quest-muted">{building.plan.reason}</p>
           <ol>
             {building.plan.parts.map((p, i) => {
-              const st = building.status[p.id]?.state ?? "writing";
+              const st = building.status[p.id]?.state ?? "waiting";
               return (
                 <li key={p.id} className={`b-${st}`}>
-                  Part {i + 1} · {KIND[p.kind]}: {p.title}
-                  <span>{st === "done" ? "ready" : st === "failed" ? "failed" : "writing…"}</span>
+                  Part {i + 1} · {kindLabel(p)}: {p.title}
+                  <span>{st === "done" ? "ready" : st === "failed" ? "failed" : st === "waiting" ? "waiting" : "writing…"}</span>
                 </li>
               );
             })}
@@ -320,7 +395,7 @@ export function QuestPage() {
                     </span>
                     <span className="ov-main">
                       <span className="ov-kind">
-                        {WEEKDAY(r.quest.date)} {r.quest.date.slice(5).replace("-", "/")} · {course?.name}
+                        {WEEKDAY(r.quest.date)} {r.quest.date.slice(5).replace("-", "/")} · {r.quest.parts.some((p) => p.kind !== "learn" && p.check) ? "Placement check" : course?.name}
                       </span>
                       <span className="ov-title">{r.quest.reason}</span>
                     </span>
@@ -353,7 +428,10 @@ export function QuestPage() {
         <button type="button" className="link-btn" disabled={!!building && !buildError} onClick={() => void build()}>
           Build a new quest for today
         </button>
-        {confirmRestart ? (
+        <button type="button" className="link-btn" onClick={onStartSetup}>
+          Start New Semester
+        </button>
+        {data.semester.source !== "sample" ? null : confirmRestart ? (
           <span>
             Restart with fresh sample homework (Sheet 4 due tomorrow)? Your attempts are kept.{" "}
             <button type="button" className="link-btn" onClick={() => void restartSample()}>
@@ -369,7 +447,7 @@ export function QuestPage() {
           </button>
         )}
         <span className="quest-muted">
-          {data.semester.source === "sample" ? "Using sample course data (Calculus 1) until Start New Semester is built." : ""}
+          {data.semester.source === "sample" ? "Using sample course data (Calculus 1). Start New Semester replaces it with your real courses." : ""}
         </span>
       </footer>
     </div>
@@ -387,6 +465,7 @@ type ViewProps = {
 };
 
 const KIND = { learn: "Learn", lesson: "Learn & try", practice: "Practice", assignment: "Homework" } as const;
+const kindLabel = (p: QuestPart) => (p.kind !== "learn" && p.check ? "Placement check" : KIND[p.kind]);
 
 const NOTE_RULES = `You are StudyDesk, a study assistant for high school and university students.
 The student is working through today's study quest and highlighted a passage in it to ask about.
@@ -491,7 +570,7 @@ function QuestView({ record, data, scroller, onRecord, onMastery }: ViewProps) {
   const blocks = useMemo(() => {
     const m = new Map<string, { text: string; part: QuestPart; label: string }>();
     quest.parts.forEach((part, i) => {
-      const where = `Part ${i + 1} (${KIND[part.kind]}): ${part.title}`;
+      const where = `Part ${i + 1} (${kindLabel(part)}): ${part.title}`;
       if (part.kind === "learn") m.set(part.id, { text: part.body, part, label: where });
       else {
         if (part.body) m.set(part.id, { text: part.body, part, label: `${where}, the explanation and worked example` });
@@ -817,7 +896,7 @@ ${b?.text ?? ""}
     <div className="quest">
       <header className="quest-head">
         <p className="quest-kicker">
-          {WEEKDAY(quest.date)} · {course?.name} · about {quest.plannedMinutes} min
+          {WEEKDAY(quest.date)} · {quest.parts.some((p) => p.kind !== "learn" && p.check) ? "Placement check" : course?.name} · about {quest.plannedMinutes} min
         </p>
         <h1>Today's quest</h1>
         <p className="quest-reason">
@@ -844,7 +923,7 @@ ${b?.text ?? ""}
                 </span>
                 <span className="ov-main">
                   <span className="ov-kind">
-                    Part {i + 1} · {KIND[part.kind]}
+                    Part {i + 1} · {kindLabel(part)}
                   </span>
                   <span className="ov-title">{part.title}</span>
                 </span>
