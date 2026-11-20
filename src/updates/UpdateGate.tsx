@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { setReadOnly } from "../platform/host";
 import { checkPublishJob, prepareOnLoad, startGoBack, type GateResult } from "../platform/updateStore";
 import type { Pending } from "./plan";
+import { Logo } from "../shell/Logo";
 
 // Runs before StudyDesk opens (design/updates.md): finishes an update or a
 // rollback that just arrived, upgrades older data and checks it. When that
@@ -28,7 +29,7 @@ export function UpdateGate({ children }: { children: ReactNode }) {
   if (!result)
     return (
       <div className="update-gate">
-        <span className="brand-mark" aria-hidden="true" />
+        <Logo className="splash-mark" />
         <p className="quest-muted">{line}</p>
       </div>
     );

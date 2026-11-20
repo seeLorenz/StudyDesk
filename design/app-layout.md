@@ -60,6 +60,9 @@ The sidebar becomes a drawer (menu button in the top bar, for recent chats) and 
 - Every page starts the same way: a small uppercase kicker, a serif title, one line of context.
 - Section labels are small uppercase grey; cards share one radius and border.
 - Text has room to breathe (see guidelines.md).
+- **Logo**: the SD planet mark (`src/assets/logo.png`, `favicon.png`), made from the full artwork by `scripts/make-logo.py`: the planet stays a dark disc, the black around it is transparent. It sits in the sidebar, the Organize panel and the opening screen, where it breathes gently while StudyDesk loads. The claude.ai tab icon itself is chosen by the host from one generic word (`book`, see INSTALL.md), so the logo can't replace it there.
+- **Text boxes stand out from the page**: every chat box and field has a field colour a step off the background and a visible edge that darkens on hover and focus, so it's always clear where to type.
+- **Screens settle in** with a short fade instead of popping in; "Loading…" only appears when loading is actually slow.
 
 ## Notes for other modules
 
