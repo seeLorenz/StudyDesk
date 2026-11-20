@@ -403,7 +403,18 @@ const HOMEWORK_RULE = `
 function QuestView({ record, data, scroller, onRecord, onMastery }: ViewProps) {
   const { quest } = record;
   const { semester, mastery, ms, qs, live } = data;
-  const [progress, setProgress] = useState<QuestProgress>(record.progress);
+  // A copy of the work is kept in this browser on every change, so a crash or a
+  // closed tab loses nothing; it wins over the saved record when it's newer.
+  const draftKey = `studydesk.questdraft.${quest.id}`;
+  const [progress, setProgress] = useState<QuestProgress>(() => {
+    try {
+      const d = JSON.parse(localStorage.getItem(draftKey) || "null") as QuestProgress | null;
+      if (d && d.questId === quest.id && d.updatedAt > record.progress.updatedAt) return d;
+    } catch {
+      /* no draft */
+    }
+    return record.progress;
+  });
   const [openPart, setOpenPart] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [grading, setGrading] = useState(false);
@@ -422,7 +433,7 @@ function QuestView({ record, data, scroller, onRecord, onMastery }: ViewProps) {
   const flush = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = null;
-    const r = { quest, progress: progressRef.current };
+    const r = { quest, progress: { ...progressRef.current, updatedAt: Date.now() } };
     onRecordRef.current(r);
     return qs
       .saveRecord(r)
@@ -431,10 +442,29 @@ function QuestView({ record, data, scroller, onRecord, onMastery }: ViewProps) {
   }, [qs, quest]);
 
   const saveSoon = useCallback(() => {
-    if (!saveTimer.current) saveTimer.current = setTimeout(() => void flush(), 5000);
+    if (!saveTimer.current) saveTimer.current = setTimeout(() => void flush(), 2000);
   }, [flush]);
 
   useEffect(() => () => void flush(), [flush]);
+
+  // Local draft on every change; saved for real when the tab is hidden or closed.
+  useEffect(() => {
+    try {
+      localStorage.setItem(draftKey, JSON.stringify({ ...progress, updatedAt: Math.max(progress.updatedAt, Date.now()) }));
+    } catch {
+      /* storage full or blocked: the 2-second save still runs */
+    }
+  }, [progress, draftKey]);
+  useEffect(() => {
+    const save = () => void flush();
+    const onHide = () => document.visibilityState === "hidden" && save();
+    window.addEventListener("pagehide", save);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", save);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, [flush]);
 
   const commit = (fn: (p: QuestProgress) => QuestProgress) => {
     const next = fn(progressRef.current);
