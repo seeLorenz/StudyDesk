@@ -39,7 +39,7 @@ A claude.ai artifact that belongs to the student: their own StudyDesk, with its 
      - `user`
      - `assets` (the student's course files)
      - `downloads` (backup export)
-     - `mcp` with two servers: `Google Calendar` with only `list_events` (read-only calendar import), and `Claude Code Remote` with `list_environments`, `create_trigger` and `fire_trigger` (cloud sessions and the nightly run)
+     - `mcp` with two servers: `Google Calendar` with only `list_calendars` and `list_events` (read-only calendar import, every calendar including subscribed timetables), and `Claude Code Remote` with `list_environments`, `create_trigger` and `fire_trigger` (cloud sessions and the nightly run)
    - icon: `book`
 
 5. **Hand it over.** Give the student the link and tell them, in plain words:

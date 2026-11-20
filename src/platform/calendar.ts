@@ -59,33 +59,79 @@ export async function calendarAvailable(): Promise<boolean> {
   return (await mcp()) !== null;
 }
 
-/** Every event from `from` for `days` days. Rejects with a CalendarError. */
+/** Calendars that are noise for a timetable: public holidays, contacts' birthdays, week numbers. */
+const SKIP_CALENDAR = /#(holiday|contacts|weeknum)@/;
+
+type RawCalendar = { id?: string; summary?: string };
+
+/**
+ * The calendars to read: every calendar the student owns or subscribed to
+ * (a university's iCal feed, like a TUGonline timetable, is one of these),
+ * not just the primary one. Falls back to the primary calendar when the list
+ * can't be read (for example when the student hasn't allowed that tool yet).
+ */
+export async function calendarIds(m: NonNullable<Awaited<ReturnType<typeof mcp>>>, signal?: AbortSignal): Promise<string[]> {
+  try {
+    const res = await m.callTool(CALENDAR_SERVER, "list_calendars", { pageSize: 250 }, { signal });
+    return pickCalendars(((res.payload ?? {}) as { calendars?: RawCalendar[] }).calendars ?? []);
+  } catch (e) {
+    if ((e as { code?: string })?.code === "cancelled") throw e;
+    return ["primary"];
+  }
+}
+
+/** Pure: the ids worth reading, primary first. */
+export function pickCalendars(cals: RawCalendar[]): string[] {
+  const ids = cals.map((c) => c.id ?? "").filter((id) => id && !SKIP_CALENDAR.test(id));
+  return ids.length ? ids : ["primary"];
+}
+
+/** Every event from `from` for `days` days, across all the student's calendars. Rejects with a CalendarError. */
 export async function readCalendar(from: Day, days: number, signal?: AbortSignal): Promise<CalendarEvent[]> {
   const m = await mcp();
   if (!m) throw { code: "unavailable", message: "The calendar can't be reached from this view." } satisfies CalendarError;
   const end = new Date(`${from}T12:00`);
   end.setDate(end.getDate() + days);
+  const ids = await calendarIds(m, signal);
   const raw: RawEvent[] = [];
-  let pageToken: string | undefined;
-  for (let page = 0; page < 5; page++) {
-    let res: Claude.mcp.CallToolResult;
+  let read = 0;
+  let firstError: { code?: string } | null = null;
+  for (const calendarId of ids) {
+    let pageToken: string | undefined;
     try {
-      res = await m.callTool(
-        CALENDAR_SERVER,
-        "list_events",
-        { startTime: wall(from), endTime: wall(localDay(end)), orderBy: "startTime", pageSize: 250, ...(pageToken ? { pageToken } : {}) },
-        { signal },
-      );
+      for (let page = 0; page < 5; page++) {
+        const res = await m.callTool(
+          CALENDAR_SERVER,
+          "list_events",
+          { ...(calendarId === "primary" ? {} : { calendarId }), startTime: wall(from), endTime: wall(localDay(end)), orderBy: "startTime", pageSize: 250, ...(pageToken ? { pageToken } : {}) },
+          { signal },
+        );
+        const p = (res.payload ?? {}) as { events?: RawEvent[]; nextPageToken?: string };
+        raw.push(...(p.events ?? []));
+        pageToken = p.nextPageToken;
+        if (!pageToken) break;
+      }
+      read++;
     } catch (e) {
-      const err = e as { code?: string; message?: string };
-      throw { code: err.code ?? "unavailable", message: calendarErrorCopy(err.code) } satisfies CalendarError;
+      const err = e as { code?: string };
+      if (err.code === "cancelled") throw { code: "cancelled", message: "Stopped." } satisfies CalendarError;
+      // One unreadable calendar (a broken subscription) doesn't stop the others.
+      firstError ??= err;
     }
-    const p = (res.payload ?? {}) as { events?: RawEvent[]; nextPageToken?: string };
-    raw.push(...(p.events ?? []));
-    pageToken = p.nextPageToken;
-    if (!pageToken) break;
   }
-  return toEvents(raw);
+  if (!read) throw { code: firstError?.code ?? "unavailable", message: calendarErrorCopy(firstError?.code) } satisfies CalendarError;
+  return dedupe(toEvents(raw));
+}
+
+/** The same event in two calendars (shared, or subscribed twice) counts once. */
+export function dedupe(events: CalendarEvent[]): CalendarEvent[] {
+  const seen = new Set<string>();
+  return events.filter((e) => {
+    const k = `${e.title}|${e.date}|${e.start}|${e.end}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 export function calendarErrorCopy(code: string | undefined): string {
