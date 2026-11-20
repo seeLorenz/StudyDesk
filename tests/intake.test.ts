@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { strToU8, zipSync } from "fflate";
 import { buildOutline, classify, expandDrop, selectPart, walkZip, zipEntries } from "../src/lib/intake";
 import { officeText, odfText } from "../src/lib/office";
-import { courseFileList, describeCounts, describeVideo, filesOf, keepDrop, originalType, unsortedList, zipInventory } from "../src/lib/keep";
+import { courseFileList, describeCounts, describeVideo, filesOf, keepDrop, keepFraction, originalType, unsortedList, zipInventory, type KeepProgress } from "../src/lib/keep";
 import { fileTools, inventoryLine, setupTurns, type FileForSetup, type SetupInput } from "../src/onboarding/setup";
 import { startJob } from "../src/orchestrator/jobs";
 import { jobInstructions } from "../src/platform/handoff";
@@ -274,6 +274,29 @@ describe("room in the file store", () => {
     expect(handed).toEqual([["a.md", "b.md"]]);
     expect(r.uploads).toHaveLength(0);
     expect(r.report!.lines[0]).toBe("C.zip: 2 files, 2 text files.");
+  });
+
+  it("reports progress per zip, ending with every part done", async () => {
+    const { store } = fakeStore(10_000);
+    const seen: KeepProgress[] = [];
+    await keepDrop(drop(zipOf({ "a.md": "# A", "b.md": "# B" })), store, () => undefined, { onProgress: (p) => seen.push(p) });
+    expect(seen[0].items).toEqual([{ name: "C.zip", state: "working", done: 0, total: 0, problems: 0 }]);
+    expect(seen.some((p) => p.items[0].total === 2 && p.items[0].state === "working")).toBe(true);
+    expect(seen[seen.length - 1].items[0]).toMatchObject({ state: "done", done: 2, total: 2, problems: 0 });
+    expect(keepFraction(seen[seen.length - 1])).toBe(1);
+  });
+
+  it("counts each part of a drop the same for the overall bar", () => {
+    const p: KeepProgress = {
+      items: [
+        { name: "a.zip", state: "done", done: 10, total: 10, problems: 0 },
+        { name: "b.zip", state: "working", done: 5, total: 10, problems: 0 },
+        { name: "c.zip", state: "waiting", done: 0, total: 0, problems: 0 },
+        { name: "d.zip", state: "failed", done: 0, total: 0, problems: 0 },
+      ],
+    };
+    expect(keepFraction(p)).toBeCloseTo((1 + 0.5 + 0 + 1) / 4);
+    expect(keepFraction({ items: [] })).toBe(0);
   });
 
   it("warns first, keeps the text, and stores only the originals that fit", async () => {

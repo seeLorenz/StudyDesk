@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { SentFiles } from "../chat/SentFiles";
+import { ImportProgress } from "../chat/ImportProgress";
 import type { Note } from "../chat/types";
 import { uid } from "../chat/types";
 import { InputBox } from "../chat/InputBox";
 import { SelectionReply } from "../chat/SelectionReply";
 import { passageNoteTurns } from "../chat/prompts";
 import type { PendingAttachment } from "../lib/files";
-import { describedVideos, describeVideo, keepDrop, READ_FILE_TOOL, readKeptFile, recallImages } from "../lib/keep";
+import { describedVideos, describeVideo, keepDrop, READ_FILE_TOOL, readKeptFile, recallImages, type KeepProgress, type KeptDrop } from "../lib/keep";
 import { IntakeCard } from "../chat/IntakeCard";
 import { LeftoversNotice } from "../shell/LeftoversNotice";
 import { toDay } from "../mastery/days";
@@ -519,23 +520,43 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
   const patchMsg = (id: string, p: Partial<SetupMessage>) => update((d) => ({ ...d, chat: (d.chat ?? []).map((m) => (m.id === id ? { ...m, ...p } : m)) }));
 
   /** Keeps each dropped file (zips opened): readable content and outline in the student's data, the original in the file store. */
+  const [progress, setProgress] = useState<KeepProgress | null>(null);
   const keepFiles = (files: PendingAttachment[]) =>
     keepDrop(files, env.os, setBusy, {
+      onProgress: setProgress,
       onZipKept: async (uploads, zip) => {
         update((d) => ({ ...d, uploads: [...d.uploads, ...uploads], zips: [...(d.zips ?? []), zip] }));
         await flush();
       },
-    });
+    }).finally(() => setProgress(null));
+
+  // What each reply was asked with (the files just kept), so "Try again" can ask the same. Not saved.
+  const askedWith = useRef(new Map<string, KeptDrop>());
 
   const send = async (text: string, files: PendingAttachment[]) => {
     if (!open) return;
     const userMsg: SetupMessage = { id: uid(), role: "user", text, files: files.map((f) => f.name), createdAt: Date.now() };
     update((d) => ({ ...d, chat: [...(d.chat ?? []), userMsg] }));
-    const kept = files.length ? await keepFiles(files) : { uploads: [], zips: [], previews: [], images: [], failed: [], report: null };
+    const kept = files.length ? await keepFiles(files) : NOTHING_KEPT;
     if (kept.uploads.length || kept.zips.length) update((d) => ({ ...d, uploads: [...d.uploads, ...kept.uploads], zips: [...(d.zips ?? []), ...kept.zips] }));
     if (kept.report) patchMsg(userMsg.id, { intake: kept.report });
     if (kept.uploads.length) patchMsg(userMsg.id, { uploadIds: kept.uploads.map((u) => u.id) });
+    await ask(text, kept);
+  };
+
+  /** "Try again" on a reply that didn't come through: it's replaced by a new answer to the same message (the files are kept already). */
+  const resend = (failed: SetupMessage) => {
+    const all = draftRef.current?.chat ?? [];
+    const at = all.findIndex((m) => m.id === failed.id);
+    const asked = [...all.slice(0, at)].reverse().find((m) => m.role === "user");
+    const kept = askedWith.current.get(failed.id) ?? NOTHING_KEPT;
+    update((d) => ({ ...d, chat: (d.chat ?? []).filter((m) => m.id !== failed.id) }));
+    void ask(asked?.text ?? "", kept);
+  };
+
+  const ask = async (text: string, kept: KeptDrop) => {
     const reply: SetupMessage = { id: uid(), role: "assistant", text: "", createdAt: Date.now() };
+    askedWith.current.set(reply.id, kept);
     update((d) => ({ ...d, chat: [...(d.chat ?? []), reply] }));
     setBusy("Thinking…");
     let startNow = false;
@@ -615,6 +636,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
     } finally {
       ctl.current = null;
       setBusy(null);
+      if (!draftRef.current?.chat?.find((m) => m.id === reply.id)?.error) askedWith.current.delete(reply.id);
       if (startNow && setupReady(draftRef.current!).ok) {
         update((d) => ({ ...d, setupStep: "running", courses: d.courses.map((c) => ((c.setupStatus === "ready" || c.setupStatus === "needs_check") && !staleCourses(d).some((s) => s.id === c.id) ? c : { ...c, setupStatus: "waiting", cloudFailed: undefined })) }));
       }
@@ -648,10 +670,26 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
                 )}
               </div>
             </div>
+          ) : m.error && answeredLater(chat, m.id) ? (
+            // A reply that failed but was answered after all (sent again): keep only what it said, without the error.
+            m.text ? (
+              <div key={m.id} className="row-assistant">
+                {md(m.id, m.text)}
+              </div>
+            ) : null
           ) : (
             <div key={m.id} className="row-assistant">
               {m.text ? md(m.id, m.text) : !m.error && <p className="thinking">{busy ?? "…"}</p>}
-              {m.error && <p className="error-line">{m.error}</p>}
+              {m.error && (
+                <div className="error-line send-failed">
+                  <span>{m.error === "Stopped." ? "Stopped." : `${m.error.replace(/\s*Try again\.?$/, "")} Your message and files are saved.`}</span>
+                  {!busy && m.id === chat[chat.length - 1]?.id && (
+                    <button type="button" className="mini-btn" onClick={() => resend(m)}>
+                      Try again
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ),
         )}
@@ -660,7 +698,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
       {open && (
         <div className="setup-composer">
           {!busy && <LeftoversNotice />}
-          {busy && <p className="quest-muted">{busy}</p>}
+          {progress ? <ImportProgress progress={progress} /> : busy && <p className="quest-muted">{busy}</p>}
           {busy && /^(Keeping|Opening)/.test(busy) && (
             <p className="quest-muted keep-note">This takes a few minutes with a lot of files. Keep this window open until it's done; each finished zip is saved, so closing early only loses the one in progress.</p>
           )}
@@ -677,6 +715,14 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
       )}
     </div>
   );
+}
+
+const NOTHING_KEPT: KeptDrop = { uploads: [], zips: [], previews: [], images: [], failed: [], report: null };
+
+/** Whether an assistant reply after this one came through, so its error no longer matters. Pure. */
+function answeredLater(chat: SetupMessage[], id: string): boolean {
+  const at = chat.findIndex((m) => m.id === id);
+  return chat.slice(at + 1).some((m) => m.role === "assistant" && !m.error && !!m.text);
 }
 
 function addDaysLocal(day: string, n: number): string {

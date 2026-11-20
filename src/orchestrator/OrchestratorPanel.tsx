@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SentFiles } from "../chat/SentFiles";
+import { ImportProgress } from "../chat/ImportProgress";
 import { Logo } from "../shell/Logo";
 import { createPortal } from "react-dom";
 import type { Note } from "../chat/types";
@@ -8,7 +9,7 @@ import { InputBox } from "../chat/InputBox";
 import { SelectionReply } from "../chat/SelectionReply";
 import { passageNoteTurns } from "../chat/prompts";
 import type { PendingAttachment } from "../lib/files";
-import { describedVideos, describeVideo, keepDrop, READ_FILE_TOOL, readKeptFile, recallImages } from "../lib/keep";
+import { describedVideos, describeVideo, keepDrop, READ_FILE_TOOL, readKeptFile, recallImages, type KeepProgress, type KeptDrop } from "../lib/keep";
 import { IntakeCard } from "../chat/IntakeCard";
 import { toDay } from "../mastery/days";
 import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
@@ -361,14 +362,16 @@ export function OrchestratorPanel(props: Props) {
     saveMessages((ms) => ms.map((m) => (m.id === messageId ? { ...m, cards: [...(m.cards ?? []), card] } : m)));
 
   // ---------- keeping dropped files ----------
+  const [progress, setProgress] = useState<KeepProgress | null>(null);
   const keepFiles = (files: PendingAttachment[]) =>
     keepDrop(files, env!.os, setBusy, {
+      onProgress: setProgress,
       // Each zip is saved as soon as it's kept, so closing the window loses at most the one in progress.
       onZipKept: async (uploads, zip) => {
         if (!draftRef.current || !profileRef.current) return;
         await commitDesk({ draft: { ...draftRef.current, uploads: [...draftRef.current.uploads, ...uploads], zips: [...(draftRef.current.zips ?? []), zip] }, profile: profileRef.current });
       },
-    });
+    }).finally(() => setProgress(null));
 
   // ---------- memory ----------
   const summarize = useCallback(async () => {
@@ -396,10 +399,30 @@ export function OrchestratorPanel(props: Props) {
     const userMsg: OrchMessage = { id: uid(), role: "user", text, createdAt: Date.now(), files: files.map((f) => f.name), screen, quote: quote ?? undefined, fromTutor: opts.fromTutor };
     saveMessages((ms) => [...ms, userMsg]);
     onClearQuote();
-    const kept = files.length ? await keepFiles(files) : { uploads: [], zips: [], previews: [], images: [], failed: [], report: null };
+    const kept: KeptDrop = files.length ? await keepFiles(files) : { uploads: [], zips: [], previews: [], images: [], failed: [], report: null };
     if (kept.uploads.length || kept.zips.length) await commitDesk({ draft: { ...draftRef.current!, uploads: [...draftRef.current!.uploads, ...kept.uploads], zips: [...(draftRef.current!.zips ?? []), ...kept.zips] }, profile: profileRef.current! });
     if (kept.report || kept.uploads.length) saveMessages((ms) => ms.map((m) => (m.id === userMsg.id ? { ...m, intake: kept.report ?? m.intake, uploadIds: kept.uploads.length ? kept.uploads.map((u) => u.id) : m.uploadIds } : m)));
+    await ask(text, kept);
+  };
+
+  // What each reply was asked with (the files just kept), so "Try again" can ask the same. Not saved.
+  const askedWith = useRef(new Map<string, KeptDrop>());
+
+  /** "Try again" on a reply that didn't come through: it's replaced by a new answer to the same message. */
+  const resend = (failed: OrchMessage) => {
+    if (busy) return;
+    const all = messagesRef.current;
+    const at = all.findIndex((m) => m.id === failed.id);
+    const asked = [...all.slice(0, at)].reverse().find((m) => m.role === "user");
+    const kept = askedWith.current.get(failed.id) ?? { uploads: [], zips: [], previews: [], images: [], failed: [], report: null };
+    saveMessages((ms) => ms.filter((m) => m.id !== failed.id));
+    void ask(asked?.text ?? "", kept);
+  };
+
+  const ask = async (text: string, kept: KeptDrop) => {
+    if (!env) return;
     const reply: OrchMessage = { id: uid(), role: "assistant", text: "", createdAt: Date.now() + 1 };
+    askedWith.current.set(reply.id, kept);
     saveMessages((ms) => [...ms, reply], false);
     setBusy("Thinking…");
     const patch = (p: Partial<OrchMessage>, persist = false) => saveMessages((ms) => ms.map((m) => (m.id === reply.id ? { ...m, ...p } : m)), persist);
@@ -571,6 +594,7 @@ export function OrchestratorPanel(props: Props) {
       ctl.current = null;
       setBusy(null);
       patch({}, true);
+      if (!messagesRef.current.find((m) => m.id === reply.id)?.error) askedWith.current.delete(reply.id);
       void summarize();
     }
   };
@@ -841,10 +865,19 @@ export function OrchestratorPanel(props: Props) {
                   )}
                 </div>
               </div>
-            ) : (
+            ) : m.error && !m.text && !(m.cards ?? []).length && answeredLater(messages, m.id) ? null : (
               <div key={m.id} className={"row-assistant" + (m.checkin ? " is-checkin" : "")}>
                 {m.text ? md(m.id, m.text) : !m.error && <p className="thinking">{busy ?? "…"}</p>}
-                {m.error && <p className="error-line">{m.error}</p>}
+                {m.error && !answeredLater(messages, m.id) && (
+                  <div className="error-line send-failed">
+                    <span>{m.error === "Stopped." ? "Stopped." : `${m.error.replace(/\s*Try again\.?$/, "")} Your message and files are saved.`}</span>
+                    {!busy && m.id === messages[messages.length - 1]?.id && (
+                      <button type="button" className="mini-btn" onClick={() => resend(m)}>
+                        Try again
+                      </button>
+                    )}
+                  </div>
+                )}
                 {deskNow &&
                   (m.cards ?? []).map((c, i) => (
                     <Card key={i} card={c} state={state} desk={deskNow} names={names} md={md} onUndo={undo} onConfirm={answerConfirm} onOpenSetup={onOpenSetup} rebuild={rebuildOffer(c)} />
@@ -865,7 +898,7 @@ export function OrchestratorPanel(props: Props) {
               </button>
             </div>
           )}
-          {busy && <p className="quest-muted">{busy}</p>}
+          {progress ? <ImportProgress progress={progress} /> : busy && <p className="quest-muted">{busy}</p>}
           {busy && /^(Keeping|Opening)/.test(busy) && (
             <p className="quest-muted keep-note">This takes a few minutes with a lot of files. Keep this window open until it's done; each finished zip is saved, so closing early only loses the one in progress.</p>
           )}
@@ -1047,4 +1080,10 @@ async function localAnswer(
     return r.change ? "Done, no quest that day." : `That didn't work: ${r.errors.join(" ")}`;
   }
   return "*Local preview: inside claude.ai, StudyDesk answers here and changes your desk from anything you write or drop.* Try \"day off 2026-12-24\" or \"reread <course>\".";
+}
+
+/** Whether an assistant reply after this one came through, so its error no longer matters. Pure. */
+function answeredLater(messages: OrchMessage[], id: string): boolean {
+  const at = messages.findIndex((m) => m.id === id);
+  return messages.slice(at + 1).some((m) => m.role === "assistant" && !m.error && !!m.text);
 }
