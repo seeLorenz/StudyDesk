@@ -26,6 +26,7 @@ import { placementWriter, planPlacement } from "./placement";
 import { gradeSteps } from "./scales";
 import { setupTodo, staleCourses, type TodoItem } from "./todo";
 import { buildSemester, CLOUD_CHARS, localSetup, parseSetup, runCourseSetup, setupTurns, type FileForSetup, type SetupInput, liveProgress, type LiveProgress } from "./setup";
+import { buildBackup, freshStart, saveBackup } from "../platform/backup";
 import { archiveJob, byteLength, checkHandoff, MAX_JOB_BYTES, readJob, sessionUrl, startJob, type HandoffSetup, type HandoffState } from "../platform/handoff";
 import type { CloudJob, CourseSetup, DraftCourse, Profile, SemesterDraft, SetupMessage, SetupStep, Upload } from "./types";
 
@@ -174,28 +175,63 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   const go = (setupStep: SetupStep) => update((d) => ({ ...d, setupStep }));
 
   // ---- starting the next semester while one is active ----
-  // Opening Start New Semester while a semester is active asks first.
-  const [confirmFresh, setConfirmFresh] = useState(true);
-  const [freshBusy, setFreshBusy] = useState(false);
-  const startFresh = useCallback(async () => {
+  // Opening Start New Semester while a semester is active asks first, then
+  // saves a backup zip, then offers a fresh start (src/platform/backup.ts).
+  type FreshStep = "ask" | "exporting" | "exported" | "declined" | "wiping" | null;
+  const [fresh, setFresh] = useState<FreshStep>("ask");
+  const [freshLine, setFreshLine] = useState("");
+  const [freshInfo, setFreshInfo] = useState<{ files: number; missing: string[] } | null>(null);
+  const [wipeArmed, setWipeArmed] = useState(false);
+  const [wipeChats, setWipeChats] = useState(false);
+  const [freshError, setFreshError] = useState<string | null>(null);
+
+  const exportAll = useCallback(async () => {
     if (!env) return;
-    setFreshBusy(true);
-    await flush();
-    const current = (await env.qs.loadSemester().catch(() => null)) ?? env.current;
-    if (current) {
-      const mastery = await env.ms.load().catch(() => env.mastery);
-      const data = JSON.stringify({ semester: current, setup: draftRef.current, mastery, exportedAt: new Date().toISOString() }, null, 2);
-      await offerDownload(`studydesk-${(current.name || "semester").replace(/[^\w-]+/g, "-")}.json`, data).catch(() => undefined);
+    setFreshError(null);
+    setFresh("exporting");
+    try {
+      await flush();
+      const { zip, files, missing } = await buildBackup(setFreshLine);
+      const name = (draftRef.current?.name || "semester").replace(/[^\w-]+/g, "-");
+      const ok = await saveBackup(zip, `studydesk-backup-${name}-${toDay()}.zip`);
+      setFreshInfo({ files, missing });
+      setFresh(ok ? "exported" : "declined");
+    } catch (e) {
+      setFreshError(`The backup couldn't be made: ${message(e)}`);
+      setFresh("ask");
     }
-    setFreshBusy(false);
-    const fresh = newDraft();
-    fresh.chat = [{ id: uid(), role: "assistant", text: greeting(true, null), createdAt: Date.now() }];
-    draftRef.current = fresh;
-    setDraft(fresh);
-    setEnv({ ...env, current });
-    setConfirmFresh(false);
-    schedule();
-  }, [env, flush, schedule]);
+  }, [env, flush]);
+
+  /** Opens a new setup. With `wipe`, the old semester data is deleted first. */
+  const startFresh = useCallback(
+    async (wipe: boolean) => {
+      if (!env) return;
+      setFreshError(null);
+      let current = (await env.qs.loadSemester().catch(() => null)) ?? env.current;
+      if (wipe) {
+        setFresh("wiping");
+        try {
+          await freshStart(!wipeChats, setFreshLine);
+          current = null;
+        } catch (e) {
+          setFreshError(`Not everything could be deleted: ${message(e)} Your backup is safe; try again.`);
+          setFresh("exported");
+          return;
+        }
+      } else {
+        await flush();
+      }
+      const next = newDraft();
+      next.chat = [{ id: uid(), role: "assistant", text: greeting(true, null), createdAt: Date.now() }];
+      draftRef.current = next;
+      setDraft(next);
+      setEnv({ ...env, current });
+      setFresh(null);
+      setWipeArmed(false);
+      schedule();
+    },
+    [env, flush, schedule, wipeChats],
+  );
 
   // ---- hand-off: can long work go to cloud sessions? ----
   const [handoff, setHandoff] = useState<HandoffState | null>(null);
@@ -257,34 +293,78 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
       </header>
       {draft.status === "active" && (
         <div className="setup-current">
-          {!confirmFresh ? (
+          {fresh === null && (
             <>
-              <span>
-                This is your current semester{draft.name ? `, ${draft.name}` : ""}.
-              </span>
-              <button type="button" className="mini-btn primary" onClick={() => setConfirmFresh(true)}>
+              <span>This is your current semester{draft.name ? `, ${draft.name}` : ""}.</span>
+              <button type="button" className="mini-btn primary" onClick={() => setFresh("ask")}>
                 Start a new semester
               </button>
             </>
-          ) : (
+          )}
+          {fresh === "ask" && (
             <>
               <span>
                 <strong>Are you sure?</strong>{" "}
                 {draft.endDate && draft.endDate > today
                   ? `${draft.name || "Your current semester"} runs until ${new Date(`${draft.endDate}T12:00`).toLocaleDateString("en", { day: "numeric", month: "short", year: "numeric" })}. `
                   : ""}
-                This exports {draft.name || "your current semester"} as a backup file and starts setting up a new one. Your mastery and stats stay saved, such as what
-                you've mastered and how long work takes you. Until the new semester is ready, your current quests keep working, and the old semester then moves to
-                your archive.
+                First StudyDesk saves a backup: one zip with every file you imported and all your data, including mastery and stats. Then you choose whether to
+                keep the old data or start completely fresh.
               </span>
-              <button type="button" className="mini-btn primary" disabled={freshBusy} onClick={() => void startFresh()}>
-                {freshBusy ? "Exporting…" : "Export and start new"}
+              <button type="button" className="mini-btn primary" onClick={() => void exportAll()}>
+                Export everything
               </button>
-              <button type="button" className="mini-btn" disabled={freshBusy} onClick={() => setConfirmFresh(false)}>
+              <button type="button" className="mini-btn" onClick={() => setFresh(null)}>
                 Cancel
               </button>
             </>
           )}
+          {(fresh === "exporting" || fresh === "wiping") && <span className="quest-muted">{freshLine || "Working…"}</span>}
+          {fresh === "declined" && (
+            <>
+              <span>The backup wasn't saved, so nothing is deleted. You can try again, or start the new semester and keep all old data.</span>
+              <button type="button" className="mini-btn primary" onClick={() => void exportAll()}>
+                Try the export again
+              </button>
+              <button type="button" className="mini-btn" onClick={() => void startFresh(false)}>
+                Start new, keep old data
+              </button>
+            </>
+          )}
+          {fresh === "exported" && (
+            <div className="setup-fresh">
+              <p>
+                <strong>Backup saved</strong>
+                {freshInfo?.files ? ` with ${freshInfo.files} imported ${freshInfo.files === 1 ? "file" : "files"}` : ""}.
+                {freshInfo?.missing.length ? ` These couldn't be included: ${freshInfo.missing.join(", ")}.` : ""}
+              </p>
+              <p>Do you want a completely fresh StudyDesk?</p>
+              <ul>
+                <li>
+                  <strong>Deleted:</strong> your courses and semester, the setup chat and to-do list, quests with your answers, imported files, archived semesters.
+                </li>
+                <li>
+                  <strong>Kept:</strong> everything you've mastered, your stats (like how long work takes you), and your profile.
+                </li>
+              </ul>
+              <label className="setup-fresh-check">
+                <input type="checkbox" checked={wipeChats} onChange={(e) => setWipeChats(e.target.checked)} /> Also delete my Ask chats
+              </label>
+              <div className="handoff-actions">
+                <button type="button" className="mini-btn primary" onClick={() => void startFresh(false)}>
+                  Keep old data
+                </button>
+                <button
+                  type="button"
+                  className={`mini-btn danger${wipeArmed ? " is-armed" : ""}`}
+                  onClick={() => (wipeArmed ? void startFresh(true) : setWipeArmed(true))}
+                >
+                  {wipeArmed ? "Click again to delete for good" : "Delete old data and start fresh"}
+                </button>
+              </div>
+            </div>
+          )}
+          {freshError && <p className="quest-error">{freshError}</p>}
         </div>
       )}
       <div className="setup-grid">

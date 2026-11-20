@@ -2382,3 +2382,29 @@ sup.sd-ref {
 .setup-current > span {
   flex: 1 1 260px;
 }
+.setup-fresh {
+  flex: 1 1 100%;
+}
+.setup-fresh p {
+  margin: 0 0 8px;
+}
+.setup-fresh ul {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  line-height: 1.6;
+}
+.setup-fresh-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.mini-btn.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: transparent;
+}
+.mini-btn.danger.is-armed {
+  background: var(--danger);
+  color: #fff;
+}

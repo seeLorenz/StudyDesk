@@ -116,3 +116,10 @@ The flow lives in `src/onboarding/`. A new student lands in it automatically; a 
 - **Organization agent:** replace the prompt in `src/onboarding/setup.ts` with its own design and run it in a launched Claude session that writes back the same records (`CourseSetup` in `src/onboarding/types.ts`), with web search for courses without materials and files longer than one reading.
 - **Orchestrator:** the setup chat (`src/onboarding/agent.ts`) is its first part. The same page-tool pattern (sheet in the prompt, one tool to change it) should carry over to later changes: new course, corrected date, teaching language, study goal.
 - **Quests:** should read the material catalog to open only the referenced pages of the original file when writing lessons and practice. Not used yet.
+
+## Starting the next semester (built)
+
+Opening Start New Semester while a semester is active asks "Are you sure?" first (and says so when the semester's end date is still ahead). Then:
+
+1. **Backup.** StudyDesk saves one zip: every original file the student imported, by course, plus `studydesk-data.json` with everything it keeps for them (profile, semester and setup with chat and to-do list, archived semesters, quests with answers and reviews, Ask chats, mastery and stats). `src/platform/backup.ts`.
+2. **Keep or start fresh.** Only once the zip is saved, the student chooses. "Keep old data" (the default) starts the new setup and archives the old semester when the new one is saved; current quests keep working until then. "Delete old data and start fresh" (two clicks) deletes courses and semester, setup chat and to-do list, quests, imported files and archived semesters, and keeps mastery, stats and profile; Ask chats only if the student ticks the box. If the download is declined, nothing can be deleted.
