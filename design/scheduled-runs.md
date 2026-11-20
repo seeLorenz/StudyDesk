@@ -53,17 +53,29 @@ Applied changes show up in the StudyDesk chat as change cards marked as found ov
 
 **Deep sweeps.** The check also picks, per course, the date of the next deep sweep: sooner before an exam phase or a new block of material, later in quiet weeks, always between 3 and 28 days ahead. The first one is a week after setup unless the check picks earlier. On that night the course is read again completely, like at setup, with the web; the result replaces the course's map, and questions it raises go to the student the same way.
 
+## Changing it through StudyDesk's chat
+
+Everything about the nightly run is changed by talking to StudyDesk (the Orchestrator), like any other setting. Each change gets a card with Undo:
+
+- **The time** ("run it at 21:30"): a new scheduled task is made at the new time; the old one finds a different key and does nothing.
+- **Pause and resume** ("stop the nightly run during the holidays"): the program reads the setting and stops at once, so no new task is needed.
+- **Each part on or off**: grading at night, the courses' check, writing tomorrow's quest. A part that's off is done the old way (the "Grade me early" button, the quest written on first open).
+- **A course's deep sweep date** ("read Calculus again completely on Thursday"): the student's date wins over the agent's own; "none" hands it back to the agent.
+- **Run it now** ("grade everything now and write tomorrow's quest"): starts the run at once; results arrive within about 15 minutes. A run started by hand doesn't stop that night's regular run.
+
+The Orchestrator sees the run's status, its settings, each course's next sweep and the last night's log, so it can answer "when is Calculus read again?" or "what happened last night?".
+
 ## What the student sees
 
 - **Quest overview:** "Grading runs on its own tonight at 22:00, or press the button to grade now." Without cloud sessions: "anything left is graded the next time you open StudyDesk".
 - **In the morning:** tomorrow's quest is simply there. Graded quests move to "Done quests", and the mistake review sits at the top as usual.
-- **StudyDesk chat:** one message per night, "Last night's run", with what was graded, what the check found (with change cards), and the quest it wrote.
+- **StudyDesk chat:** one message per run, "StudyDesk's nightly run", with what was graded, what the check found (with change cards), and the quest it wrote.
 
 ## When something fails
 
 - **No cloud sessions** (or the run didn't happen): on the next open, handed-in work from earlier days is graded in the page, and today's quest is written in the page on first open, as before.
 - **One part fails** (a grading answer that can't be read, a course reading that breaks off): that part is skipped and logged, the rest of the night goes on. Ungraded work stays for "Grade me early" or the next night; a failed sweep is tried again the next night.
-- **The run is fired twice** in one night: the second finds the night already done and stops.
+- **The run is fired twice** within a few hours: the second finds the night already done and stops.
 
 ## Limits, for now
 

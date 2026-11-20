@@ -3,7 +3,8 @@ import { callId, deferredAsk, isPending } from "../src/routine/deferred";
 import { runNightly, type NightInput, type NightResult } from "../src/routine/nightly";
 import { applyShallow, applySweep, mergeGrading, outboxOrder, type GradingOutbox, type OutboxDoc, type ShallowOutbox } from "../src/routine/apply";
 import { clampSweep, nextOrgState, parseShallow, shallowTurns, sweepsDue } from "../src/routine/org";
-import { nightlyCron, schedulePrompt } from "../src/platform/schedule";
+import { nightlyCron, scheduleFits, schedulePrompt } from "../src/platform/schedule";
+import { applyOps } from "../src/orchestrator/changes";
 import { sampleGradingAsk, sampleSemester } from "../src/quests/seed";
 import { planQuest } from "../src/quests/plan";
 import { emptyProgress } from "../src/quests/handin";
@@ -288,9 +289,42 @@ The exam moved by two days.`;
   });
 });
 
+describe("changing the nightly run through the StudyDesk chat", () => {
+  it("sets the time, pauses, and turns parts off, with Undo", () => {
+    const r = applyOps({ draft: draft(), profile }, [{ op: "set_nightly", time: "21:30", quest: false }], { studentWords: "run at half nine, and don't write quests at night" });
+    expect(r.errors).toEqual([]);
+    expect(r.desk.profile.nightly).toMatchObject({ time: "21:30", paused: false, grading: true, quest: false });
+    expect(r.change?.lines[0]).toBe("Nightly run: time 22:00 → 21:30, writing tomorrow's quest at night off");
+    expect(r.change?.undoable).toBe(true);
+    expect(applyOps(r.desk, [{ op: "set_nightly", time: "25:00" }], { studentWords: "" }).errors[0]).toContain("HH:MM");
+    // the new time needs a new scheduled task; the old one stops by its key
+    expect(scheduleFits({ triggerId: "t", key: "k", timeZone: "Europe/Berlin", time: "22:00", createdAt: 0 }, "Europe/Berlin", "21:30")).toBe(false);
+  });
+
+  it("sets a course's deep sweep date, which wins over the agent's own", () => {
+    const r = applyOps({ draft: draft(), profile }, [{ op: "set_sweep", course: "Calculus 1", date: "2026-11-05" }], { studentWords: "read calculus again on thursday" });
+    expect(r.desk.draft.sweepDates).toEqual({ c1: "2026-11-05" });
+    const org = { c1: { nextDeepSweep: "2026-11-20", lastDeepSweep: null, lastShallow: null } };
+    expect(sweepsDue(r.desk.draft, org, "2026-11-04")).toEqual([]);
+    expect(sweepsDue(r.desk.draft, org, "2026-11-05")).toEqual(["c1"]);
+    // once done, the same date doesn't sweep again
+    expect(sweepsDue(r.desk.draft, { c1: { ...org.c1, lastDeepSweep: "2026-11-05" } }, "2026-11-06")).toEqual([]);
+    const cleared = applyOps(r.desk, [{ op: "set_sweep", course: "c1", date: "none" }], { studentWords: "" });
+    expect(cleared.desk.draft.sweepDates).toEqual({});
+  });
+
+  it("skips the parts the student turned off", async () => {
+    const { result } = await playNight(input({ profile: { ...profile, nightly: { time: "22:00", paused: false, grading: false, check: true, quest: false } } }));
+    if (result.kind !== "done") throw new Error("not done");
+    expect(result.writes.map((w) => w.path.join("/"))).toEqual(["routine"]);
+    expect(result.log.join(" ")).toContain("Grading at night is turned off");
+  });
+});
+
 describe("the schedule", () => {
   it("runs at 22:00 in the student's own time zone", () => {
     expect(nightlyCron("Europe/Berlin")).toBe("CRON_TZ=Europe/Berlin 0 22 * * *");
+    expect(nightlyCron("America/New_York", "21:30")).toBe("CRON_TZ=America/New_York 30 21 * * *");
   });
 
   it("carries its key, so a replaced task does nothing", () => {

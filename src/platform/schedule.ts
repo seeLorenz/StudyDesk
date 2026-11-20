@@ -8,8 +8,9 @@
 // stays short and fixed; everything that may change lives in routine.mjs.
 //
 // A task carries a key. The profile keeps the key of the current task; a task
-// whose key isn't the profile's (an old one, after a time-zone change) does
-// nothing when it fires.
+// whose key isn't the profile's (an old one, after the student changed the
+// time or moved time zone) does nothing when it fires. Pausing doesn't need a
+// new task: the program reads the student's settings and stops.
 
 import type { ScheduleInfo } from "../routine/nightly";
 import { callRemote, findId, type HandoffSetup } from "./handoff";
@@ -48,8 +49,8 @@ export function schedulePrompt(key: string, artifactUrl?: string): string {
 const newKey = () => `n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 /** True when the saved schedule still fits: same environment's account, same time zone. */
-export function scheduleFits(s: ScheduleInfo | undefined, timeZone: string): boolean {
-  return !!s && s.timeZone === timeZone && s.time === NIGHTLY_TIME;
+export function scheduleFits(s: ScheduleInfo | undefined, timeZone: string, time = NIGHTLY_TIME): boolean {
+  return !!s && s.timeZone === timeZone && s.time === time;
 }
 
 /**
@@ -57,20 +58,20 @@ export function scheduleFits(s: ScheduleInfo | undefined, timeZone: string): boo
  * if any, keeps existing in the student's account but does nothing anymore
  * (its key no longer matches); the page can't delete it.
  */
-export async function createSchedule(setup: HandoffSetup, timeZone: string): Promise<ScheduleInfo> {
+export async function createSchedule(setup: HandoffSetup, timeZone: string, time = NIGHTLY_TIME): Promise<ScheduleInfo> {
   const key = newKey();
   const r = await callRemote<{ trigger?: { id?: string }; id?: string }>("create_trigger", {
     name: "StudyDesk nightly run",
     prompt: schedulePrompt(key, setup.artifactUrl),
     initiation: "human_request",
-    cron_expression: nightlyCron(timeZone),
+    cron_expression: nightlyCron(timeZone, time),
     create_new_session_on_fire: true,
     environment_id: setup.environmentId,
     notifications: {},
   });
   const triggerId = r?.trigger?.id ?? r?.id ?? findId(r, "trig_");
   if (!triggerId) throw { code: "tool_error", message: "The nightly task couldn't be created." };
-  return { triggerId, key, timeZone, time: NIGHTLY_TIME, createdAt: Date.now() };
+  return { triggerId, key, timeZone, time, createdAt: Date.now() };
 }
 
 /** Starts tonight's run now, outside its schedule (for "Run tonight's check now"). */

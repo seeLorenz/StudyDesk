@@ -24,6 +24,8 @@ export type SnapshotInput = {
   today: Day;
   screen: string;
   cloudSessions: "on" | "off" | "unknown";
+  /** The nightly run as code knows it: settings, sweep dates, last night. */
+  nightly?: Record<string, unknown>;
 };
 
 /** The desk as Claude sees it with every message: small, and every number computed by code. */
@@ -89,6 +91,7 @@ export function deskSnapshot(i: SnapshotInput): string {
       recentChanges: i.state.changes.slice(-6).map((c) => ({ id: c.id, lines: c.lines, status: c.status })),
       unsortedFiles: draft.uploads.filter((u) => !u.courseId).map((u) => ({ uploadId: u.id, name: u.fileName })),
       cloudSessions: i.cloudSessions,
+      nightlyRun: i.nightly ?? "not set up (needs cloud sessions)",
     },
     null,
     1,
@@ -103,6 +106,7 @@ What you do:
 - Start a job with start_job for bigger work: new material (files the student drops: assign them to their course in the same call), a new course (add_course first, then start_job), or re-mapping a course when the student says something that changes what the course needs ("chapter 7 isn't in the exam", "the exam is oral now"); record that statement as a fact too. New files start a job automatically; re-reading everything a course already has asks the student first (the tool shows them a yes/no card).
 - Dropping a course always needs the student's yes: call change with drop_course, and the student gets a yes/no card.
 - After a change that affects today (todaysQuest exists and started is false), you may rebuild today's quest with rebuild_quest; the change card also offers it.
+- The nightly run (nightlyRun in the snapshot) grades at its time, runs the organization agent's check and deep sweeps, and writes tomorrow's quest. Change it with set_nightly (time, pause, turn parts off) and set_sweep (when a course is read again completely); start it at once with run_nightly_now only when the student asks.
 - Learning questions ("how does the chain rule work?", explaining a problem) belong to the tutor: call open_ask with the question and say in one line that you opened it there. Don't teach here.
 - When the student is on a screen, "this" means what's on it (studentIsOn) or the quoted selection.
 
@@ -140,6 +144,8 @@ export const CHANGE_TOOL = {
 - {op:"add_slot", weekday, start, end, kind:"lecture"|"exercise"|"fixed", title, course?} / {op:"remove_slot", weekday, start}
 - {op:"set_language", course, language}
 - {op:"set_quest_settings", hints?: 0-5 (per homework task), lessonMinutes?: 2-15 (reading part of a lesson), newSkillsPerQuest?: 0-4}
+- {op:"set_nightly", time?: "HH:MM", paused?: bool, grading?: bool, check?: bool, quest?: bool} (the nightly run: when it runs, pause it, or turn off grading / the courses' check / writing tomorrow's quest)
+- {op:"set_sweep", course, date: "YYYY-MM-DD" or "none"} (when the organization agent reads a course again completely, at night)
 - {op:"add_fact", course?, text} (word for word)
 - {op:"set_profile", school?, country?, program?, year?}
 - {op:"add_result", course, component, points, maxPoints, date, skills?: [skill ids]} (a real result from school; can't be undone)
@@ -295,6 +301,13 @@ export function todaysQuest(records: QuestRecord[], today: Day): QuestRecord | n
 export function questStarted(r: QuestRecord): boolean {
   return r.progress.handedIn.length > 0 || Object.values(r.progress.work).some((w) => w.activeSeconds > 0 || w.answerText.trim() !== "" || w.files.length > 0 || w.hintsShown > 0);
 }
+
+export const NIGHTLY_TOOL = {
+  name: "run_nightly_now",
+  description:
+    "Starts the nightly run right now instead of waiting for its time: grades what's handed in, checks the courses, writes tomorrow's quest. Results arrive within about 15 minutes. Only when the student asks for it.",
+  inputSchema: { type: "object", properties: {} },
+} as const;
 
 export const REBUILD_TOOL = {
   name: "rebuild_quest",

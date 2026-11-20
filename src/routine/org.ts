@@ -74,7 +74,7 @@ ${facts}
 Files the student gave:
 ${files}
 Skills (names): ${skills || "none yet"}
-Last deep sweep: ${st?.lastDeepSweep ?? "only the setup reading"}; next planned: ${st?.nextDeepSweep ?? "none yet"}`;
+Last deep sweep: ${st?.lastDeepSweep ?? "only the setup reading"}; next planned: ${st?.nextDeepSweep ?? "none yet"}${draft.sweepDates?.[c.id] ? `; the student asked for one on ${draft.sweepDates[c.id]} (keep that date)` : ""}`;
   });
 
   const user = `You are StudyDesk's organization agent, doing tonight's short check (${today}) for one student. Nobody reads this answer except code. You can't ask the student anything now.
@@ -164,6 +164,9 @@ export function sweepsDue(draft: SemesterDraft, org: OrgState, today: Day): stri
   return draft.courses
     .filter((c) => c.setupStatus === "ready" || c.setupStatus === "needs_check")
     .filter((c) => {
+      const asked = draft.sweepDates?.[c.id];
+      const last = org[c.id]?.lastDeepSweep ?? null;
+      if (asked && asked <= today && (!last || last < asked)) return true;
       const next = org[c.id]?.nextDeepSweep;
       return !!next && next <= today;
     })
@@ -175,7 +178,8 @@ export function nextOrgState(org: OrgState, draft: SemesterDraft, today: Day, sh
   const out: OrgState = {};
   for (const c of draft.courses) {
     const prev = org[c.id] ?? { nextDeepSweep: null, lastDeepSweep: null, lastShallow: null };
-    const picked = shallow?.nextSweep[c.id] ?? null;
+    const asked = draft.sweepDates?.[c.id];
+    const picked = asked && asked > today ? asked : shallow?.nextSweep[c.id] ?? null;
     let next = prev.nextDeepSweep;
     if (swept.includes(c.id)) next = picked ?? addDays(today, ORG_CONFIG.firstSweepAfterDays);
     else if (picked) next = picked;

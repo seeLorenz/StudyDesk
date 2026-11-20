@@ -38,6 +38,22 @@ export type ScheduleInfo = {
   createdAt: number;
 };
 
+/** What the student can change about the nightly run (through the StudyDesk chat). */
+export type NightlySettings = {
+  /** "HH:MM" in the student's time zone. */
+  time: string;
+  /** Nothing runs while paused. */
+  paused: boolean;
+  /** Each part can be turned off on its own. */
+  grading: boolean;
+  check: boolean;
+  quest: boolean;
+};
+
+export const NIGHTLY_DEFAULTS: NightlySettings = { time: "22:00", paused: false, grading: true, check: true, quest: true };
+
+export const nightlySettings = (s: Partial<NightlySettings> | undefined): NightlySettings => ({ ...NIGHTLY_DEFAULTS, ...(s ?? {}) });
+
 export type NightLog = {
   day: Day;
   status: "working" | "done" | "failed" | "skipped";
@@ -108,6 +124,7 @@ export async function runNightly(input: NightInput, d: DeferredAsk): Promise<Nig
   const log: string[] = [];
   const writes: Write[] = [];
   const routine = input.routine ?? emptyRoutine();
+  const settings = nightlySettings(input.profile?.nightly);
 
   // ---- 0. What earlier nights left for the page, as if the page had opened ----
   let records = input.records.map((r) => r);
@@ -129,8 +146,10 @@ export async function runNightly(input: NightInput, d: DeferredAsk): Promise<Nig
   if (semester) for (const s of semester.skills) if (!mastery.skills.some((x) => x.id === s.id)) mastery.skills.push(s);
 
   // ---- 1. Grading and 2. the organization agent, side by side ----
-  const grading = gradeAll(input, records, semester, d, log);
-  const org = desk && desk.draft.status === "active" && desk.draft.courses.length ? organize(input, desk, routine.org, mastery, d, log) : Promise.resolve(null);
+  if (!settings.grading) log.push("Grading at night is turned off; use \"Grade me early\".");
+  if (!settings.check) log.push("The courses' nightly check is turned off.");
+  const grading = settings.grading ? gradeAll(input, records, semester, d, log) : Promise.resolve({ pending: false, attempts: [], reviews: [], boxes: [] as GradingOutbox[] });
+  const org = settings.check && desk && desk.draft.status === "active" && desk.draft.courses.length ? organize(input, desk, routine.org, mastery, d, log) : Promise.resolve(null);
   const [g, o] = await Promise.all([grading, org]);
   if (g.pending || o?.pending) return { kind: "pending", log };
 
@@ -163,7 +182,8 @@ export async function runNightly(input: NightInput, d: DeferredAsk): Promise<Nig
 
   // ---- 3. Tomorrow's quest ----
   let questId: string | null = null;
-  const q = await writeTomorrow(semester, records, mastery, tomorrow, now, d, log);
+  const q = settings.quest ? await writeTomorrow(semester, records, mastery, tomorrow, now, d, log) : { pending: false, record: null };
+  if (!settings.quest) log.push("Writing the quest overnight is turned off; it's written when you open StudyDesk.");
   if (q.pending) return { kind: "pending", log };
   if (q.record) {
     questId = q.record.quest.id;
@@ -354,7 +374,7 @@ async function writeTomorrow(semester: Semester | null, records: QuestRecord[], 
     const quest = await writeQuest(res.quest, writer, undefined, { concurrency: res.quest.parts.length });
     out.record = { quest, progress: emptyProgress(quest.id) };
     const minutes = quest.plannedMinutes;
-    log.push(`Wrote tomorrow's quest: ${course?.name ?? "quest"}, ${quest.parts.length} parts, about ${minutes} min. It goes by your weekly timetable; your calendar isn't read at night.`);
+    log.push(`Wrote tomorrow's quest: ${course?.name ?? "quest"}, ${quest.parts.length} ${quest.parts.length === 1 ? "part" : "parts"}, about ${minutes} min. It goes by your weekly timetable; your calendar isn't read at night.`);
   } catch (e) {
     if (isPending(e)) out.pending = true;
     else log.push(`Tomorrow's quest couldn't be written (${(e as Error)?.message ?? String(e)}). StudyDesk writes it when you open it.`);

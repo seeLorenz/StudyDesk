@@ -113,7 +113,7 @@ function downloadStep(dir: string, url: string | null): void {
     "NEXT STEP: download the student's StudyDesk data (into files, not into this conversation).",
     "",
     `Use ArtifactData with ${where} and always out_dir "${data}":`,
-    ...DOCS.map((d) => `- action "get", collection "${ME}", doc_id "${d}" (it's fine if it doesn't exist)`),
+    ...DOCS.map((d) => `- action "get", collection "${ME}", doc_id "${d}" (a missing document just answers "No document": that's fine)`),
     ...COLLECTIONS.map((c) => `- action "list", collection "${ME}/${c}", query {"limit": 1000}; while the result has a next_cursor, list again with query {"limit": 1000, "cursor": <next_cursor>}`),
     "",
     `When every call is done (empty collections are fine), create the empty file ${join(data, "READY")} and run this program again with the same arguments.`,
@@ -232,9 +232,14 @@ async function main(): Promise<void> {
   }
   freeze(night);
 
+  if (!dry && profile?.nightly?.paused) {
+    say(["STOP. The student paused the nightly run. Don't write anything. Reply \"Paused: nothing to do.\" and end. NIGHTLY RUN FINISHED"]);
+    return;
+  }
   const routine = doc<RoutineDoc>(all, "routine");
-  if (routine?.nights.some((n) => n.day === night.today && n.status === "done") && !process.argv.includes("--saved")) {
-    say([`Tonight's run (${night.today}) already finished earlier. Don't write anything. NIGHTLY RUN FINISHED`]);
+  // Fired twice by mistake: the second stops. (A run the student started earlier in the day doesn't block tonight's.)
+  if (!dry && routine?.nights.some((n) => n.day === night.today && n.status === "done" && night.now - n.startedAt < 3 * 3_600_000) && !process.argv.includes("--saved")) {
+    say([`A run already finished in the last few hours (${night.today}). Don't write anything. NIGHTLY RUN FINISHED`]);
     return;
   }
 
