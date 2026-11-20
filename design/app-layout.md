@@ -1,6 +1,6 @@
 # App layout
 
-How StudyDesk's screens fit together. Agreed with the student-tester on 2026-11-20 after a mock and a discussion. This file covers navigation and look only; each module's own file covers what happens inside its screen.
+How StudyDesk's screens fit together. Agreed on 2026-11-20 after a mock and a discussion. This file covers navigation and look only; each module's own file covers what happens inside its screen.
 
 ## Three places
 
