@@ -8,7 +8,7 @@ The sidebar has three places, each named after what you do there:
 
 | Place | What it's for | What's on it |
 | --- | --- | --- |
-| **Today** | Doing the work. The home screen. | Mistake review (after grading), today's quest, and the **Coming up** row under the quest's header. |
+| **Today** | Doing the work. The home screen. | Mistake review (after grading, starts collapsed), today's quest (its header shows only "Why today"; extra notes behind "More about this quest"), and **Coming up** under the header. Today stays loaded once opened, so switching back is instant. |
 | **Ask** | Understanding something. | Clicking Ask starts a new tutor chat; recent chats are listed under it to pick one up again. |
 | **Organize** | Running your desk. | The Orchestrator chat on the left, everything StudyDesk knows about the semester on the right. |
 
@@ -18,7 +18,7 @@ Why the names: there used to be two chats ("Ask" and "Talk to StudyDesk") and yo
 
 ## Coming up
 
-A row of cards on Today: every hand-in, exam and quiz in the next six weeks, soonest first, with a countdown. It scrolls sideways with arrow buttons (no visible scrollbar). Cards due within a day get a red top edge, within three days a yellow one.
+On Today it starts **folded to one line** ("Coming up: Calc quiz in 5 days · LA exam in 7 days · +3 more"), so the quest stays the main thing (changed after the first try felt cluttered). Clicking it opens a row of cards: every hand-in, exam and quiz in the next six weeks, soonest first, with a countdown. It scrolls sideways with arrow buttons (no visible scrollbar). Cards due within a day get a red top edge, within three days a yellow one.
 
 The point is **verification, not just trust**: the student sees at a glance whether StudyDesk knows every deadline. Each card has a small "Wrong?" link that opens Organize with that item quoted, so a wrong or missing date is fixed in one message.
 

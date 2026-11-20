@@ -577,6 +577,8 @@ const HOMEWORK_RULE = `
 
 function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewProps) {
   const { quest } = record;
+  // The header shows only "Why today"; the extra notes open on request.
+  const [notesOpen, setNotesOpen] = useState(false);
   const { semester, mastery, ms, qs, live } = data;
   // A copy of the work is kept in this browser on every change, so a crash or a
   // closed tab loses nothing; it wins over the saved record when it's newer.
@@ -1010,11 +1012,18 @@ ${b?.text ?? ""}
         <p className="quest-reason">
           <strong>Why today:</strong> {quest.reason}
         </p>
-        {quest.notes.map((n, i) => (
-          <p key={i} className="quest-note">
-            {n}
-          </p>
-        ))}
+        {quest.notes.length > 0 &&
+          (notesOpen ? (
+            quest.notes.map((n, i) => (
+              <p key={i} className="quest-note">
+                {n}
+              </p>
+            ))
+          ) : (
+            <button type="button" className="link-btn quest-more" onClick={() => setNotesOpen(true)}>
+              More about this quest
+            </button>
+          ))}
       </header>
 
       {extra}

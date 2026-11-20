@@ -25,6 +25,8 @@ export function ComingUp({ semester, today }: { semester: Pick<Semester, "course
   const items = upcoming(semester, today);
   const row = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ start: true, end: true });
+  // Folded to one line by default; the full list lives on Organize.
+  const [open, setOpen] = useState(false);
 
   const measure = () => {
     const el = row.current;
@@ -35,15 +37,43 @@ export function ComingUp({ semester, today }: { semester: Pick<Semester, "course
     measure();
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
-  }, [items.length]);
+  }, [items.length, open]);
 
   const page = (dir: 1 | -1) => row.current?.scrollBy({ left: dir * row.current.clientWidth * 0.8, behavior: "smooth" });
+
+  if (!open)
+    return (
+      <section className="coming is-folded" aria-label="Coming up">
+        <button type="button" className="coming-line" onClick={() => setOpen(true)} aria-expanded={false} disabled={items.length === 0}>
+          <span className="section-label">Coming up</span>
+          <span className="coming-line-text">
+            {items.length === 0
+              ? "nothing in the next six weeks"
+              : items
+                  .slice(0, 2)
+                  .map((i) => `${i.courseShort} ${KIND[i.kind].toLowerCase()} ${countdown(i.inDays)}`)
+                  .join(" · ")}
+            {items.length > 2 && <span className="quest-muted"> · +{items.length - 2} more</span>}
+          </span>
+          {items.length > 0 && (
+            <svg className="coming-chev" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </button>
+      </section>
+    );
 
   return (
     <section className="coming" aria-label="Coming up">
       <div className="coming-head">
-        <h2 className="section-label">Coming up</h2>
-        <span className="coming-sub">Next six weeks</span>
+        <button type="button" className="coming-fold" onClick={() => setOpen(false)} aria-expanded={true}>
+          <span className="section-label">Coming up</span>
+          <span className="coming-sub">Next six weeks</span>
+          <svg className="coming-chev is-up" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
         {items.length > 0 && (
           <span className="coming-nav">
             <button type="button" className="icon-btn" aria-label="Earlier" disabled={edges.start} onClick={() => page(-1)}>

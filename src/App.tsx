@@ -57,6 +57,10 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [view, setView] = useState<View>("today");
+  const [todayLoaded, setTodayLoaded] = useState(false);
+  useEffect(() => {
+    if (view === "today") setTodayLoaded(true);
+  }, [view]);
   // Focus mode: the sidebar shrinks to an icon strip. Remembered in this browser only.
   const [focus, setFocus] = useState<boolean>(() => {
     try {
@@ -354,7 +358,12 @@ export function App() {
             </button>
           </div>
         )}
-        {shown === "today" && <QuestPage onStartSetup={() => go("setup")} command={command} />}
+        {/* Today stays loaded once opened, so coming back to it is instant. */}
+        {(shown === "today" || todayLoaded) && (
+          <div className={"today-host" + (shown === "today" ? "" : " is-hidden")} aria-hidden={shown !== "today"}>
+            <QuestPage key={sem?.id ?? "none"} onStartSetup={() => go("setup")} command={command} />
+          </div>
+        )}
         {shown === "chat" && <ChatView key={current.id} initial={current} save={save} onSaveError={onSaveError} autoSend={askSeed?.chatId === current.id ? askSeed.question : undefined} />}
         {shown === "organize" && (
           <div className="organize">

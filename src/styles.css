@@ -3319,3 +3319,64 @@ sup.sd-ref {
     display: none;
   }
 }
+
+/* ---------- polish round: Today kept loaded, Coming up folded ---------- */
+.today-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.today-host.is-hidden {
+  display: none;
+}
+.coming.is-folded {
+  margin-bottom: 20px;
+}
+.coming-line,
+.coming-fold {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  text-align: left;
+  font-size: 14px;
+  color: var(--ink);
+}
+.coming-fold {
+  width: auto;
+  flex: 1;
+  border: 0;
+  background: none;
+  padding: 0;
+}
+.coming-line:hover {
+  border-color: var(--ink-3);
+}
+.coming-line:disabled {
+  cursor: default;
+  color: var(--ink-3);
+}
+.coming-line-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.coming-chev {
+  color: var(--ink-3);
+  flex: none;
+}
+.coming-chev.is-up {
+  transform: rotate(180deg);
+  margin-right: auto;
+}
+.quest-more {
+  font-size: 13px;
+  padding: 0;
+}
