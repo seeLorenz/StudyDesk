@@ -2,6 +2,8 @@
 
 This folder explains how StudyDesk works, in plain English. It's meant for anyone who wants to understand the idea before reading code. Each file covers one module, and modules are designed one at a time.
 
+Start with [guidelines.md](guidelines.md): the design rules that apply to the whole app.
+
 | File | Module | Status |
 | --- | --- | --- |
 | [grading-and-mastery.md](grading-and-mastery.md) | How answers are judged, how mastery is measured, reviews, timing, points | Spec drafted |
