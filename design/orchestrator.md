@@ -1,6 +1,6 @@
 # The Orchestrator
 
-The Orchestrator is the only agent the student talks to about their desk. The one exception is the tutor: when the student asks about a problem, an explanation or any passage through the improved interface (Ask and select-to-reply), a separate Claude instance answers there. Everything else goes through the Orchestrator. It answers questions about their StudyDesk, takes every change to their semester, and passes the heavy work on to the organization agent, which the student never sees. This file covers what the Orchestrator does after setup. Setting up a semester ([onboarding.md](onboarding.md)) is its first job and stays as designed there.
+The Orchestrator is the only agent the student talks to about their desk. The one exception is the tutor: when the student asks about a problem, an explanation or any passage through the improved interface (Ask and select-to-reply), or works through the mistake review after grading, a separate Claude instance answers there. Everything else goes through the Orchestrator. It answers questions about their StudyDesk, takes every change to their semester, and passes the heavy work on to the organization agent, which the student never sees. This file covers what the Orchestrator does after setup. Setting up a semester ([onboarding.md](onboarding.md)) is its first job and stays as designed there.
 
 Status: design draft, nothing built yet beyond the setup chat.
 
@@ -46,6 +46,8 @@ Grouped by what happens behind the scenes. The lists are examples, not a fixed m
 **Not the Orchestrator's job**
 
 - Explaining course content. Learning questions go to the Ask and select-to-reply interface, where the tutor (its own Claude instance) answers them. If a student asks the Orchestrator "how does the chain rule work?", it opens an Ask note with the question already in it instead of teaching in the organization chat (see open question 1).
+
+**The tutor passes organizing remarks on.** Students say organizing things to the tutor in passing: "this sheet is actually due tomorrow", "I'm sick, can we stop here", "we skipped this chapter in the lecture". The tutor never changes anything itself. It answers the learning part, and hands the remark to the Orchestrator word for word with where it was said. The Orchestrator handles it like any other message and shows the change card in its own chat, with a one-line pointer in the tutor conversation ("Passed on to StudyDesk: due date of sheet 5"). This covers Ask chats, select-to-reply notes and the mistake review.
 - Grading. The grading agent judges quests on its own, at 22:00 or on "Grade me early".
 - Writing quests. The morning quest routine does that from the records the Orchestrator and the organization agent keep.
 
@@ -169,7 +171,7 @@ This stays small. Anything detailed is fetched with a look-up tool only when the
 - **Organization agent:** must accept the job kinds above (new material, new course, re-map, drop course, look-up), read the `changesSince` it's given, write the same records as the setup run, return at most 3 questions per job as to-do items, and never talk to the student directly.
 - **Quest creation / morning routine:** read days off and the change log; respect "started quests are never rewritten"; offer a `rebuild_quest` entry point for an unstarted quest.
 - **Grading and mastery:** assessment results now arrive through `change`. Nothing else changes. The Orchestrator needs one code function that answers "on track for the target grade?" with the numbers, so it never computes them itself.
-- **Ask interface:** needs an "open with this question" entry point for `open_ask`.
+- **Ask interface and tutor (including the mistake review):** needs an "open with this question" entry point for `open_ask`, and one tool, `pass_to_orchestrator`, that hands an organizing remark on word for word with where it was said.
 - **Onboarding:** the setup chat becomes the first part of the Orchestrator chat; its prompt switches to the everyday prompt once setup is done. `update_sheet` stays the setup-time tool.
 
 ## Open questions
