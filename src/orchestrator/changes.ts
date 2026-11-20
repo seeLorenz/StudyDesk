@@ -14,6 +14,7 @@ import type { CourseSetup, DraftCourse, Profile, SemesterDraft } from "../onboar
 import type { Assignment, KeyDate, Semester, TimetableEntry } from "../quests/types";
 import { QUEST_SETTING_LIMITS, questSettingsNow, type QuestSettings } from "../quests/config";
 import type { Change, Operation } from "./types";
+import { nightlySettings } from "../routine/nightly";
 
 export type Desk = { draft: SemesterDraft; profile: Profile };
 
@@ -396,6 +397,58 @@ export function applyOps(
         }
         fact(c, text);
         lines.push(`Noted${c ? ` for ${c.name}` : ""}: "${text}"`);
+        break;
+      }
+      case "set_nightly": {
+        const cur = nightlySettings(desk.profile.nightly);
+        const next = { ...cur };
+        const changed: string[] = [];
+        if (op.time !== undefined) {
+          const t = hhmm(str(op.time));
+          if (!t) errors.push("set_nightly: time must be HH:MM.");
+          else if (t !== cur.time) {
+            changed.push(`time ${cur.time} → ${t}`);
+            next.time = t;
+          }
+        }
+        const flags = { paused: "paused", grading: "grading at night", check: "the courses' nightly check", quest: "writing tomorrow's quest at night" } as const;
+        for (const k of Object.keys(flags) as Array<keyof typeof flags>) {
+          if (op[k] === undefined) continue;
+          const v = op[k] === true || op[k] === "true" ? true : op[k] === false || op[k] === "false" ? false : null;
+          if (v === null) {
+            errors.push(`set_nightly: ${k} must be true or false.`);
+            continue;
+          }
+          if (v === cur[k]) continue;
+          changed.push(k === "paused" ? (v ? "paused" : "running again") : `${flags[k]} ${v ? "on" : "off"}`);
+          next[k] = v;
+        }
+        if (changed.length) {
+          touch("profile", { ...desk.profile, nightly: next, updatedAt: now });
+          lines.push(`Nightly run: ${changed.join(", ")}`);
+        }
+        break;
+      }
+      case "set_sweep": {
+        const c = course(op);
+        if (!c) break;
+        const date = str(op.date);
+        const cur = { ...(desk.draft.sweepDates ?? {}) };
+        if (date === "" || date === "none") {
+          if (!cur[c.id]) break;
+          delete cur[c.id];
+          touch("sweepDates", cur);
+          lines.push(`${c.name}: your deep sweep date removed (StudyDesk picks one again)`);
+          break;
+        }
+        if (!isRealDay(date)) {
+          errors.push("set_sweep: date must be YYYY-MM-DD (or \"none\").");
+          break;
+        }
+        if (cur[c.id] === date) break;
+        cur[c.id] = date;
+        touch("sweepDates", cur);
+        lines.push(`${c.name}: deep sweep (full re-read) on the night of ${shortDate(date)}`);
         break;
       }
       case "set_profile": {

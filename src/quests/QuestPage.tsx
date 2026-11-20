@@ -24,6 +24,9 @@ import { applyChecks, checkResults, isResolved, newReviewChat, questMistakes, re
 import { WorkloadCard } from "../onboarding/WorkloadCard";
 import { busyMinutesFromEvents, readCalendar } from "../platform/calendar";
 import { publish, subscribe } from "../platform/deskBus";
+import { openOnboardingStore } from "../platform/onboardingStore";
+import { openRoutineStore } from "../platform/routineStore";
+import { mergeGrading, type GradingOutbox } from "../routine/apply";
 
 // The quest page: builds today's quest on the first open of the day (the
 // in-page fallback from the design), then lets the student work through it
@@ -38,7 +41,36 @@ type Data = {
   reviewChats: Record<string, Chat>;
   mastery: MasteryData;
   live: boolean;
+  /** The nightly run is set up (grading at 22:00, tomorrow's quest overnight). */
+  nightly: boolean;
 };
+
+/** Tonight's grades for the quest that's open, handed to it so it merges them into its own copy. */
+const GRADES_EVENT = "studydesk:nightly-grades";
+
+/**
+ * Merges grades the nightly run left in the outbox. The quest that's open on
+ * screen takes them over itself (it holds the newest copy of the work); the
+ * others are merged and saved here. Each outbox document is deleted once it's in.
+ */
+async function applyNightlyGrades(qs: QuestStore, records: QuestRecord[], openQuestId: string | null): Promise<{ records: QuestRecord[]; applied: number }> {
+  const rs = await openRoutineStore();
+  const boxes = (await rs.loadOutbox()).filter((b): b is GradingOutbox => b.kind === "grading");
+  let out = records;
+  for (const box of boxes) {
+    const rec = out.find((r) => r.quest.id === box.questId);
+    if (rec && rec.quest.id === openQuestId) window.dispatchEvent(new CustomEvent(GRADES_EVENT, { detail: box }));
+    else if (rec) {
+      const merged = mergeGrading(rec, box, Date.now());
+      if (merged !== rec) {
+        await qs.saveRecord(merged);
+        out = out.map((r) => (r === rec ? merged : r));
+      }
+    }
+    await rs.deleteOutbox(box.id).catch(() => undefined);
+  }
+  return { records: out, applied: boxes.length };
+}
 
 function nowLocal(d = new Date()): string {
   return `${toDay(d)}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -90,11 +122,69 @@ export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
           mastery.targets.push(t);
         }
       }
-      const [records, reviewChats] = await Promise.all([qs.loadRecords(), qs.loadReviewChats()]);
-      setData({ qs, ms, semester, records, reviewChats, mastery, live });
+      const [loaded, reviewChats, profile] = await Promise.all([qs.loadRecords(), qs.loadReviewChats(), openOnboardingStore().then((o) => o.loadProfile()).catch(() => null)]);
+      // Grades from the nightly run come in before anything is shown.
+      const { records } = await applyNightlyGrades(qs, loaded, null).catch(() => ({ records: loaded }));
+      setData({ qs, ms, semester, records, reviewChats, mastery, live, nightly: !!profile?.schedule });
     })().catch((e) => setLoadError(message(e)));
   }, []);
   useEffect(() => load(), [load]);
+  // While the page is open (say at 22:00), the night's grades arrive within a few minutes.
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  useEffect(() => {
+    const tick = async () => {
+      const d = dataRef.current;
+      if (!d || document.visibilityState === "hidden") return;
+      const open = d.records.filter((r) => r.quest.date === toDay() && !r.progress.replacedAt).sort((a, b) => b.quest.createdAt - a.quest.createdAt)[0];
+      const res = await applyNightlyGrades(d.qs, d.records, open?.quest.id ?? null).catch(() => null);
+      if (!res?.applied) return;
+      const mastery = await d.ms.load();
+      setData((x) => (x ? { ...x, records: x.records.map((r) => res.records.find((y) => y.quest.id === r.quest.id) ?? r), mastery } : x));
+    };
+    const every = setInterval(() => void tick(), 5 * 60_000);
+    return () => clearInterval(every);
+  }, []);
+  // Work handed in on an earlier day that no nightly run graded (no cloud sessions, or the run failed): graded now, once.
+  const leftoversTried = useRef(false);
+  const [leftovers, setLeftovers] = useState<string | null>(null);
+  useEffect(() => {
+    if (!data || leftoversTried.current) return;
+    leftoversTried.current = true;
+    const todo = data.records.filter((r) => !r.progress.replacedAt && r.quest.date < today && ungraded(r.quest, r.progress).length);
+    if (!todo.length) return;
+    void (async () => {
+      setLeftovers(`Grading work from ${todo.map((r) => WEEKDAY(r.quest.date)).join(", ")} that wasn't graded overnight…`);
+      try {
+        for (const r of todo) {
+          const problems = ungraded(r.quest, r.progress);
+          const images: Record<string, Blob[]> = {};
+          for (const { problem } of problems) {
+            const stored = (r.progress.work[problem.id]?.files ?? []).filter((f) => f.kind === "image" && f.stored);
+            const blobs: Blob[] = [];
+            for (const f of stored) {
+              const url = await data.qs.loadImage(f.id).catch(() => null);
+              if (url) blobs.push(dataUrlToBlob(url));
+            }
+            if (blobs.length) images[problem.id] = blobs;
+          }
+          const res = await handIn({ quest: r.quest, problems, work: r.progress.work, images, semester: data.semester, today, nowLocal: nowLocal(), ask: data.live ? askClaude : sampleGradingAsk });
+          await data.ms.appendAttempts(res.attempts);
+          for (const rv of res.reviews) await data.ms.putReview(rv);
+          const progress = { ...r.progress, work: { ...r.progress.work, ...res.work }, updatedAt: Date.now() };
+          if (!progress.finishedAt && isFinished(r.quest, progress)) progress.finishedAt = Date.now();
+          const rec = { ...r, progress };
+          await data.qs.saveRecord(rec);
+          setData((x) =>
+            x ? { ...x, records: x.records.map((y) => (y.quest.id === rec.quest.id ? rec : y)), mastery: { ...x.mastery, attempts: [...x.mastery.attempts, ...res.attempts], reviews: [...x.mastery.reviews, ...res.reviews] } } : x,
+          );
+        }
+        setLeftovers(null);
+      } catch (e) {
+        setLeftovers(`Earlier work couldn't be graded yet: ${message(e)} It's tried again next time.`);
+      }
+    })();
+  }, [data, today]);
   // "Rebuild today's quest" from the StudyDesk chat: reload, and the newest plan is written.
   useEffect(() => {
     const onReplaced = () => {
@@ -246,6 +336,8 @@ export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
       {!data.live && (
         <p className="quest-banner">Preview mode: no Claude here, so quests use sample text and a stand-in grader (an empty answer is "not yet", an answer with the word "typo" is a slip).</p>
       )}
+
+      {leftovers && <p className="quest-banner">{leftovers}</p>}
 
       {needsPlacement && (
         <section className="setup-card setup-welcome">
@@ -566,6 +658,18 @@ function QuestView({ record, data, scroller, onRecord, onMastery }: ViewProps) {
     setProgress(next);
     void flush();
   };
+
+  // The nightly run's grades for this quest, while it's open: merged into this copy, then saved.
+  useEffect(() => {
+    const onGrades = (e: Event) => {
+      const box = (e as CustomEvent<GradingOutbox>).detail;
+      if (!box || box.questId !== quest.id) return;
+      const merged = mergeGrading({ quest, progress: progressRef.current }, box, Date.now());
+      if (merged.progress !== progressRef.current) commit(() => merged.progress);
+    };
+    window.addEventListener(GRADES_EVENT, onGrades);
+    return () => window.removeEventListener(GRADES_EVENT, onGrades);
+  });
 
   const setWork = (id: string, patch: Partial<ProblemWork>) => {
     setProgress((p) => ({ ...p, work: { ...p.work, [id]: { ...(p.work[id] ?? emptyWork()), ...patch } }, updatedAt: Date.now() }));
@@ -966,7 +1070,9 @@ ${b?.text ?? ""}
             {progress.finishedAt
               ? "Everything is graded. Open a part to see the feedback."
               : waiting > 0
-                ? `${waiting} ${waiting === 1 ? "problem is" : "problems are"} waiting. Grading will later run on its own at 22:00; for now, grade when you're done.`
+                ? data.nightly
+                  ? `${waiting} ${waiting === 1 ? "problem is" : "problems are"} waiting. Grading runs on its own tonight at 22:00, or press the button to grade now.`
+                  : `${waiting} ${waiting === 1 ? "problem is" : "problems are"} waiting. Press the button when you're done; anything left is graded the next time you open StudyDesk.`
                 : "Open a part, work through it, and hand it in. Grading happens once, for the whole quest."}
           </span>
           {errors.grade && <p className="quest-error">{errors.grade}</p>}

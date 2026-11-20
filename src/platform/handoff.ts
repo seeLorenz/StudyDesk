@@ -63,6 +63,11 @@ function getMcp(): Promise<Mcp | null> {
   return mcpPromise;
 }
 
+/** One Claude Code Remote tool call from the page. */
+export async function callRemote<T = unknown>(tool: string, input: Record<string, unknown>): Promise<T> {
+  return call<T>(tool, input);
+}
+
 async function call<T = unknown>(tool: string, input: Record<string, unknown>): Promise<T> {
   const mcp = await getMcp();
   if (!mcp) throw { code: "capability_disabled", message: "No connectors in this view." };
@@ -129,7 +134,7 @@ async function createAgentTask(environmentId: string): Promise<string> {
   return id;
 }
 
-function findId(value: unknown, prefix: string): string | null {
+export function findId(value: unknown, prefix: string): string | null {
   const m = JSON.stringify(value ?? "").match(new RegExp(`${prefix}[A-Za-z0-9]+`));
   return m ? m[0] : null;
 }
