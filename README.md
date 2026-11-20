@@ -14,8 +14,10 @@ standalone version
   about it. The answer opens in a collapsible side note next to that passage
   instead of growing the main chat. Notes can take follow-up questions.
 - **Today's quest:** a daily quest sized to the student's time, built around
-  homework that's due, with explanations, practice, hints and grading. Uses
-  sample course data until Start New Semester exists.
+  homework that's due, with explanations, practice, hints and grading.
+- **Start New Semester:** a guided setup (courses, target grades, materials,
+  time). StudyDesk reads the course files once, maps which pages cover which
+  skills, and starts with a placement check that sets the daily workload.
 
 ## Develop
 
@@ -39,11 +41,13 @@ then strips the document skeleton, because the artifact host adds its own
 - `src/platform/masteryStore.ts`: storage for skills, attempts and review items.
 - `src/quests/`: quest planning (code), writing (Claude), hand-in and the quest page. See `design/quest-creation.md`.
 - `src/platform/questStore.ts`: storage for quests and the semester they're built from.
+- `src/onboarding/`: Start New Semester (steps, setup run, placement check, workload). See `design/onboarding.md`.
+- `src/platform/onboardingStore.ts`: storage for the profile, the semester being set up, uploaded files and archived semesters.
 - `src/lib/`: markdown and math rendering, text anchors for highlights, file reading.
 - `design/`: the system design in plain English, one file per module.
 - `types/claude/`: type definitions for the artifact runtime (contract 0.2.96).
 
-Capabilities the artifact declares: `sample` (with images), `db`, `user`.
+Capabilities the artifact declares: `sample` (with images), `db`, `user`, `assets` (original course files), `downloads` (exporting a semester).
 
 ## Sharing with testers
 

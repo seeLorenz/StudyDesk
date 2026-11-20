@@ -82,3 +82,32 @@ The app itself stays in English. Explanations and quests use each course's teach
 - **Orchestrator:** handles every later change: new courses, corrected dates or grade rules, a different study goal, a course's teaching language. It launches the setup session again for a course when new material arrives.
 - **Organization agent:** its full design (how it builds skills, how carefully it maps pages, how it searches the web) is its own module. Onboarding only depends on the records listed above.
 - **Grading and quests:** the placement check is a normal quest record with `part: check` problems, so grading needs nothing new.
+
+## First version (built)
+
+The flow lives in `src/onboarding/` and opens from **Start New Semester** in the sidebar. A new student who opens Today's quest is sent there first (or can look around with the sample semester).
+
+**How it works now**
+
+- **Steps, with the semester sheet beside them.** Welcome, About you, Courses, Each course, Your time, Check and start, then the placement check. Every step saves as it goes (within a second, and at once when the tab is hidden), the step bar lets the student jump back, and the sheet always shows the whole semester with links to fix any part. Until the Orchestrator exists, each step asks its own question instead of one conversation.
+- **Every box takes anything.** The courses box reads a timetable screenshot, a course list or typed text and fills in courses and lecture times (Claude pulls them out; the student fixes the list). The course box takes notes ("exam on 28 Jan, homework counts 40%"), kept word for word as student facts, and any number of files, each with what the student said about it. The time step does the same for fixed commitments.
+- **Files are kept.** Each upload's readable content is saved in the student's own data (PDF text page by page with page markers, up to about 240,000 characters; images as a compressed copy), and the original file goes to the artifact's file store when the view may store files.
+- **The setup run** is a first, in-page version of the organization agent (`setup.ts`). It goes course by course: one careful read of all the course's files, and back come topics (marked taught or upcoming), skills with tiers, difficulty, time guesses and prerequisites, grade rules, exam dates, open homework with the task text word for word, and the material catalog (skill, file, pages or lines). Each course is saved as soon as it's done, so closing the page only loses the course being read; it carries on when the page is opened again. Without files it uses what such a course usually covers and marks the course "check". Fundamentals mastered in earlier semesters keep their ids and history.
+- **Check and start** needs one course with a target grade and a study goal. After the run, the student sees the important dates to double-check, where files and their own words disagreed, and what's still open. The per-course summaries support select-to-reply.
+- **Placement check.** App code builds it (`placement.ts`): per course, up to 6 fundamentals (those most skills build on first) and 2 skills per taught topic, at most 30 problems, one part per course, written by the usual quest writer in each course's language. Answers count as "check" attempts. A clean solve there masters the skill at once, with its solve points but without the 50-point mastery bonus. Misses aren't put into the mistake review: they're gaps, and the next quests teach them from the start.
+- **Recommended workload.** Once the placement check is graded, the quest page shows how many skills are left per course, until when (the last exam, or the semester's end), and the quest minutes per study day that takes: remaining clean solves at the student's measured speed, plus a short lesson for each new skill, plus 25% for reviews. It turns that into a study goal per weekday (lectures added back, quests get 80% of free time). The student accepts it, edits the hours, or keeps their own.
+- **A returning student** gets the profile prefilled, can export last semester as a file, and the old semester is archived when the new one is saved.
+
+**Not in this version**
+
+- The setup run happens inside the page, so it needs the page open (it resumes, but doesn't run while closed). Moving it to a launched Claude session, as the design says, is the next step for the organization agent.
+- No web search for courses without materials (the page has no internet).
+- No calendar import for commitments.
+- A PDF without selectable text (a scan) can't be read; the student is asked for photos instead.
+
+## Notes for other modules (from the build)
+
+- **Organization agent:** replace the prompt in `src/onboarding/setup.ts` with its own design and run it in a launched Claude session that writes back the same records (`CourseSetup` in `src/onboarding/types.ts`). It should also search the web for courses without materials and handle files longer than one reading (now flagged as an open question).
+- **Orchestrator:** take over the conversation of each step and fill the same semester draft (`data/users/<uid>/onboarding`). Later changes (new course, corrected date, teaching language, study goal) edit the semester and re-run setup for one course.
+- **Quests:** should read the material catalog to open only the referenced pages of the original file when writing lessons and practice. Not used yet.
+- **App layout:** where Start New Semester and the workload card live is a placeholder (sidebar button, card on the quest page).

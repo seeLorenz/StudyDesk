@@ -88,7 +88,11 @@ function step(skill: Skill, st: SkillState, a: Attempt, outcome: Outcome, points
 
   if (outcome === "slip_ok") award("slip_confirmed", CONFIG.points.slip_confirmed);
 
+  // The placement check right after onboarding is the one exception to the
+  // streak rule: a skill solved there on first sight counts as mastered at once.
+  const placementSolve = a.part === "check" && outcome === "clean" && st.stage === "new";
   if (st.stage === "new") st.stage = "learning";
+  if (placementSolve) st.streak = Math.max(st.streak, target - 1);
 
   if (st.stage === "learning" || st.stage === "lapsed") {
     if (outcome === "clean") {
@@ -101,7 +105,8 @@ function step(skill: Skill, st: SkillState, a: Attempt, outcome: Outcome, points
         st.stage = "mastered";
         st.ladderStep = st.restartStep;
         st.dueAt = addDays(a.day, ladder[st.ladderStep - 1]);
-        award("mastered", CONFIG.points.mastered);
+        // Already known before StudyDesk: the placement check gives its solve points, not the mastery bonus.
+        if (!placementSolve) award("mastered", CONFIG.points.mastered);
         return;
       }
     } else if (outcome === "miss") {

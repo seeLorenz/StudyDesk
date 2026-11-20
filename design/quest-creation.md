@@ -165,4 +165,4 @@ Because grading now happens once, the gate no longer stops the quest mid-way. A 
 
 - **Grading run at 22:00 (scheduled routine, outside the page):** reads every quest with handed-in, ungraded parts and grades them with the same `handIn` code. The page's "Grade me early" stays as the manual trigger. The grading results should open as their own window, with the mistake review in it.
 - **Orchestrator:** let the student change hints per task, lesson length and the daily budget by talking; all live in `src/quests/config.ts`.
-- **Onboarding:** replaces the sample semester (`seed.ts`) with real courses, homework and dates; the quest code reads the same `Semester` record.
+- **Onboarding (built, see onboarding.md):** replaces the sample semester (`seed.ts`) with real courses, homework and dates; the quest code reads the same `Semester` record. The sample stays available from the welcome screen for looking around.

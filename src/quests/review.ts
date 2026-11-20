@@ -27,7 +27,8 @@ export type Mistake = {
 export function questMistakes(quest: Quest, progress: QuestProgress, skills: Map<string, Skill>, assignments: Assignment[], nowLocal: string): Mistake[] {
   const out: Mistake[] = [];
   for (const part of quest.parts) {
-    if (part.kind === "learn") continue;
+    // A miss in the placement check is a gap, not a mistake: the next quests teach it from the start.
+    if (part.kind === "learn" || part.check) continue;
     for (const p of part.problems) {
       const w = progress.work[p.id];
       if (!w?.verdict) continue;
