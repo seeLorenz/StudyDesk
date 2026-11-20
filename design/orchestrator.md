@@ -1,6 +1,6 @@
 # The Orchestrator
 
-The Orchestrator is the only agent the student ever talks to. It answers questions about their StudyDesk, takes every change to their semester, and passes the heavy work on to the organization agent, which the student never sees. This file covers what the Orchestrator does after setup. Setting up a semester ([onboarding.md](onboarding.md)) is its first job and stays as designed there.
+The Orchestrator is the only agent the student talks to about their desk. The one exception is the tutor: when the student asks about a problem, an explanation or any passage through the improved interface (Ask and select-to-reply), a separate Claude instance answers there. Everything else goes through the Orchestrator. It answers questions about their StudyDesk, takes every change to their semester, and passes the heavy work on to the organization agent, which the student never sees. This file covers what the Orchestrator does after setup. Setting up a semester ([onboarding.md](onboarding.md)) is its first job and stays as designed there.
 
 Status: design draft, nothing built yet beyond the setup chat.
 
@@ -45,7 +45,7 @@ Grouped by what happens behind the scenes. The lists are examples, not a fixed m
 
 **Not the Orchestrator's job**
 
-- Explaining course content. Learning questions go to the Ask and select-to-reply interface, which is the tutor. If a student asks the Orchestrator "how does the chain rule work?", it opens an Ask note with the question already in it instead of teaching in the organization chat (see open question 1).
+- Explaining course content. Learning questions go to the Ask and select-to-reply interface, where the tutor (its own Claude instance) answers them. If a student asks the Orchestrator "how does the chain rule work?", it opens an Ask note with the question already in it instead of teaching in the organization chat (see open question 1).
 - Grading. The grading agent judges quests on its own, at 22:00 or on "Grade me early".
 - Writing quests. The morning quest routine does that from the records the Orchestrator and the organization agent keep.
 
