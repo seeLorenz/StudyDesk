@@ -51,7 +51,7 @@ function transcript(chat: Chat, uptoMessageId: string, budget: number): string {
 function where(note: Note): string {
   const c = note.context;
   if (!c) return "";
-  const parts = ["", "", "WHERE IT IS: the student highlighted this exact spot in StudyDesk's last answer above" + (c.section ? `, in the section "${c.section}"` : "") + "."];
+  const parts = ["", "", "WHERE IT IS: the student highlighted this exact spot in the text above" + (c.section ? `, in the section "${c.section}"` : "") + "."];
   if (c.formula && c.formula !== note.label) parts.push(`They selected "${note.label}" inside the formula ${c.formula}.`);
   parts.push("Here is that part of the answer, with the highlighted text between ⟦ and ⟧:", "", c.excerpt, "", "The question is about that marked spot only. Don't guess between other places where the same words or numbers appear.");
   return parts.join("\n");
@@ -59,11 +59,17 @@ function where(note: Note): string {
 
 /** Turns for a side note: rules + conversation + highlighted passage, then the note's own back-and-forth. */
 export function noteTurns(chat: Chat, note: Note): Turn[] {
-  const head = `${NOTE_RULES}
+  return passageNoteTurns(NOTE_RULES, `<conversation>\n${transcript(chat, note.messageId, 60_000)}\n</conversation>`, note);
+}
 
-<conversation>
-${transcript(chat, note.messageId, 60_000)}
-</conversation>
+/**
+ * Side-note turns for any page: `rules`, then the page text the passage sits
+ * in (`context`), the highlighted passage, and the note's own back-and-forth.
+ */
+export function passageNoteTurns(rules: string, context: string, note: Note): Turn[] {
+  const head = `${rules}
+
+${context}
 
 HIGHLIGHTED PASSAGE:
 """${note.label}"""${where(note)}`;

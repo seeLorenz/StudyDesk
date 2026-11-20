@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { Markdown } from "../chat/Markdown";
+import { useState, type ReactNode } from "react";
 import { AnswerBox } from "./AnswerBox";
 import type { AnswerFile, ProblemWork, QuestProblem } from "./types";
 
@@ -12,6 +11,8 @@ export function clock(seconds: number): string {
 
 type Props = {
   n: number;
+  /** Renders Markdown with select-to-reply; blockId names the passage's block. */
+  render: (blockId: string, text: string) => ReactNode;
   problem: QuestProblem;
   skillName: string;
   work: ProblemWork;
@@ -27,7 +28,7 @@ type Props = {
   onSlipAnswer: (confirmed: boolean) => void;
 };
 
-export function ProblemCard({ n, problem, skillName, work, locked, graded, timing, answerLockedUntil, onChange, onAddFile, onActivity, onPause, onSlipAnswer }: Props) {
+export function ProblemCard({ n, render, problem, skillName, work, locked, graded, timing, answerLockedUntil, onChange, onAddFile, onActivity, onPause, onSlipAnswer }: Props) {
   const [showKey, setShowKey] = useState(false);
   const hintsLeft = problem.hints.length - work.hintsShown;
   const editable = !locked && !graded;
@@ -62,20 +63,20 @@ export function ProblemCard({ n, problem, skillName, work, locked, graded, timin
         </span>
       </header>
 
-      <Markdown text={problem.prompt} />
+      {render(`${problem.id}-prompt`, problem.prompt)}
 
       {problem.hints.length > 0 && (
         <div className="qhints">
           {problem.hints.slice(0, work.hintsShown).map((h, i) => (
             <div key={i} className="qhint">
               <span className="qhint-n">Hint {i + 1}</span>
-              <Markdown text={h} />
+              {render(`${problem.id}-hint${i + 1}`, h)}
             </div>
           ))}
           {work.sawSimilar && problem.similarSolved && (
             <div className="qhint similar">
               <span className="qhint-n">A solved similar problem</span>
-              <Markdown text={problem.similarSolved} />
+              {render(`${problem.id}-similar`, problem.similarSolved)}
               <p className="qhint-back">Now go back to the task and try it your way. This one gives no streak credit.</p>
             </div>
           )}
@@ -133,7 +134,7 @@ export function ProblemCard({ n, problem, skillName, work, locked, graded, timin
               ))}
             </div>
           )}
-          <Markdown text={work.feedback ?? ""} />
+          {render(`${problem.id}-feedback`, work.feedback ?? "")}
           {work.verdict === "slip" && work.slipQuestion && (
             <div className="slip">
               <p>{work.slipQuestion}</p>
@@ -162,7 +163,7 @@ export function ProblemCard({ n, problem, skillName, work, locked, graded, timin
               </button>
               {showKey && (
                 <div className="key">
-                  <Markdown text={problem.answerKey} />
+                  {render(`${problem.id}-key`, problem.answerKey)}
                 </div>
               )}
             </>

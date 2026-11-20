@@ -140,6 +140,21 @@ export function gateFailed(part: ProblemPart, progress: QuestProgress): boolean 
   });
 }
 
+/** Every part done (read or handed in). */
+export function allHandedIn(quest: Quest, progress: QuestProgress): boolean {
+  return quest.parts.every((p) => progress.handedIn.includes(p.id));
+}
+
+/** Handed-in problems still waiting for the grading run. */
+export function ungraded(quest: Quest, progress: QuestProgress): Array<{ problem: QuestProblem; part: ProblemPart }> {
+  return quest.parts.flatMap((part) =>
+    part.kind === "learn" || !progress.handedIn.includes(part.id)
+      ? []
+      : part.problems.filter((p) => !progress.work[p.id]?.verdict).map((problem) => ({ problem, part })),
+  );
+}
+
+/** Every part done and every problem graded. */
 export function isFinished(quest: Quest, progress: QuestProgress): boolean {
-  return quest.parts.every((p) => p.kind === "learn" || progress.handedIn.includes(p.id));
+  return allHandedIn(quest, progress) && ungraded(quest, progress).length === 0;
 }

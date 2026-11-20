@@ -117,7 +117,9 @@ The quest module is in `src/quests/` and the quest page is reachable from **Toda
 2. **Claude writes it** (`write.ts`). One call per part, in parallel: learn parts get the StudyDesk explanation style and what comes later in the quest; practice parts get one fresh problem and worked answer per skill; homework gets three hints, a worked answer and a solved similar problem. Replies use plain `=== SECTION ===` blocks instead of JSON (math breaks JSON), are checked, and retried once.
 3. **The page** builds the quest on the first open of the day (the in-page fallback; the scheduled routine comes later).
 
-**Working through it.** Each problem has its own answer box (type, paste, drop or attach photos and files) and its own timer, which runs for one problem at a time, starts when the student starts on it, and pauses after 2 minutes in the background. Each problem part is handed in on its own, so a gate can stop the quest before the homework. Grading goes through `gradeProblems`; attempts and review items go into the grading module's store, so streaks, points and time estimates update straight away. A slip asks the student to confirm. Worked answers to open homework stay hidden until the hand-in date.
+**Working through it (layout, round 2).** The quest page is an overview with one row per part. Clicking a row expands the part; the student works through it and presses **Hand in** (or **Done reading** for a learn part). Hand-in only saves: the part collapses and its row gets a check mark. Graded parts show their points on the row. The only grading button is in the overview, at the bottom ("Grade me early", or "Submit for grading" once everything is in). Each problem has its own answer box (type, paste, drop or attach photos and files) and its own timer, which runs for one problem at a time and pauses after 2 minutes in the background. Select-to-reply works on every piece of quest text (explanations, problems, hints, feedback, worked answers); notes are saved with the quest. On open homework, a note guides without giving the answer.
+
+Because grading now happens once, the gate no longer stops the quest mid-way. A missed fundamental is picked up by the next day's quest, which puts it first.
 
 **Sample data.** Until Start New Semester exists, the page creates a sample semester (Calculus 1, Sheet 4 due tomorrow, Sheet 5 next week, a midterm in a month) with the same records onboarding will write. "Restart the sample semester" re-dates it to today. Outside claude.ai, a built-in stand-in writes and grades so the page can be clicked through.
 
@@ -126,7 +128,7 @@ The quest module is in `src/quests/` and the quest page is reachable from **Toda
 | Question | Default for now |
 | --- | --- |
 | Shape and length | Whatever fits the budget; for the sample's first day that's learn, practice (gate), learn, homework at about 59 min |
-| The gate | A missed fundamental pauses the quest and offers a fix-it (short explanation plus one fresh problem). A "continue without the fix-it" link exists so nobody gets stuck |
+| The gate | With one grading run per quest, a missed fundamental goes first in the next day's quest instead of pausing today's (the fix-it code is kept for the grading window) |
 | Check question after learn parts | Not added yet |
 | One course per quest | One quest per day, for the course with the most urgent homework |
 | Hints | 3 hints, then a solved similar problem (no streak credit for that problem) |
@@ -134,3 +136,10 @@ The quest module is in `src/quests/` and the quest page is reachable from **Toda
 | Learn part time | 6 min plus 3 per skill, not scaled by the student's speed |
 | Points per problem for grading | 2 per practice problem, the sheet's own points for homework |
 | Photos of answers | Sent to grading, but only a small preview is saved; after a reload, only the typed text and file text can be graded |
+
+## Note: how grading should work (decided 2026-11-20, not built yet)
+
+- **Grading runs once per quest**, not per part. Handing in a part only saves it.
+- **It runs automatically at 22:00.** Until that routine exists, the "Grade me early" button in the overview starts it by hand.
+- **The button lives only in the quest overview**, nowhere else on the page.
+- **Grading opens as its own window or quest**: the results, slip questions, and fix-its for real mistakes happen there, separate from the day's quest. Today's version still shows results inside each part as a stand-in.

@@ -5,6 +5,7 @@
 // skill so grading knows what to count.
 
 import type { CourseTarget, Day, Skill } from "../mastery/types";
+import type { Note } from "../chat/types";
 
 // ---------- course data (written by onboarding and the setup session) ----------
 
@@ -162,8 +163,10 @@ export type FixIt = {
 export type QuestProgress = {
   questId: string;
   work: Record<string, ProblemWork>;
-  /** Parts handed in, by part id. */
+  /** Parts the student finished, by part id: learn parts read, problem parts handed in (saved, not yet graded). */
   handedIn: string[];
+  /** Side notes from select-to-reply anywhere in the quest. */
+  notes?: Note[];
   fixIts: FixIt[];
   /** Gate parts the student moved past (after a fix-it, or by choice). */
   gatesCleared: string[];

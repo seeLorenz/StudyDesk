@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { planQuest, type PlanInput, doneTasks, recentBlockers, formatDue, busyMinutes } from "../src/quests/plan";
 import { parseSections, writeQuest, claudeWriter, type Ask } from "../src/quests/write";
-import { handIn, lockedParts, gateFailed, emptyProgress, isFinished } from "../src/quests/handin";
+import { handIn, lockedParts, gateFailed, emptyProgress, isFinished, ungraded } from "../src/quests/handin";
 import { sampleSemester, sampleWriter, sampleGradingAsk, SAMPLE_SKILLS } from "../src/quests/seed";
 import type { Attempt } from "../src/mastery/types";
 import type { ProblemPart, Quest } from "../src/quests/types";
@@ -139,7 +139,9 @@ describe("hand-in and the gate", () => {
     expect(lockedParts(q, progress).has(hw.id)).toBe(true);
     expect(lockedParts(q, { ...progress, gatesCleared: [gate.id] }).has(hw.id)).toBe(false);
     expect(isFinished(q, progress)).toBe(false);
-    expect(isFinished(q, { ...progress, handedIn: [gate.id, hw.id] })).toBe(true);
+    const all = q.parts.map((p) => p.id);
+    expect(ungraded(q, { ...progress, handedIn: all }).map((x) => x.problem.label)).toEqual(["4.2a", "4.2b"]);
+    expect(isFinished(q, { ...progress, handedIn: all })).toBe(false);
     expect(doneTasks([{ quest: q, progress }]).size).toBe(0);
   });
 

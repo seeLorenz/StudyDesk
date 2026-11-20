@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Markdown } from "../chat/Markdown";
+import type { Note } from "../chat/types";
+import { SelectionReply } from "../chat/SelectionReply";
+import { passageNoteTurns } from "../chat/prompts";
+import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
+import { useSideNotes } from "../notes/useSideNotes";
 import { CONFIG } from "../mastery/config";
 import { toDay } from "../mastery/days";
 import { answerSlip, GradingFailed } from "../mastery/grading";
@@ -8,12 +12,12 @@ import { askClaude, claudeAvailable, errorCopy, type AskError } from "../platfor
 import { openMasteryStore, type MasteryData, type MasteryStore } from "../platform/masteryStore";
 import { openQuestStore, type QuestStore } from "../platform/questStore";
 import { QUEST_CONFIG } from "./config";
-import { answerUnlocked, emptyProgress, emptyWork, gateFailed, handIn, isFinished, lockedParts } from "./handin";
+import { allHandedIn, answerUnlocked, emptyProgress, emptyWork, handIn, isFinished, ungraded } from "./handin";
 import { doneTasks, formatDue, planQuest, recentBlockers, type PlanResult } from "./plan";
 import { ProblemCard, clock } from "./ProblemCard";
-import { sampleFixIt, sampleGradingAsk, sampleSemester, sampleWriter } from "./seed";
-import type { AnswerFile, ProblemPart, ProblemWork, Quest, QuestProgress, QuestRecord, Semester } from "./types";
-import { claudeWriter, writeFixIt, writeQuest, type WriteStatus } from "./write";
+import { sampleGradingAsk, sampleSemester, sampleWriter } from "./seed";
+import type { AnswerFile, ProblemPart, ProblemWork, Quest, QuestPart, QuestProgress, QuestRecord, Semester } from "./types";
+import { claudeWriter, writeQuest, type WriteStatus } from "./write";
 
 // The quest page: builds today's quest on the first open of the day (the
 // in-page fallback from the design), then lets the student work through it
@@ -42,6 +46,7 @@ export function QuestPage() {
   const [planNotice, setPlanNotice] = useState<Exclude<PlanResult, { kind: "quest" }> | null>(null);
   const [confirmRestart, setConfirmRestart] = useState(false);
   const autoBuilt = useRef(false);
+  const scroller = useRef<HTMLDivElement>(null);
   const today = toDay();
 
   useEffect(() => {
@@ -135,7 +140,7 @@ export function QuestPage() {
   if (!data) return <div className="quest-page"><p className="quest-muted">Loading today's quest…</p></div>;
 
   return (
-    <div className="quest-page">
+    <div className="quest-page" ref={scroller}>
       {!data.live && (
         <p className="quest-banner">Preview mode: no Claude here, so quests use sample text and a stand-in grader (an empty answer is "not yet", an answer with the word "typo" is a slip).</p>
       )}
@@ -145,6 +150,7 @@ export function QuestPage() {
           key={current.quest.id}
           record={current}
           data={data}
+          scroller={scroller}
           onRecord={(r) => setData((d) => (d ? { ...d, records: d.records.map((x) => (x.quest.id === r.quest.id ? r : x)) } : d))}
           onMastery={(m) => setData((d) => (d ? { ...d, mastery: m } : d))}
         />
@@ -226,16 +232,35 @@ export function QuestPage() {
 type ViewProps = {
   record: QuestRecord;
   data: Data;
+  scroller: React.RefObject<HTMLDivElement>;
   onRecord: (r: QuestRecord) => void;
   onMastery: (m: MasteryData) => void;
 };
 
-function QuestView({ record, data, onRecord, onMastery }: ViewProps) {
+const KIND = { learn: "Learn", practice: "Practice", assignment: "Assignment" } as const;
+
+const NOTE_RULES = `You are StudyDesk, a study assistant for high school and university students.
+The student is working through today's study quest and highlighted a passage in it to ask about.
+Your answer appears in a small side note right under that passage. So:
+- Answer only the question about the highlighted passage, using the quest text as context.
+- Be brief: usually 2 to 6 sentences, or a short list. A small example is fine when it helps.
+- Don't restate the passage and don't greet.
+- Use Markdown; write math with $...$ inline and $$...$$ for display formulas.`;
+
+const HOMEWORK_RULE = `
+- This passage belongs to real homework the student hasn't handed in yet. Guide with a question or the principle behind it; never give the answer or a finished step.`;
+
+function partMinutes(p: QuestPart): number {
+  return p.kind === "learn" ? p.estMinutes : p.problems.reduce((s, q) => s + q.expMinutes, 0);
+}
+
+function QuestView({ record, data, scroller, onRecord, onMastery }: ViewProps) {
   const { quest } = record;
   const { semester, mastery, ms, qs, live } = data;
   const [progress, setProgress] = useState<QuestProgress>(record.progress);
+  const [openPart, setOpenPart] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [grading, setGrading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const images = useRef<Record<string, Blob[]>>({});
   const progressRef = useRef(progress);
@@ -265,10 +290,68 @@ function QuestView({ record, data, onRecord, onMastery }: ViewProps) {
 
   useEffect(() => () => void flush(), [flush]);
 
+  const commit = (fn: (p: QuestProgress) => QuestProgress) => {
+    const next = fn(progressRef.current);
+    progressRef.current = next;
+    setProgress(next);
+    void flush();
+  };
+
   const setWork = (id: string, patch: Partial<ProblemWork>) => {
     setProgress((p) => ({ ...p, work: { ...p.work, [id]: { ...(p.work[id] ?? emptyWork()), ...patch } }, updatedAt: Date.now() }));
     saveSoon();
   };
+
+  // ---- select-to-reply ----
+  const setNotes = useCallback(
+    (fn: (n: Note[]) => Note[]) => {
+      setProgress((p) => ({ ...p, notes: fn(p.notes ?? []) }));
+      saveSoon();
+    },
+    [saveSoon],
+  );
+
+  /** Every block of text a note can point at, with the part it belongs to. */
+  const blocks = useMemo(() => {
+    const m = new Map<string, { text: string; part: QuestPart; label: string }>();
+    quest.parts.forEach((part, i) => {
+      const where = `Part ${i + 1} (${KIND[part.kind]}): ${part.title}`;
+      if (part.kind === "learn") m.set(part.id, { text: part.body, part, label: where });
+      else
+        part.problems.forEach((p) => {
+          const name = p.label ? `task ${p.label}` : "a problem";
+          m.set(`${p.id}-prompt`, { text: p.prompt, part, label: `${where}, ${name}` });
+          p.hints.forEach((h, k) => m.set(`${p.id}-hint${k + 1}`, { text: h, part, label: `${where}, hint ${k + 1} for ${name}` }));
+          if (p.similarSolved) m.set(`${p.id}-similar`, { text: p.similarSolved, part, label: `${where}, a solved similar problem for ${name}` });
+          m.set(`${p.id}-key`, { text: p.answerKey, part, label: `${where}, the worked answer to ${name}` });
+          const fb = progress.work[p.id]?.feedback;
+          if (fb) m.set(`${p.id}-feedback`, { text: fb, part, label: `${where}, the grader's feedback on ${name}` });
+        });
+    });
+    return m;
+  }, [quest, progress.work]);
+
+  const turnsFor = useCallback(
+    (note: Note) => {
+      const b = blocks.get(note.messageId);
+      const homework =
+        b?.part.kind === "assignment" && !answerUnlocked(semester.assignments.find((a) => a.id === (b.part as ProblemPart).assignmentId), nowLocal());
+      const context = `<quest>
+Course: ${course?.name ?? ""}. Why today's quest: ${quest.reason}
+The passage is in ${b?.label ?? "the quest"}:
+"""
+${b?.text ?? ""}
+"""
+</quest>`;
+      return passageNoteTurns(NOTE_RULES + (homework ? HOMEWORK_RULE : ""), context, note);
+    },
+    [blocks, course, quest, semester],
+  );
+
+  const notes = useSideNotes({ notes: progress.notes ?? [], setNotes, turnsFor, onSettled: () => void flush() });
+  const md = (blockId: string, text: string) => (
+    <AnnotatedMarkdown blockId={blockId} text={text} notes={notes.byBlock.get(blockId) ?? []} {...notes.handlers} />
+  );
 
   // ---- the timer: one problem at a time, only while the page is in front ----
   useEffect(() => {
@@ -308,36 +391,39 @@ function QuestView({ record, data, onRecord, onMastery }: ViewProps) {
     setWork(id, { files: [...w.files, file] });
   };
 
-  // ---- hand-in ----
-  const submit = async (key: string, problems: Parameters<typeof handIn>[0]["problems"], after: (p: QuestProgress) => QuestProgress) => {
-    setBusy(key);
-    setErrors((e) => ({ ...e, [key]: "" }));
-    if (activeId && problems.some((x) => x.problem.id === activeId)) setActiveId(null);
+  // ---- hand in = save; grading runs once for everything ----
+  const toggle = (id: string) => setOpenPart((o) => (o === id ? null : id));
+
+  const handInPart = (part: QuestPart) => {
+    if (part.kind !== "learn" && activeId && part.problems.some((p) => p.id === activeId)) setActiveId(null);
+    commit((p) => ({ ...p, handedIn: [...p.handedIn.filter((x) => x !== part.id), part.id], updatedAt: Date.now() }));
+    setOpenPart(null);
+    requestAnimationFrame(() => document.getElementById(`row-${part.id}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+  };
+
+  const reopen = (part: QuestPart) => commit((p) => ({ ...p, handedIn: p.handedIn.filter((x) => x !== part.id) }));
+
+  const gradeNow = async () => {
+    const todo = ungraded(quest, progressRef.current);
+    if (!todo.length) return;
+    setGrading(true);
+    setErrors((e) => ({ ...e, grade: "" }));
     try {
-      // Images whose bytes were lost on reload can't be sent; the grader is told about text only.
-      const res = await handIn({ quest, problems, work: progressRef.current.work, images: images.current, semester, today: toDay(), nowLocal: nowLocal(), ask });
+      const res = await handIn({ quest, problems: todo, work: progressRef.current.work, images: images.current, semester, today: toDay(), nowLocal: nowLocal(), ask });
       await ms.appendAttempts(res.attempts);
       for (const r of res.reviews) await ms.putReview(r);
       onMastery({ ...mastery, attempts: [...mastery.attempts, ...res.attempts], reviews: [...mastery.reviews, ...res.reviews] });
-      let next: QuestProgress = { ...progressRef.current, work: { ...progressRef.current.work, ...res.work }, updatedAt: Date.now() };
-      next = after(next);
-      if (!next.finishedAt && isFinished(quest, next)) next.finishedAt = Date.now();
-      progressRef.current = next;
-      setProgress(next);
-      await flush();
+      commit((p) => {
+        const next = { ...p, work: { ...p.work, ...res.work }, updatedAt: Date.now() };
+        if (!next.finishedAt && isFinished(quest, next)) next.finishedAt = Date.now();
+        return next;
+      });
     } catch (e) {
-      setErrors((x) => ({ ...x, [key]: message(e) }));
+      setErrors((x) => ({ ...x, grade: message(e) }));
     } finally {
-      setBusy(null);
+      setGrading(false);
     }
   };
-
-  const handInPart = (part: ProblemPart) =>
-    submit(
-      part.id,
-      part.problems.map((problem) => ({ problem, part })),
-      (p) => ({ ...p, handedIn: [...p.handedIn, part.id] }),
-    );
 
   const answerSlipQ = async (problemId: string, confirmed: boolean) => {
     const w = progressRef.current.work[problemId];
@@ -351,78 +437,103 @@ function QuestView({ record, data, onRecord, onMastery }: ViewProps) {
     setTimeout(() => void flush(), 0);
   };
 
-  // ---- fix-its after a failed gate ----
-  const failedIn = (part: ProblemPart) =>
-    part.problems.filter((p) => {
-      const w = progress.work[p.id];
-      return w?.verdict === "not_understood" || (w?.verdict === "slip" && w.slipAnswer === "disputed");
-    });
-
-  const startFixIts = async (part: ProblemPart) => {
-    const key = `${part.id}-fix`;
-    setBusy(key);
-    setErrors((e) => ({ ...e, [key]: "" }));
-    try {
-      const fixes = await Promise.all(
-        failedIn(part)
-          .filter((p) => !progress.fixIts.some((f) => f.fromProblemId === p.id))
-          .map((p) => {
-            const w = progress.work[p.id];
-            return live ? writeFixIt(semester, quest, p, w?.answerText ?? "", w?.feedback ?? "", askClaude) : sampleFixIt(p);
-          }),
-      );
-      setProgress((p) => ({ ...p, fixIts: [...p.fixIts, ...fixes] }));
-      setTimeout(() => void flush(), 0);
-    } catch (e) {
-      setErrors((x) => ({ ...x, [key]: message(e) }));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const handInFixIts = (part: ProblemPart) => {
-    const fixes = progress.fixIts.filter((f) => part.problems.some((p) => p.id === f.fromProblemId) && !progress.work[f.problem.id]?.verdict);
-    return submit(
-      `${part.id}-fix`,
-      fixes.map((f) => ({ problem: f.problem, part: "fixit" as const })),
-      (p) => ({ ...p, gatesCleared: [...p.gatesCleared, part.id] }),
-    );
-  };
-
-  const clearGate = (part: ProblemPart) => {
-    setProgress((p) => ({ ...p, gatesCleared: [...p.gatesCleared, part.id] }));
-    setTimeout(() => void flush(), 0);
-  };
-
   // ---- rendering ----
-  const locked = lockedParts(quest, progress);
   const nl = nowLocal();
-  let problemN = 0;
   const spentSeconds = Object.values(progress.work).reduce((s, w) => s + (w.activeSeconds || 0), 0);
+  const doneCount = quest.parts.filter((p) => progress.handedIn.includes(p.id)).length;
+  const waiting = ungraded(quest, progress).length;
+  const everythingIn = allHandedIn(quest, progress);
 
-  const card = (problem: ProblemPart["problems"][number], part: ProblemPart | "fixit", isLocked: boolean) => {
-    const w = progress.work[problem.id] ?? emptyWork();
-    const a = part !== "fixit" && part.kind === "assignment" ? semester.assignments.find((x) => x.id === part.assignmentId) : undefined;
+  const status = (part: QuestPart): { mark: string; cls: string; text: string } => {
+    if (!progress.handedIn.includes(part.id)) return { mark: "", cls: "todo", text: `${partMinutes(part)} min` };
+    if (part.kind === "learn") return { mark: "✓", cls: "done", text: "Read" };
+    const ws = part.problems.map((p) => progress.work[p.id]);
+    if (ws.some((w) => !w?.verdict)) return { mark: "✓", cls: "done", text: "Handed in" };
+    const pts = part.problems.reduce((s, p) => s + (progress.work[p.id]?.points ?? 0), 0);
+    const max = part.problems.reduce((s, p) => s + p.maxPoints, 0);
+    const solved = ws.filter((w) => w?.verdict === "solved").length;
+    return { mark: "✓", cls: solved === ws.length ? "graded" : "graded mixed", text: `Graded · ${pts}/${max}` };
+  };
+
+  let problemN = 0;
+  const body = (part: QuestPart) => {
+    const isIn = progress.handedIn.includes(part.id);
+    if (part.kind === "learn") {
+      return (
+        <div className="part-body">
+          <div className="learn-text">{md(part.id, part.body)}</div>
+          <div className="part-actions">
+            {isIn ? (
+              <span className="quest-muted">Marked as read.</span>
+            ) : (
+              <button type="button" className="mini-btn primary big" onClick={() => handInPart(part)}>
+                Done reading
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+    const a = part.kind === "assignment" ? semester.assignments.find((x) => x.id === part.assignmentId) : undefined;
+    const graded = part.problems.every((p) => progress.work[p.id]?.verdict);
+    const empty = part.problems.filter((p) => {
+      const w = progress.work[p.id];
+      return !w || (!w.answerText.trim() && !w.files.length);
+    }).length;
     return (
-      <ProblemCard
-        key={problem.id}
-        n={++problemN}
-        problem={problem}
-        skillName={skills.get(problem.skillId)?.name ?? ""}
-        work={w}
-        locked={isLocked || busy !== null}
-        graded={!!w.verdict}
-        timing={activeId === problem.id}
-        answerLockedUntil={a && !answerUnlocked(a, nl) ? formatDue(a.dueAt, toDay()) : null}
-        onChange={(patch) => setWork(problem.id, patch)}
-        onAddFile={(f, b) => addFile(problem.id, f, b)}
-        onActivity={() => activity(problem.id)}
-        onPause={() => {
-          setActiveId(null);
-          void flush();
-        }}
-        onSlipAnswer={(c) => void answerSlipQ(problem.id, c)}
-      />
+      <div className="part-body">
+        {part.kind === "assignment" && !isIn && (
+          <p className="part-note">This is your real homework. Solve it the way you'd hand it in, then type your answer or add a photo. Hints guide you without giving the answer away.</p>
+        )}
+        {part.problems.map((problem) => {
+          const w = progress.work[problem.id] ?? emptyWork();
+          return (
+            <ProblemCard
+              key={problem.id}
+              n={++problemN}
+              render={md}
+              problem={problem}
+              skillName={skills.get(problem.skillId)?.name ?? ""}
+              work={w}
+              locked={isIn || grading}
+              graded={!!w.verdict}
+              timing={activeId === problem.id}
+              answerLockedUntil={a && !answerUnlocked(a, nl) ? formatDue(a.dueAt, toDay()) : null}
+              onChange={(patch) => setWork(problem.id, patch)}
+              onAddFile={(f, b) => addFile(problem.id, f, b)}
+              onActivity={() => activity(problem.id)}
+              onPause={() => {
+                setActiveId(null);
+                void flush();
+              }}
+              onSlipAnswer={(c) => void answerSlipQ(problem.id, c)}
+            />
+          );
+        })}
+        <div className="part-actions">
+          {isIn ? (
+            !graded && (
+              <>
+                <span className="quest-muted">Handed in. It's graded with the rest of today's quest.</span>
+                <button type="button" className="link-btn" disabled={grading} onClick={() => reopen(part)}>
+                  Change my answers
+                </button>
+              </>
+            )
+          ) : (
+            <>
+              {empty > 0 && (
+                <span className="quest-muted">
+                  {empty} {empty === 1 ? "problem has" : "problems have"} no answer yet.
+                </span>
+              )}
+              <button type="button" className="mini-btn primary big" onClick={() => handInPart(part)}>
+                Hand in
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     );
   };
 
@@ -441,117 +552,60 @@ function QuestView({ record, data, onRecord, onMastery }: ViewProps) {
             {n}
           </p>
         ))}
-        <ol className="quest-toc">
-          {quest.parts.map((p, i) => (
-            <li key={p.id} className={p.kind !== "learn" && progress.handedIn.includes(p.id) ? "is-done" : ""}>
-              <a href={`#${p.id}`}>
-                Part {i + 1} · {p.kind === "learn" ? "Learn" : p.kind === "practice" ? (p.gate ? "Practice (gate)" : "Practice") : "Assignment"}
-              </a>
-              <span>
-                {p.kind === "learn" ? p.estMinutes : p.problems.reduce((s, q) => s + q.expMinutes, 0)} min
-              </span>
-            </li>
-          ))}
-        </ol>
       </header>
 
       {errors.save && <p className="quest-error">{errors.save}</p>}
 
-      {quest.parts.map((part, i) => {
-        if (part.kind === "learn") {
+      <section className="overview" aria-label="Today's parts">
+        {quest.parts.map((part, i) => {
+          const st = status(part);
+          const isOpen = openPart === part.id;
           return (
-            <section key={part.id} id={part.id} className="part part-learn">
-              <h2>
-                <span className="part-n">Part {i + 1} · Learn</span>
-                {part.title}
-                <span className="part-min">about {part.estMinutes} min</span>
-              </h2>
-              <Markdown text={part.body} />
-            </section>
-          );
-        }
-        const isLocked = locked.has(part.id);
-        const handedIn = progress.handedIn.includes(part.id);
-        const failed = handedIn && part.gate && gateFailed(part, progress);
-        const fixes = progress.fixIts.filter((f) => part.problems.some((p) => p.id === f.fromProblemId));
-        const fixesOpen = fixes.some((f) => !progress.work[f.problem.id]?.verdict);
-        const cleared = progress.gatesCleared.includes(part.id);
-        const empty = part.problems.filter((p) => {
-          const w = progress.work[p.id];
-          return !w || (!w.answerText.trim() && !w.files.length);
-        }).length;
-        return (
-          <section key={part.id} id={part.id} className={"part part-problems" + (isLocked ? " is-locked" : "")}>
-            <h2>
-              <span className="part-n">
-                Part {i + 1} · {part.kind === "practice" ? "Practice" : "Assignment"}
-              </span>
-              {part.title}
-            </h2>
-            {part.gate && !handedIn && <p className="part-note">The rest of the quest builds on these. If one isn't understood yet, the quest pauses for a short fix-it.</p>}
-            {part.kind === "assignment" && !handedIn && (
-              <p className="part-note">This is your real homework. Solve it the way you'd hand it in, then upload a photo or type your answer. Hints guide you without giving the answer away.</p>
-            )}
-            {isLocked && <p className="part-note is-warn">This part opens after the fix-it above.</p>}
-
-            {part.problems.map((p) => card(p, part, isLocked))}
-
-            {!handedIn && (
-              <div className="handin">
-                {empty > 0 && !isLocked && (
-                  <span className="quest-muted">
-                    {empty} {empty === 1 ? "problem has" : "problems have"} no answer yet and would count as not understood.
+            <div key={part.id} className={"ov-part" + (isOpen ? " is-open" : "")} id={`row-${part.id}`}>
+              <button type="button" className={`ov-row is-${st.cls.split(" ")[0]}`} aria-expanded={isOpen} onClick={() => toggle(part.id)}>
+                <span className={`ov-mark ${st.cls}`} aria-hidden="true">
+                  {st.mark}
+                </span>
+                <span className="ov-main">
+                  <span className="ov-kind">
+                    Part {i + 1} · {KIND[part.kind]}
                   </span>
-                )}
-                <button type="button" className="mini-btn primary" disabled={isLocked || busy !== null} onClick={() => void handInPart(part)}>
-                  {busy === part.id ? "Grading…" : `Hand in Part ${i + 1}`}
-                </button>
-                {errors[part.id] && <p className="quest-error">{errors[part.id]}</p>}
-              </div>
-            )}
+                  <span className="ov-title">{part.title}</span>
+                </span>
+                <span className="ov-status">{st.text}</span>
+                <svg className="ov-chev" viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              {isOpen && body(part)}
+            </div>
+          );
+        })}
 
-            {failed && !cleared && (
-              <div className="fixit">
-                <h3>Fix-it first</h3>
-                <p>The next parts need {failedIn(part).map((p) => skills.get(p.skillId)?.name).join(" and ")}. A short explanation and one fresh problem will sort it out.</p>
-                {fixes.length === 0 ? (
-                  <button type="button" className="mini-btn primary" disabled={busy !== null} onClick={() => void startFixIts(part)}>
-                    {busy === `${part.id}-fix` ? "Writing the fix-it…" : "Start the fix-it"}
-                  </button>
-                ) : (
-                  fixes.map((f) => (
-                    <div key={f.problem.id} className="fixit-item">
-                      <Markdown text={f.explanation} />
-                      {card(f.problem, "fixit", false)}
-                    </div>
-                  ))
-                )}
-                {fixes.length > 0 && fixesOpen && (
-                  <button type="button" className="mini-btn primary" disabled={busy !== null} onClick={() => void handInFixIts(part)}>
-                    {busy === `${part.id}-fix` ? "Grading…" : "Hand in the fix-it"}
-                  </button>
-                )}
-                {errors[`${part.id}-fix`] && <p className="quest-error">{errors[`${part.id}-fix`]}</p>}
-                <button type="button" className="link-btn" onClick={() => clearGate(part)}>
-                  Continue without the fix-it
-                </button>
-              </div>
-            )}
-            {failed && cleared && fixes.length > 0 && (
-              <div className="fixit is-done">
-                {fixes.map((f) => (
-                  <div key={f.problem.id} className="fixit-item">
-                    <Markdown text={f.explanation} />
-                    {card(f.problem, "fixit", true)}
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        );
-      })}
+        <div className="ov-foot">
+          <span className="ov-count">
+            {doneCount} of {quest.parts.length} done
+            {spentSeconds > 0 && <> · {clock(spentSeconds)} worked</>}
+          </span>
+          {waiting > 0 || grading ? (
+            <button type="button" className="mini-btn primary big" disabled={grading} onClick={() => void gradeNow()}>
+              {grading ? "Grading…" : everythingIn ? "Submit for grading" : "Grade me early"}
+            </button>
+          ) : null}
+          <span className="ov-hint">
+            {progress.finishedAt
+              ? "Everything is graded. Open a part to see the feedback."
+              : waiting > 0
+                ? `${waiting} ${waiting === 1 ? "problem is" : "problems are"} waiting. Grading will later run on its own at 22:00; for now, grade when you're done.`
+                : "Open a part, work through it, and hand it in. Grading happens once, for the whole quest."}
+          </span>
+          {errors.grade && <p className="quest-error">{errors.grade}</p>}
+        </div>
+      </section>
 
       {progress.finishedAt && <Summary quest={quest} progress={progress} mastery={mastery} spentSeconds={spentSeconds} semester={semester} />}
+
+      <SelectionReply scope={scroller} disabled={false} onAsk={notes.ask} />
     </div>
   );
 }
@@ -562,21 +616,17 @@ function Summary({ quest, progress, mastery, spentSeconds, semester }: { quest: 
   const earned = points.filter((p) => p.attemptId && attemptIds.has(p.attemptId)).reduce((s, p) => s + p.points, 0);
   const total = earned + CONFIG.points.quest_finished;
   const skillIds = [...new Set(quest.parts.flatMap((p) => (p.kind === "learn" ? [] : p.problems.map((q) => q.skillId))))];
-  const verdicts = Object.values(progress.work).filter((w) => w.verdict);
-  const pendingSlips = verdicts.filter((w) => w.verdict === "slip" && !w.slipAnswer).length;
+  const pendingSlips = Object.values(progress.work).filter((w) => w.verdict === "slip" && !w.slipAnswer).length;
   return (
-    <section className="part summary">
-      <h2>
-        <span className="part-n">Done</span>
-        Quest finished
-      </h2>
+    <section className="summary">
+      <h2>Quest finished</h2>
       <p className="summary-points">
         +{total} points <span className="quest-muted">({earned} from problems, {CONFIG.points.quest_finished} for finishing)</span>
       </p>
       <p>
         Active time {clock(spentSeconds)} against a plan of about {quest.plannedMinutes} min. These times train your estimates, so tomorrow's quest fits better.
       </p>
-      {pendingSlips > 0 && <p className="part-note is-warn">Answer the slip {pendingSlips === 1 ? "question" : "questions"} above so your streaks count correctly.</p>}
+      {pendingSlips > 0 && <p className="part-note is-warn">Open the parts marked with a slip and answer the question there, so your streaks count correctly.</p>}
       <table className="summary-table">
         <thead>
           <tr>
