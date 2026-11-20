@@ -195,3 +195,78 @@ export async function freshStart(keepChats: boolean, onProgress?: (line: string)
   await c.db.doc(`${base}/${DOC_KINDS.semester}`).delete().catch(() => undefined);
   await c.db.doc(`${base}/${DOC_KINDS.setup}`).delete().catch(() => undefined);
 }
+
+// ---------- leftovers from an import that didn't finish ----------
+//
+// Files are stored one by one while a drop is kept, and listed in the desk
+// when a zip (or the drop) is done. If the window closes or crashes before
+// that, the stored files are referenced by nothing. These are found by what
+// the desk does reference, and removed only when the student says so.
+
+export type Leftovers = { assetIds: string[]; bytes: number; contentIds: string[] };
+
+/** Only assets older than this count as left over, so a drop still being kept in another tab is never touched. */
+export const LEFTOVER_MIN_AGE_MS = 15 * 60_000;
+
+/** Which stored files nothing references. Pure, tested. */
+export function leftoversOf(
+  referencedUploads: Set<string>,
+  referencedAssets: Set<string>,
+  assets: Array<{ id: string; sizeBytes: number; contentType: string; createdAt: string }>,
+  contentIds: string[],
+  now: number,
+): Leftovers {
+  const old = (a: { createdAt: string }) => now - Date.parse(a.createdAt) > LEFTOVER_MIN_AGE_MS;
+  // JSON files are update backups (listed in their own record); they're never counted as leftovers.
+  const lost = assets.filter((a) => !referencedAssets.has(a.id) && a.contentType !== "application/json" && old(a));
+  return { assetIds: lost.map((a) => a.id), bytes: lost.reduce((n, a) => n + a.sizeBytes, 0), contentIds: contentIds.filter((id) => id.startsWith("up_") && !referencedUploads.has(id)) };
+}
+
+async function references(c: { db: DB; uid: string }) {
+  const base = `data/users/${c.uid}`;
+  const get = async (p: string) => {
+    const s = await c.db.doc(`${base}/${p}`).get();
+    return s.exists ? (s.data() as Record<string, unknown>) : null;
+  };
+  const [setup, semester, updates] = await Promise.all([get(DOC_KINDS.setup), get(DOC_KINDS.semester), get(DOC_KINDS.updates)]);
+  const [adoc, acol] = COLLECTION_KINDS.archivedSemesters;
+  const archived = Object.fromEntries((await c.db.doc(`${base}/${adoc}`).collection(acol).get()).docs.map((d) => [d.id, d.data()]));
+  const data = { setup, semester, archivedSemesters: archived };
+  const uploads = new Set<string>();
+  for (const s of [setup, semester, ...Object.values(archived)] as Array<{ uploads?: Array<{ id: string }> } | null>) for (const u of s?.uploads ?? []) uploads.add(u.id);
+  const assets = new Set(originalsIn(data).map((o) => o.assetId));
+  for (const b of ((updates?.backups as Array<{ assetId?: string }>) ?? [])) if (b.assetId) assets.add(b.assetId);
+  return { uploads, assets };
+}
+
+/** Finds stored original files nothing references (null when this view can't tell). */
+export async function findLeftovers(now = Date.now()): Promise<Leftovers | null> {
+  const c = await cloud();
+  if (!c?.assets) return null;
+  const refs = await references(c);
+  const listed = await c.assets.list();
+  // Kept text is only looked through when the student removes leftovers (reading it all is heavy).
+  return leftoversOf(refs.uploads, refs.assets, listed.assets, [], now);
+}
+
+/** Removes the originals findLeftovers found and any kept text nothing references, checking the references once more first. */
+export async function removeLeftovers(found: Leftovers, onProgress?: (line: string) => void): Promise<number> {
+  const c = await cloud();
+  if (!c?.assets) return 0;
+  const refs = await references(c);
+  const assets = found.assetIds.filter((id) => !refs.assets.has(id));
+  const [doc, col] = COLLECTION_KINDS.uploadContents;
+  onProgress?.("Looking for leftover text…");
+  const ids = (await c.db.doc(`data/users/${c.uid}/${doc}`).collection(col).get()).docs.map((d) => d.id);
+  const contents = leftoversOf(refs.uploads, refs.assets, [], ids, Date.now()).contentIds;
+  let n = 0;
+  for (const id of assets) {
+    if (++n % 10 === 0) onProgress?.(`Removing leftover files (${n} of ${assets.length + contents.length})…`);
+    await c.assets.delete(id).catch(() => undefined);
+  }
+  for (const id of contents) {
+    if (++n % 10 === 0) onProgress?.(`Removing leftover files (${n} of ${assets.length + contents.length})…`);
+    await c.db.doc(`data/users/${c.uid}/${doc}`).collection(col).doc(id).delete().catch(() => undefined);
+  }
+  return assets.length + contents.length;
+}

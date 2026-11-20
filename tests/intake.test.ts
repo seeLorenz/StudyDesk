@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { strToU8, zipSync } from "fflate";
-import { buildOutline, classify, expandDrop, selectPart, unzipStream } from "../src/lib/intake";
+import { buildOutline, classify, expandDrop, selectPart, walkZip, zipEntries } from "../src/lib/intake";
 import { officeText, odfText } from "../src/lib/office";
 import { courseFileList, describeCounts, describeVideo, filesOf, keepDrop, originalType, unsortedList, zipInventory } from "../src/lib/keep";
 import { fileTools, inventoryLine, setupTurns, type FileForSetup, type SetupInput } from "../src/onboarding/setup";
@@ -36,11 +36,24 @@ describe("zips", () => {
     "Mathematik A/alt.zip": inner,
   });
 
-  it("streams entries and skips what isn't wanted", async () => {
-    const entries = await unzipStream(new Blob([zip]), (n) => !n.endsWith(".mp4"));
-    const video = entries.find((e) => e.name.endsWith(".mp4"))!;
-    expect(video.data).toBeNull();
-    expect(new TextDecoder().decode(entries.find((e) => e.name.endsWith("Blatt 3.txt"))!.data!)).toBe("Aufgabe 1");
+  it("lists a zip's files without unpacking them, and unpacks one on demand", async () => {
+    const blob = new Blob([zip]);
+    const entries = await zipEntries(blob);
+    expect(entries.map((e) => e.name).sort()).toContain("Mathematik A/VO/VO 01.mp4");
+    expect(entries.find((e) => e.name.endsWith(".mp4"))!.usize).toBe(5000);
+    const found = { name: "M.zip", files: 0, skippedJunk: 0 };
+    const walked = [];
+    for await (const f of walkZip(blob, "M.zip", found)) walked.push(f);
+    expect(walked.find((f) => f.cls === "video")!.read).toBeUndefined();
+    const sheet = walked.find((f) => f.name === "Blatt 3.txt")!;
+    expect(await (await sheet.read!()).text()).toBe("Aufgabe 1");
+  });
+
+  it("reads stored (uncompressed) entries and refuses a broken zip plainly", async () => {
+    const stored = zipSync({ "a.txt": [strToU8("plain"), { level: 0 }] });
+    const [e] = await zipEntries(new Blob([stored]));
+    expect(e.method).toBe(0);
+    await expect(zipEntries(new Blob([strToU8("not a zip at all")]))).rejects.toThrow("couldn't be opened");
   });
 
   it("opens zips with folder paths, nested zips, videos listed, junk left out", async () => {
@@ -254,6 +267,15 @@ describe("room in the file store", () => {
     expect(r.report!.lines).toEqual(["C.zip: 2 files, 2 text files."]);
   });
 
+  it("hands each zip over as soon as it's kept", async () => {
+    const { store } = fakeStore(10_000);
+    const handed: string[][] = [];
+    const r = await keepDrop(drop(zipOf({ "a.md": "# A", "b.md": "# B" })), store, () => undefined, { onZipKept: (us) => void handed.push(us.map((u) => u.path!)) });
+    expect(handed).toEqual([["a.md", "b.md"]]);
+    expect(r.uploads).toHaveLength(0);
+    expect(r.report!.lines[0]).toBe("C.zip: 2 files, 2 text files.");
+  });
+
   it("warns first, keeps the text, and stores only the originals that fit", async () => {
     const { store, stored } = fakeStore(30);
     const r = await keepDrop(drop(zipOf({ "a.md": "x".repeat(20), "b.md": "y".repeat(20) })), store, () => undefined);
@@ -263,5 +285,18 @@ describe("room in the file store", () => {
     expect(r.report!.lines[0]).toContain("needs about 1 MB for its original files");
     expect(r.report!.lines).toContain("1 original (1 MB) didn't fit in the file store; their text is kept.");
     expect(r.previews.some((p) => p.includes("The file store is full"))).toBe(true);
+  });
+});
+
+describe("leftovers from an import that didn't finish", async () => {
+  const { leftoversOf } = await import("../src/platform/backup");
+  const now = Date.parse("2026-11-20T18:00:00Z");
+  const asset = (id: string, minsAgo: number, contentType = "application/pdf") => ({ id, sizeBytes: 1000, contentType, createdAt: new Date(now - minsAgo * 60_000).toISOString() });
+
+  it("counts only old, unreferenced files, never backups", () => {
+    const l = leftoversOf(new Set(["up_a"]), new Set(["a1"]), [asset("a1", 60), asset("a2", 60), asset("a3", 5), asset("b1", 60, "application/json")], ["up_a", "up_b", "other"], now);
+    expect(l.assetIds).toEqual(["a2"]);
+    expect(l.bytes).toBe(1000);
+    expect(l.contentIds).toEqual(["up_b"]);
   });
 });

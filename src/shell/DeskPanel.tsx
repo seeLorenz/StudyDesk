@@ -7,6 +7,7 @@ import { openMasteryStore, type MasteryData } from "../platform/masteryStore";
 import { openQuestStore } from "../platform/questStore";
 import { openOnboardingStore, type StorageUsage } from "../platform/onboardingStore";
 import { describeCounts, fmtMB } from "../lib/keep";
+import { LeftoversNotice } from "./LeftoversNotice";
 import type { Semester } from "../quests/types";
 import { askAboutItem } from "./ComingUp";
 import { countdown, upcoming } from "./upcoming";
@@ -179,6 +180,7 @@ export function DeskPanel({ onOpenSetup }: { onOpenSetup: () => void }) {
             ))}
           </ul>
           {fileGroups.length > FILES_SHOWN && <p className="quest-muted">and {fileGroups.length - FILES_SHOWN} more</p>}
+          <LeftoversNotice onRemoved={() => void openOnboardingStore().then((os) => os.storageUsage()).then(setUsage)} />
           {usage && (
             <div className="storage-meter" title="Your StudyDesk's file store, where original files are kept">
               <div className="bar" aria-hidden="true">

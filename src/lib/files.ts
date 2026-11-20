@@ -61,14 +61,30 @@ export type PdfRead = { text: string; pages: number; bookmarks: Array<{ title: s
 /** Reads a PDF: page-marked text up to `limit`, its bookmarks, and whether it is a scan (no text at all). */
 export async function readPdf(file: Blob, limit = MAX_TEXT_CHARS): Promise<PdfRead> {
   const pdfjs = await loadPdfjs();
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
+  const doc = await task.promise;
+  // Every PDF is let go when read: many PDFs in a row otherwise pile up in memory.
+  try {
+    return await readOpenPdf(doc, limit);
+  } finally {
+    void task.destroy();
+  }
+}
+
+type PdfDoc = Awaited<ReturnType<Awaited<ReturnType<typeof loadPdfjs>>["getDocument"]>["promise"]>;
+
+async function readOpenPdf(doc: PdfDoc, limit: number): Promise<PdfRead> {
   const pages: string[] = [];
   let total = 0;
   for (let p = 1; p <= doc.numPages && total < limit; p++) {
-    const content = await (await doc.getPage(p)).getTextContent();
+    const page = await doc.getPage(p);
+    const content = await page.getTextContent();
+    page.cleanup();
     const text = content.items.map((it) => ("str" in it ? it.str + (it.hasEOL ? "\n" : " ") : "")).join("");
     pages.push(`--- page ${p} ---\n${text.trim()}`);
     total += text.length;
+    // A long PDF gives the page a breath every few pages.
+    if (p % 8 === 0) await new Promise((r) => setTimeout(r, 0));
   }
   const text = pages.join("\n\n");
   const bookmarks: PdfRead["bookmarks"] = [];
@@ -96,21 +112,9 @@ export async function readPdf(file: Blob, limit = MAX_TEXT_CHARS): Promise<PdfRe
 }
 
 async function pdfText(file: File, limit = MAX_TEXT_CHARS): Promise<string> {
-  const pdfjs = await loadPdfjs();
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
-  const pages: string[] = [];
-  let total = 0;
-  for (let p = 1; p <= doc.numPages && total < limit; p++) {
-    const content = await (await doc.getPage(p)).getTextContent();
-    const text = content.items.map((it) => ("str" in it ? it.str + (it.hasEOL ? "\n" : " ") : "")).join("");
-    pages.push(`--- page ${p} ---\n${text.trim()}`);
-    total += text.length;
-  }
-  const out = pages.join("\n\n");
-  if (!out.replace(/--- page \d+ ---/g, "").trim()) {
-    throw new Error("This PDF has no selectable text (it may be a scan). Take a photo or screenshot of the page instead.");
-  }
-  return out;
+  const pdf = await readPdf(file, limit);
+  if (pdf.scan) throw new Error("This PDF has no selectable text (it may be a scan). Take a photo or screenshot of the page instead.");
+  return pdf.text;
 }
 
 /**
@@ -129,6 +133,9 @@ export async function readAttachment(file: File, opts: { keepAll?: boolean } = {
       return { ...base, kind: "text", status: "error", error: "This file couldn't be opened. Save it as PDF and try again." };
     }
   }
+  // Boxes that keep course files read PDFs when the message is sent, one at a
+  // time: reading dozens at once as they're dropped would freeze the page.
+  if (opts.keepAll && kind === "pdf") return { ...base, kind, deferred: "pdf" };
   if (!kind) {
     if (opts.keepAll) return { ...base, kind: "text", deferred: cls };
     return {

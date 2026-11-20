@@ -12,7 +12,7 @@ import type { StorageUsage, UploadContent } from "../platform/onboardingStore";
 import { compressImage } from "../quests/images";
 import type { PendingAttachment } from "./files";
 import { readPdf } from "./files";
-import { buildOutline, expandDrop, type FileClass, type IntakeFile } from "./intake";
+import { breathe, buildOutline, classify, walkZip, zipEntries, type FileClass, type IntakeFile, type ZipEntry } from "./intake";
 import { officeText } from "./office";
 
 export const MAX_FILE_CHARS = 240_000;
@@ -154,14 +154,38 @@ export function zipInventory(z: ZipRecord, us: Upload[], maxLines = 80): string 
   return `Zip ${z.id} "${z.fileName}": ${mine.length} files (${describeCounts(mine)}). Folders: ${[...folders].map(([d, c]) => `${d} (${c})`).join(", ")}.\n${lines.join("\n")}${mine.length > maxLines ? `\n…and ${mine.length - maxLines} more` : ""}`;
 }
 
+export type KeepOptions = {
+  now?: number;
+  /**
+   * Called as soon as each zip is kept, to save its files at once. Its files
+   * are then not in the returned `uploads` and `zips` (they're saved already).
+   */
+  onZipKept?: (uploads: Upload[], zip: ZipRecord) => Promise<void> | void;
+};
+
+let keeping = 0;
+/** True while a drop is being kept in this page (leftover clean-up waits for it). */
+export const keepingNow = () => keeping > 0;
+
 /** Keeps everything in one drop. `onBusy` gets a short line per step. */
-export async function keepDrop(files: PendingAttachment[], store: KeepStore, onBusy: (line: string) => void, now = Date.now()): Promise<KeptDrop> {
+export async function keepDrop(files: PendingAttachment[], store: KeepStore, onBusy: (line: string) => void, opts: KeepOptions = {}): Promise<KeptDrop> {
+  keeping++;
+  try {
+    return await keepDropNow(files, store, onBusy, opts);
+  } finally {
+    keeping--;
+  }
+}
+
+async function keepDropNow(files: PendingAttachment[], store: KeepStore, onBusy: (line: string) => void, opts: KeepOptions): Promise<KeptDrop> {
+  const now = opts.now ?? Date.now();
   const uploads: Upload[] = [];
   const zips: ZipRecord[] = [];
   const previews: string[] = [];
   const images: Blob[] = [];
   const failed: string[] = [];
   const lines: string[] = [];
+  const handedOver: Upload[] = [];
 
   const zipFiles = files.filter((f) => f.deferred === "zip" && f.file).map((f) => f.file!);
   const usage = store.storageUsage ? await store.storageUsage().catch(() => null) : null;
@@ -196,45 +220,61 @@ export async function keepDrop(files: PendingAttachment[], store: KeepStore, onB
     } catch (e) {
       failed.push(`${f.name}: ${e instanceof Error ? e.message : "couldn't be read"}`);
     }
+    await breathe();
   }
   if (loose.length > 1) {
     const kept = uploads.filter((u) => !u.zipId);
     if (kept.length) lines.push(`${plural(kept.length, "file")} kept: ${describeCounts(kept)}.`);
   }
 
-  // Zips: one record each, every file inside kept with its folder path.
-  for (const zf of zipFiles) {
-    onBusy(`Opening ${zf.name}…`);
-    let opened: Awaited<ReturnType<typeof expandDrop>>;
+  // Zips: one record each, every file inside kept with its folder path. One
+  // file is unpacked, kept and let go at a time, so memory stays flat however
+  // big the zip is, and the page gets a breath between files.
+  for (const [zi, zf] of zipFiles.entries()) {
+    const which = zipFiles.length > 1 ? ` (zip ${zi + 1} of ${zipFiles.length})` : "";
+    onBusy(`Opening ${zf.name}${which}…`);
+    let entries: ZipEntry[];
     try {
-      opened = await expandDrop([zf], onBusy);
+      entries = await zipEntries(zf);
     } catch (e) {
       failed.push(`${zf.name}: ${e instanceof Error ? e.message : "couldn't be opened"}`);
       continue;
     }
     const z: ZipRecord = { id: `zip_${uid()}`, fileName: zf.name, courseId: null, addedAt: now, files: 0 };
+    const listedFiles = entries.filter((e) => !e.name.endsWith("/") && classify(e.name) !== "junk");
     // Say before keeping when the originals won't all fit. The text of every file is kept anyway.
-    const need = opened.files.filter((f) => f.blob && originalType(f.name, f.cls)).reduce((n, f) => n + f.size, 0);
-    if (room && need > room.bytes) lines.push(`${zf.name} needs about ${fmtMB(need)} for its original files, but your StudyDesk's file store has ${fmtMB(Math.max(0, room.bytes))} left. StudyDesk keeps the text of every file, and the originals that fit, PDFs first.`);
-    // When it's tight, PDFs go first: a scan can only be read from its original.
-    if (room && need > room.bytes) opened.files.sort((a, b) => Number(b.cls === "pdf") - Number(a.cls === "pdf"));
+    const need = listedFiles.filter((e) => originalType(e.name, classify(e.name))).reduce((n, e) => n + e.usize, 0);
+    if (room && need > room.bytes) lines.push(`${zf.name} needs about ${fmtMB(need)} for its original files, but your StudyDesk's file store has ${fmtMB(Math.max(0, room.bytes))} left. StudyDesk keeps the text of every file, and the originals that fit.`);
     const mine: Upload[] = [];
-    for (const [k, f] of opened.files.entries()) {
-      if (k % 5 === 0) onBusy(`Keeping ${zf.name}: ${k + 1} of ${opened.files.length} files…`);
-      try {
-        const one = await keepOne(f, z.id, store, now, room);
-        mine.push(one.upload);
-        if (one.problem) failed.push(`${f.path}: ${one.problem}`);
-      } catch (e) {
-        mine.push({ id: `up_${uid()}`, courseId: null, fileName: f.name, type: "other", studentNote: "", addedAt: now, cataloguedAt: null, assetId: null, pages: null, path: f.path, zipId: z.id, state: "listed", sizeBytes: f.size });
-        failed.push(`${f.path}: ${e instanceof Error ? e.message : "couldn't be read"}`);
+    const found = { name: zf.name, files: 0, skippedJunk: 0 };
+    try {
+      for await (const f of walkZip(zf, zf.name, found)) {
+        onBusy(`Keeping ${zf.name}${which}: ${mine.length + 1} of about ${listedFiles.length} files…`);
+        try {
+          const blob = f.read ? await f.read() : null;
+          const one = await keepOne({ ...f, blob }, z.id, store, now, room);
+          mine.push(one.upload);
+          if (one.problem) failed.push(`${f.path}: ${one.problem}`);
+        } catch (e) {
+          mine.push({ id: `up_${uid()}`, courseId: null, fileName: f.name, type: "other", studentNote: "", addedAt: now, cataloguedAt: null, assetId: null, pages: null, path: f.path, zipId: z.id, state: "listed", sizeBytes: f.size });
+          failed.push(`${f.path}: ${e instanceof Error ? e.message : "couldn't be read"}`);
+        }
+        await breathe();
       }
+    } catch (e) {
+      failed.push(`${zf.name}: ${e instanceof Error ? e.message : "couldn't be opened completely"}`);
     }
     z.files = mine.length;
-    zips.push(z);
-    uploads.push(...mine);
     previews.push(zipInventory(z, mine));
     lines.push(`${zf.name}: ${plural(mine.length, "file")}${mine.length ? `, ${describeCounts(mine)}` : ""}.`);
+    handedOver.push(...(opts.onZipKept ? mine : []));
+    if (opts.onZipKept) {
+      // Saved right away, so closing the window later loses at most the zip being kept.
+      await opts.onZipKept(mine, z);
+    } else {
+      zips.push(z);
+      uploads.push(...mine);
+    }
   }
 
   if (room && room.skipped) {
@@ -242,7 +282,7 @@ export async function keepDrop(files: PendingAttachment[], store: KeepStore, onB
     previews.push(`The file store is full: ${room.skipped} originals weren't kept (their text is). Tell the student once, and ask which courses matter most before they add more.`);
   }
   if (failed.length) lines.push(`${plural(failed.length, "file")} couldn't be kept completely: ${failed.slice(0, 5).join("; ")}${failed.length > 5 ? "; …" : ""}`);
-  const videos = uploads.filter((u) => u.type === "video").map((u) => ({ uploadId: u.id, name: u.fileName }));
+  const videos = [...uploads, ...handedOver].filter((u) => u.type === "video").map((u) => ({ uploadId: u.id, name: u.fileName }));
   const report: IntakeReport | null = lines.length || videos.length ? { lines, ...(videos.length ? { videos } : {}) } : null;
   return { uploads, zips, previews, images, failed, report };
 }
