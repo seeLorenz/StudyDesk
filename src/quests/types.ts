@@ -90,6 +90,8 @@ export type Semester = {
   calendarSync?: boolean;
   /** The id of the placement check quest. */
   placementQuestId?: string;
+  /** Days without studying (no quest budget), set through the Orchestrator. */
+  daysOff?: Day[];
 };
 
 // ---------- the quest itself ----------

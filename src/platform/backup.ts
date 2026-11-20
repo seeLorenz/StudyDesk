@@ -14,7 +14,7 @@
 import { zipSync, strToU8 } from "fflate";
 
 /** Paths under data/users/<uid>/: single documents and collections. */
-const DOCS = { profile: "profile", setup: "onboarding", semester: "semester" } as const;
+const DOCS = { profile: "profile", setup: "onboarding", semester: "semester", orchestrator: "orchestrator" } as const;
 const COLLECTIONS = {
   askChats: ["profile", "chats"],
   uploadContents: ["files", "uploads"],
@@ -26,6 +26,7 @@ const COLLECTIONS = {
   masteryTargets: ["mastery", "targets"],
   masteryAttempts: ["mastery", "attempts"],
   masteryReviews: ["mastery", "reviews"],
+  orchestratorChat: ["orchestrator", "days"],
 } as const;
 type CollectionKey = keyof typeof COLLECTIONS;
 
@@ -119,7 +120,7 @@ export async function buildBackup(onProgress?: (line: string) => void): Promise<
   }
   entries["studydesk-data.json"] = strToU8(JSON.stringify({ exportedAt: new Date().toISOString(), ...data }, null, 2));
   entries["README.txt"] = strToU8(
-    `StudyDesk backup, ${new Date().toLocaleString("en")}\n\nfiles/  the original files you imported, by course\nstudydesk-data.json  everything StudyDesk kept for you: profile, semester and setup, archived semesters, quests with your answers, Ask chats, mastery and stats\n${missing.length ? `\nThese files couldn't be included: ${missing.join(", ")}\n` : ""}`,
+    `StudyDesk backup, ${new Date().toLocaleString("en")}\n\nfiles/  the original files you imported, by course\nstudydesk-data.json  everything StudyDesk kept for you: profile, semester and setup, archived semesters, quests with your answers, Ask chats, the StudyDesk chat and its memory, mastery and stats\n${missing.length ? `\nThese files couldn't be included: ${missing.join(", ")}\n` : ""}`,
   );
   onProgress?.("Packing the zip…");
   return { zip: zipSync(entries, { level: 6 }), files: originals.length - missing.length, missing };
@@ -158,7 +159,7 @@ export async function freshStart(keepChats: boolean, onProgress?: (line: string)
     const drop: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)!;
-      const keep = k === "studydesk.onboarding.v1.profile" || k.startsWith("studydesk.mastery.") || (keepChats && k.startsWith("studydesk.chats."));
+      const keep = k === "studydesk.onboarding.v1.profile" || k === "studydesk.orchestrator.v1.state" || k.startsWith("studydesk.mastery.") || (keepChats && k.startsWith("studydesk.chats."));
       if (k.startsWith(LOCAL_PREFIX) && !keep) drop.push(k);
     }
     drop.forEach((k) => localStorage.removeItem(k));

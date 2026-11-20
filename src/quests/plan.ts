@@ -99,7 +99,8 @@ export function planQuest(input: PlanInput): PlanResult {
 
   // ---- time ----
   const weekday = weekdayOf(today);
-  const goal = semester.studyGoal[weekday] ?? 0;
+  // A day off (set through the Orchestrator) has no study time.
+  const goal = semester.daysOff?.includes(today) ? 0 : semester.studyGoal[weekday] ?? 0;
   const fixedBusy = busyMinutes(semester.timetable, weekday);
   // Today's calendar is the live source; the weekly timetable covers lectures that aren't in it.
   const busy = input.calendarBusyMinutes !== undefined ? Math.max(input.calendarBusyMinutes, fixedBusy) : fixedBusy;

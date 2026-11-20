@@ -6,7 +6,7 @@
 // and the material catalog, which end up in the quest module's `Semester`.
 
 import type { GradeRules } from "../mastery/grades";
-import type { Day, GradeScale, Skill } from "../mastery/types";
+import type { AssessmentResult, Day, GradeScale, Skill } from "../mastery/types";
 import type { Note } from "../chat/types";
 import type { Assignment, KeyDate, TimetableEntry, Topic } from "../quests/types";
 
@@ -136,6 +136,10 @@ export type SemesterDraft = {
   todoDone?: string[];
   /** The student chose to set up without cloud sessions for now. */
   handoffSkipped?: boolean;
+  /** Days without studying, set through the Orchestrator ("I'm sick tomorrow"). */
+  daysOff?: Array<{ date: Day; reason: string }>;
+  /** Real results from school, entered through the Orchestrator. */
+  assessments?: AssessmentResult[];
   createdAt: number;
   updatedAt: number;
 };
