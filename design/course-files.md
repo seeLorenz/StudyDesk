@@ -45,6 +45,8 @@ This part has one right answer, so it is code (guideline 3).
 
 **What the Orchestrator sees.** For a zip, the inventory summary (folders, file names, counts), not the start of every file. For a loose file, the start of the file, as today.
 
+**Later turns.** Images and files stay visible after the turn they were dropped in. Each chat message remembers its kept files; every turn sends the most recent earlier images again (up to 5 images per turn, the newest first, with a line saying which image is which file), and both chats (setup and Organize) have a `read_file` tool that opens any kept file's outline or the pages it needs. Before this, a later turn only carried the file's name, so Claude said it couldn't see an image the student had dropped a minute earlier.
+
 ## 2. Reading by reason (the organization agent)
 
 This part is judgment, so Claude does it (guideline 1).

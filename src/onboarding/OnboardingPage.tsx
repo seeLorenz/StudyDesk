@@ -7,7 +7,7 @@ import { InputBox } from "../chat/InputBox";
 import { SelectionReply } from "../chat/SelectionReply";
 import { passageNoteTurns } from "../chat/prompts";
 import type { PendingAttachment } from "../lib/files";
-import { describedVideos, describeVideo, keepDrop, type KeepProgress, type KeptDrop } from "../lib/keep";
+import { describedVideos, describeVideo, keepDrop, READ_FILE_TOOL, readKeptFile, recallImages, type KeepProgress, type KeptDrop } from "../lib/keep";
 import { IntakeCard } from "../chat/IntakeCard";
 import { LeftoversNotice } from "../shell/LeftoversNotice";
 import { toDay } from "../mastery/days";
@@ -540,6 +540,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
     const kept = files.length ? await keepFiles(files) : NOTHING_KEPT;
     if (kept.uploads.length || kept.zips.length) update((d) => ({ ...d, uploads: [...d.uploads, ...kept.uploads], zips: [...(d.zips ?? []), ...kept.zips] }));
     if (kept.report) patchMsg(userMsg.id, { intake: kept.report });
+    if (kept.uploads.length) patchMsg(userMsg.id, { uploadIds: kept.uploads.map((u) => u.id) });
     await ask(text, kept);
   };
 
@@ -568,10 +569,14 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
         patchMsg(reply.id, { text: r.reply });
       } else {
         if (!(await canUseTools())) throw new Error("This view can't let Claude fill in the sheet. Open StudyDesk on claude.ai in a browser or the desktop app.");
-        const sendImages = (await canSendImages()) ? kept.images : [];
+        const imagesOk = await canSendImages();
+        const nowIds = new Set(kept.uploads.map((u) => u.id));
+        const earlier = imagesOk ? await recallImages(draftRef.current!.chat ?? [], draftRef.current!.uploads, kept.images.length, nowIds, (id) => env.os.loadUploadContent(id)) : { images: [], note: "" };
+        const sendImages = imagesOk ? [...kept.images, ...earlier.images] : [];
         const extra = [
           kept.previews.length ? `The student just dropped these files (saved as unsortedFiles; assign each to a course, and a zip as a whole by its zip id unless its folders clearly hold several courses):\n${kept.previews.join("\n\n")}` : "",
-          kept.images.length && !sendImages.length ? "Images can't be sent in this view; ask the student what the images show." : "",
+          kept.images.length && !imagesOk ? "Images can't be sent in this view; ask the student what the images show." : "",
+          earlier.note,
           kept.failed.length ? `These files couldn't be kept: ${kept.failed.join("; ")}` : "",
         ]
           .filter(Boolean)
@@ -586,10 +591,11 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
           onText: (t) => patchMsg(reply.id, { text: t }),
           tools: [
             { name: "update_sheet", description: SHEET_TOOL_DESCRIPTION, inputSchema: SHEET_TOOL_SCHEMA as unknown as Claude.sample.SampleToolInputSchema, execute: (input) => applyUpdate(input) },
+            { ...READ_FILE_TOOL, inputSchema: READ_FILE_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema, execute: (input) => readKeptFile(input, draftRef.current!.uploads, (id) => env.os.loadUploadContent(id)) },
             {
               name: "read_calendar",
               description:
-                "Reads the student's Google Calendar (through their own connector): repeating weekly events of the next two weeks, and one-off events of the next four months (exams, trips). Returns plain lists. Use it when the student agrees or asks to import their calendar.",
+                "Reads the student's Google Calendar (through their own connector): repeating weekly events of the next two weeks, and one-off events of the next four months (exams, trips). Returns plain lists. Use it when the student agrees or asks to import their calendar. It reads every calendar the student has in Google Calendar, including subscribed ones (a university timetable added by URL, like TUGonline's iCal link). You can't open links yourself: if the student pastes an iCal link, tell them to add it in Google Calendar (Other calendars, +, From URL) and don't repeat the link, since it holds a private token; then read again. A newly added subscription can take a few minutes to fill.",
               execute: async (_input, ctx) => {
                 setBusy("Reading your calendar…");
                 try {

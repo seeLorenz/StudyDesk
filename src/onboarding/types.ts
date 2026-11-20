@@ -111,7 +111,7 @@ export type CatalogEntry = { skillId: string; uploadId: string; where: string };
 export type SetupStep = "chat" | "running" | "done";
 
 /** One message of the setup chat. Files are kept as uploads; the message only names them. */
-export type SetupMessage = { id: string; role: "user" | "assistant"; text: string; files?: string[]; intake?: IntakeReport; createdAt: number; error?: string };
+export type SetupMessage = { id: string; role: "user" | "assistant"; text: string; files?: string[]; /** The kept files of this message, so later turns can send its images again. */ uploadIds?: string[]; intake?: IntakeReport; createdAt: number; error?: string };
 
 /** What the setup run found for one course. */
 export type CourseSetup = {
