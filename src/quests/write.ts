@@ -280,9 +280,34 @@ export type WriteStatus = { partId: string; state: "writing" | "done" | "failed"
  * quest is returned only when all of them are done, so a half-written quest is
  * never stored.
  */
-export async function writeQuest(plan: Quest, writer: PartWriter, onStatus?: (s: WriteStatus) => void): Promise<Quest> {
+/** Thrown when some parts couldn't be written; `quest` holds the parts that were, so a retry can carry on. */
+export class QuestIncomplete extends Error {
+  /** The Claude error code behind it, so the page shows the same words as for any failed call. */
+  code?: string;
+  constructor(public quest: Quest, public writtenIds: string[], public cause: unknown) {
+    super(cause instanceof Error ? cause.message : String((cause as { message?: string })?.message ?? cause));
+    const code = (cause as { code?: unknown })?.code;
+    if (typeof code === "string") this.code = code;
+  }
+}
+
+/**
+ * Writes every part of a planned quest. At most two parts are written at
+ * once, because Claude in the page only runs a couple of calls together and a
+ * flood is refused. Parts in `skip` were already written (a retry).
+ */
+export async function writeQuest(
+  plan: Quest,
+  writer: PartWriter,
+  onStatus?: (s: WriteStatus) => void,
+  opts: { concurrency?: number; skip?: Set<string> } = {},
+): Promise<Quest> {
   const quest: Quest = JSON.parse(JSON.stringify(plan));
-  const jobs = quest.parts.map(async (part) => {
+  const written = new Set(opts.skip ?? []);
+  for (const id of written) onStatus?.({ partId: id, state: "done" });
+  const queue = quest.parts.filter((p) => !written.has(p.id));
+  let failure: unknown = null;
+  const writeOne = async (part: Quest["parts"][number]) => {
     onStatus?.({ partId: part.id, state: "writing" });
     try {
       if (part.kind === "learn") {
@@ -297,13 +322,19 @@ export async function writeQuest(plan: Quest, writer: PartWriter, onStatus?: (s:
         const filled = part.kind === "practice" ? await writer.practice(plan, part) : await writer.assignment(plan, part);
         for (const f of filled) Object.assign(part.problems.find((p) => p.id === f.id)!, f);
       }
+      written.add(part.id);
       onStatus?.({ partId: part.id, state: "done" });
     } catch (e) {
+      failure ??= e;
       onStatus?.({ partId: part.id, state: "failed", error: e instanceof Error ? e.message : String((e as { message?: string })?.message ?? e) });
-      throw e;
     }
-  });
-  await Promise.all(jobs);
+  };
+  const worker = async () => {
+    // After the first failure no new part starts; the ones running finish.
+    for (let part = queue.shift(); part && !failure; part = queue.shift()) await writeOne(part);
+  };
+  await Promise.all(Array.from({ length: Math.max(1, opts.concurrency ?? 2) }, worker));
+  if (failure) throw new QuestIncomplete(quest, [...written], failure);
   return quest;
 }
 

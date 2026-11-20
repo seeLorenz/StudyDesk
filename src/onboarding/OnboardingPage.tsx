@@ -11,7 +11,7 @@ import type { Skill } from "../mastery/types";
 import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
 import { useSideNotes } from "../notes/useSideNotes";
 import { readCalendar, weeklyPattern, type CalendarError } from "../platform/calendar";
-import { askClaude, canSendImages, canUseTools, claudeAvailable, errorCopy, type AskError } from "../platform/claude";
+import { askClaude, canSendImages, canUseTools, claudeAvailable, errorCopy, lastModel, type AskError } from "../platform/claude";
 import { openMasteryStore, type MasteryData, type MasteryStore } from "../platform/masteryStore";
 import { offerDownload, openOnboardingStore, type OnboardingStore } from "../platform/onboardingStore";
 import { openQuestStore, type QuestStore } from "../platform/questStore";
@@ -19,12 +19,13 @@ import { emptyProgress } from "../quests/handin";
 import { compressImage, dataUrlToBlob } from "../quests/images";
 import { busyMinutes, formatDue } from "../quests/plan";
 import { sampleWriter } from "../quests/seed";
-import type { Semester } from "../quests/types";
-import { writeQuest, type WriteStatus } from "../quests/write";
+import type { Quest, Semester } from "../quests/types";
+import { QuestIncomplete, writeQuest, type WriteStatus } from "../quests/write";
 import { SHEET_TOOL_DESCRIPTION, SHEET_TOOL_SCHEMA, applySheetUpdate, chatTurns, greeting, localReply, setupReady, sheetSnapshot } from "./agent";
 import { placementWriter, planPlacement } from "./placement";
 import { gradeSteps } from "./scales";
-import { buildSemester, localSetup, runCourseSetup, type FileForSetup } from "./setup";
+import { setupTodo, staleCourses, type TodoItem } from "./todo";
+import { buildSemester, localSetup, runCourseSetup, type FileForSetup, liveProgress, type LiveProgress } from "./setup";
 import type { DraftCourse, Profile, SemesterDraft, SetupMessage, SetupStep, Upload } from "./types";
 
 // Start New Semester: one chat with the Orchestrator, with the semester sheet
@@ -44,7 +45,7 @@ const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const hours = (m: number) => (m % 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m / 60} h`);
 
 function message(e: unknown): string {
-  if (e && typeof e === "object" && "code" in e) return errorCopy(e as AskError);
+  if (e && typeof e === "object" && typeof (e as { code?: unknown }).code === "string") return errorCopy(e as AskError);
   return e instanceof Error ? e.message : "Something went wrong.";
 }
 
@@ -182,18 +183,21 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
     }
     return m;
   }, [draft]);
+  // Blocks that only exist on screen (live log, to-do list) register here as they render.
+  const extraBlocks = useRef(new Map<string, { text: string; label: string }>());
   const turnsFor = useCallback(
     (note: Note) => {
-      const b = blocks.get(note.messageId);
+      const b = blocks.get(note.messageId) ?? extraBlocks.current.get(note.messageId);
       return passageNoteTurns(NOTE_RULES, `<context>\nThe passage is in ${b?.label ?? "the setup"}:\n"""\n${b?.text ?? ""}\n"""\n</context>`, note);
     },
     [blocks],
   );
   const setNotes = useCallback((fn: (n: Note[]) => Note[]) => update((d) => ({ ...d, notes: fn(d.notes ?? []) })), [update]);
   const notes = useSideNotes({ notes: draft?.notes ?? [], setNotes, turnsFor, onSettled: () => void flush() });
-  const md = (blockId: string, text: string) => (
-    <AnnotatedMarkdown blockId={blockId} text={text} notes={notes.byBlock.get(blockId) ?? []} {...notes.handlers} />
-  );
+  const md = (blockId: string, text: string, label?: string) => {
+    if (label) extraBlocks.current.set(blockId, { text, label });
+    return <AnnotatedMarkdown blockId={blockId} text={text} notes={notes.byBlock.get(blockId) ?? []} {...notes.handlers} />;
+  };
 
   if (loadError) return <div className="quest-page"><p className="quest-error">Setup couldn't be loaded: {loadError}</p></div>;
   if (!env || !draft) return <div className="quest-page"><p className="quest-muted">Loading…</p></div>;
@@ -230,7 +234,8 @@ type StepProps = {
   go: (s: SetupStep) => void;
   today: string;
   flush: () => Promise<void>;
-  md: (blockId: string, text: string) => JSX.Element;
+  /** Markdown with select-to-reply. `label` tells Claude where the passage is when it isn't a chat message or report. */
+  md: (blockId: string, text: string, label?: string) => JSX.Element;
   onDone: () => void;
   setEnv: (e: Loaded) => void;
   returning: boolean;
@@ -249,7 +254,8 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
   const ctl = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const chat = draft.chat ?? [];
-  const open = draft.setupStep === "chat";
+  // The chat stays open after setup, to work through the to-do list.
+  const open = draft.setupStep !== "running";
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -371,7 +377,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
       ctl.current = null;
       setBusy(null);
       if (startNow && setupReady(draftRef.current!).ok) {
-        update((d) => ({ ...d, setupStep: "running", courses: d.courses.map((c) => (c.setupStatus === "ready" || c.setupStatus === "needs_check" ? c : { ...c, setupStatus: "waiting" })) }));
+        update((d) => ({ ...d, setupStep: "running", courses: d.courses.map((c) => ((c.setupStatus === "ready" || c.setupStatus === "needs_check") && !staleCourses(d).some((s) => s.id === c.id) ? c : { ...c, setupStatus: "waiting" })) }));
       }
       void flush();
     }
@@ -428,11 +434,14 @@ function addDaysLocal(day: string, n: number): string {
 
 // ---------- 6b. the setup run ----------
 
-function Running({ env, draft, profile, update, go, today, flush }: StepProps) {
+function Running({ env, draft, profile, update, go, today, flush, md, draftRef: pageDraftRef }: StepProps) {
   const running = useRef(false);
   const [finishError, setFinishError] = useState<string | null>(null);
-  const draftRef = useRef(draft);
-  draftRef.current = draft;
+  // The live feed: what the org agent is doing right now, per course. Not saved.
+  const [feed, setFeed] = useState<Record<string, { prep: string[]; live: LiveProgress | null; model?: string }>>({});
+  const setPrep = (id: string, prep: string[]) => setFeed((f) => ({ ...f, [id]: { prep, live: null } }));
+  // The page's own draft ref: updated the moment update() runs, not on the next render.
+  const draftRef = pageDraftRef as React.MutableRefObject<SemesterDraft>;
   const setCourse = useCallback(
     (id: string, p: Partial<DraftCourse>) => update((d) => ({ ...d, courses: d.courses.map((c) => (c.id === id ? { ...c, ...p } : c)) })),
     [update],
@@ -462,8 +471,29 @@ function Running({ env, draft, profile, update, go, today, flush }: StepProps) {
             if (content.image && !images) continue;
             files.push({ upload: u, text: content.text ?? null, image: content.image ? dataUrlToBlob(content.image) : null });
           }
-          const input = { profile, draft: d, course: c, facts: d.facts.filter((f) => f.courseId === c.id), files, today, priorFundamentals: prior };
-          const res = env.live ? await runCourseSetup(input, askClaude) : { ...localSetup(input), clipped: [] as string[] };
+          const facts = d.facts.filter((f) => f.courseId === c.id);
+          const allFiles = d.uploads.filter((x) => x.courseId === c.id);
+          const prep: string[] = [];
+          if (files.length) {
+            for (const f of files) prep.push(`Opened ${f.upload.fileName}${f.text && f.text.includes("--- page ") ? `, ${(f.text.match(/--- page \d+ ---/g) ?? []).length} pages` : f.image ? ", an image" : ""}`);
+            if (allFiles.length > files.length) prep.push(`${allFiles.length - files.length} ${allFiles.length - files.length === 1 ? "file" : "files"} couldn't be opened in this view and are skipped`);
+          } else {
+            prep.push("No files for this course, so this is an estimate from the course name and your program, not your syllabus.");
+          }
+          if (facts.length) prep.push(`Using ${facts.length} ${facts.length === 1 ? "thing" : "things"} you told me about this course`);
+          setPrep(c.id, prep);
+          let lastKey = "";
+          const onText = (t: string) => {
+            const live = liveProgress(t);
+            const key = `${live.log.length}|${live.stage}|${live.topics}|${live.skills}`;
+            if (key === lastKey) return;
+            lastKey = key;
+            setFeed((f) => ({ ...f, [c.id]: { prep, live } }));
+          };
+          const input = { profile, draft: d, course: c, facts, files, today, priorFundamentals: prior };
+          const res = env.live ? await runCourseSetup(input, askClaude, undefined, onText) : await previewRun(input, onText);
+          const used = lastModel();
+          if (env.live && used) setFeed((f) => ({ ...f, [c.id]: { ...f[c.id], model: used.opus ? "Opus" : `most capable model available (${used.tier} tier) answered instead` } }));
           const { clipped, ...result } = res;
           if (clipped.length) result.questions.push(`Only the first part of ${clipped.join(", ")} fit into one reading. Tell StudyDesk which chapters matter most.`);
           const check = result.conflicts.length > 0 || result.questions.length > 0 || result.truncated || result.basis === "general";
@@ -497,8 +527,11 @@ function Running({ env, draft, profile, update, go, today, flush }: StepProps) {
     setFinishError(null);
     try {
       const d = draftRef.current;
-      const semester = buildSemester(d, profile);
-      if (env.current && env.current.source === "onboarding" && env.current.id !== semester.id) await env.os.archiveSemester(env.current);
+      const current = (await env.qs.loadSemester().catch(() => null)) ?? env.current;
+      const built = buildSemester(d, profile);
+      // Re-reading courses after answers keeps the same semester and its placement check.
+      const semester = current && current.id === built.id && current.placementQuestId ? { ...built, placementQuestId: current.placementQuestId } : built;
+      if (current && current.source === "onboarding" && current.id !== semester.id) await env.os.archiveSemester(current);
       await env.qs.saveSemester(semester);
       const known = new Set(env.mastery.skills.map((s) => s.id));
       await env.ms.putSkills(semester.skills.filter((s) => !known.has(s.id)));
@@ -518,42 +551,78 @@ function Running({ env, draft, profile, update, go, today, flush }: StepProps) {
     }
   }, [pending, failed.length, doneCount, finish]);
 
+  const current = draft.courses.find((c) => c.setupStatus === "reading");
+  const next = draft.courses.filter((c) => c.setupStatus === "waiting");
+  const finished = draft.courses.filter((c) => draft.results[c.id] && (c.setupStatus === "ready" || c.setupStatus === "needs_check"));
+  const fb = current ? feed[current.id] : undefined;
+  const nowText = fb
+    ? [
+        ...[...fb.prep, ...(fb.live?.log ?? [])].map((l) => `- ${l}`),
+        "",
+        `*${!fb.live?.stage || fb.live.stage === "reading" ? "Reading…" : `Now ${fb.live.stage}`}${fb.live && fb.live.skills > 0 ? ` · ${fb.live.topics} topics, ${fb.live.skills} skills so far` : ""}*`,
+      ].join("\n")
+    : "*Opening the files…*";
+  const doneText = finished
+    .map((c) => {
+      const r = draft.results[c.id];
+      return r.basis === "materials"
+        ? `- **${c.name}**: read your files, ${r.topics.length} topics and ${r.skills.length} skills`
+        : `- **${c.name}**: no files, so its ${r.topics.length} topics and ${r.skills.length} skills are an estimate`;
+    })
+    .join("\n");
+  const fallback = Object.values(feed).find((f) => f.model && f.model !== "Opus")?.model;
+
   return (
     <div className="setup-card setup-run">
       <h1>Setting up your semester</h1>
-      <p>StudyDesk is reading your materials, one course at a time. Keep this page open; if you close it, it carries on with the next course when you come back.</p>
-      <ul className="setup-progress">
-        {draft.courses.map((c) => {
-          const r = draft.results[c.id];
-          const files = draft.uploads.filter((u) => u.courseId === c.id).length;
-          return (
-            <li key={c.id} className={`is-${c.setupStatus}`}>
-              <span className="setup-progress-mark" aria-hidden="true" />
-              <span className="setup-progress-name">{c.name}</span>
-              <span className="setup-progress-status">
-                {c.setupStatus === "waiting" && "waiting"}
-                {c.setupStatus === "reading" && (files ? `reading ${files} ${files === 1 ? "file" : "files"}…` : "working out what the course covers…")}
-                {(c.setupStatus === "ready" || c.setupStatus === "needs_check") && r && `${r.basis === "materials" ? "read your files, " : ""}found ${r.topics.length} topics and ${r.skills.length} skills`}
-                {c.setupStatus === "failed" && (
-                  <>
-                    <span className="quest-error">{c.setupError}</span>{" "}
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={() => {
-                        setCourse(c.id, { setupStatus: "waiting", setupError: undefined });
-                        setTimeout(() => void runAll(), 0);
-                      }}
-                    >
-                      Try again
-                    </button>
-                  </>
-                )}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
+      <p>
+        The organization agent (Claude Opus) works through your courses one at a time. It reads each file page by page and turns it into topics, skills, dates,
+        homework and grading rules. Courses without files are only an estimate, and nothing is looked up online yet.
+      </p>
+      <p className="setup-count">
+        <strong>
+          {finished.length} of {draft.courses.length}
+        </strong>{" "}
+        courses done{pending ? ". Keep this page open; if you close it, it carries on when you come back." : "."}
+      </p>
+      {fallback && <p className="quest-muted">Opus wasn't available on your plan here, so the {fallback}.</p>}
+
+      {current && (
+        <div className="setup-now">
+          <h3>
+            <span className="setup-spin" aria-hidden="true" /> {current.name}
+          </h3>
+          {md("run-now", nowText, `the live log of the setup run for ${current.name}`)}
+        </div>
+      )}
+
+      {failed.map((c) => (
+        <p key={c.id} className="setup-failed">
+          <strong>{c.name}</strong>: <span className="quest-error">{c.setupError}</span>{" "}
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => {
+              setCourse(c.id, { setupStatus: "waiting", setupError: undefined });
+              setTimeout(() => void runAll(), 0);
+            }}
+          >
+            Try again
+          </button>
+        </p>
+      ))}
+
+      {next.length > 0 && <p className="quest-muted">Up next: {next.map((c) => c.short || c.name).join(", ")}</p>}
+
+      {finished.length > 0 && (
+        <details className="setup-fold">
+          <summary>
+            {finished.length} {finished.length === 1 ? "course" : "courses"} done
+          </summary>
+          {md("run-done", doneText, "the list of courses the setup run finished")}
+        </details>
+      )}
+
       {!pending && failed.length > 0 && (
         <Actions>
           <button type="button" className="mini-btn" onClick={() => go("chat")}>
@@ -571,10 +640,29 @@ function Running({ env, draft, profile, update, go, today, flush }: StepProps) {
   );
 }
 
+/** Local preview: plays a short made-up log so the live feed can be seen without Claude. */
+async function previewRun(input: Parameters<typeof localSetup>[0], onText: (t: string) => void) {
+  const name = input.files[0]?.upload.fileName;
+  const steps = [
+    "=== LOG ===\n",
+    `- ${name ? `Reading F1 (${name}), p. 1-12: course outline and first chapter` : "Estimating from the course name (local preview)"}\n`,
+    "- Looking for exam dates and grading rules\n",
+    "=== SUMMARY ===\nPreview.\n=== TOPICS ===\nt1 | A | taught\n=== SKILLS ===\ns1 | t1 | One\n",
+  ];
+  let text = "";
+  for (const st of steps) {
+    text += st;
+    onText(text);
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  return { ...localSetup(input), clipped: [] as string[] };
+}
+
 // ---------- 7. done: dates to check, then the placement check ----------
 
-function Done({ env, draft, md, onDone, setEnv, today }: StepProps) {
+function Done({ env, draft, md, onDone, setEnv, today, update }: StepProps) {
   const [semester, setSemester] = useState<Semester | null>(null);
+  const partial = useRef<{ quest: Quest; writtenIds: string[] } | null>(null);
   const [building, setBuilding] = useState<Record<string, WriteStatus> | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -595,7 +683,19 @@ function Done({ env, draft, md, onDone, setEnv, today }: StepProps) {
       }
       setBuilding({});
       const writer = placementWriter(semester, quest, partCourse, askClaude, env.live ? null : sampleWriter(semester.skills));
-      const written = await writeQuest(quest, writer, (s) => setBuilding((b) => ({ ...(b ?? {}), [s.partId]: s })));
+      // A retry carries on from the parts already written.
+      const prev = partial.current;
+      const resume = prev && prev.quest.parts.length === quest.parts.length && prev.quest.parts.every((p, i) => p.id === quest.parts[i].id);
+      let written: Quest;
+      try {
+        written = await writeQuest(resume ? prev.quest : quest, writer, (s) => setBuilding((b) => ({ ...(b ?? {}), [s.partId]: s })), {
+          skip: resume ? new Set(prev.writtenIds) : undefined,
+        });
+      } catch (e) {
+        if (e instanceof QuestIncomplete) partial.current = { quest: e.quest, writtenIds: e.writtenIds };
+        throw e;
+      }
+      partial.current = null;
       await env.qs.saveRecord({ quest: written, progress: emptyProgress(written.id) });
       const s = { ...semester, placementQuestId: written.id };
       await env.qs.saveSemester(s);
@@ -603,7 +703,8 @@ function Done({ env, draft, md, onDone, setEnv, today }: StepProps) {
       onDone();
     } catch (e) {
       setBuilding(null);
-      setError(`The placement check couldn't be written: ${message(e)}`);
+      const kept = partial.current?.writtenIds.length ?? 0;
+      setError(`The placement check couldn't be finished: ${message(e)}${kept ? ` The ${kept} ${kept === 1 ? "part" : "parts"} already written ${kept === 1 ? "is" : "are"} kept, so trying again carries on from there.` : ""}`);
     }
   };
 
@@ -616,8 +717,26 @@ function Done({ env, draft, md, onDone, setEnv, today }: StepProps) {
     ].sort((a, b) => (a.sort < b.sort ? -1 : 1));
   }, [semester, today]);
 
-  const conflicts = draft.courses.flatMap((c) => (draft.results[c.id]?.conflicts ?? []).map((t) => ({ c, t })));
-  const questions = draft.courses.flatMap((c) => (draft.results[c.id]?.questions ?? []).map((t) => ({ c, t })));
+  const conflicts = draft.courses.flatMap((c) => (draft.results[c.id]?.conflicts ?? []).map((t) => `- **${c.short || c.name}:** ${t}`));
+  const todo = setupTodo(draft);
+  const left = todo.filter((t) => !t.done);
+  const stale = staleCourses(draft);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const shownKey = openKey ?? left[0]?.key ?? null;
+
+  const tick = (key: string, on: boolean) =>
+    update((d) => ({ ...d, todoDone: on ? [...new Set([...(d.todoDone ?? []), key])] : (d.todoDone ?? []).filter((k) => k !== key) }));
+  const startInChat = (item: TodoItem) => {
+    const msg: SetupMessage = { id: uid(), role: "assistant", text: item.chatPrompt, createdAt: Date.now() };
+    update((d) => ({ ...d, chat: [...(d.chat ?? []), msg] }));
+    setOpenKey(item.key);
+    setTimeout(() => document.querySelector(".setup-composer textarea")?.scrollIntoView({ block: "center" }), 50);
+  };
+  const reread = () =>
+    update((d) => {
+      const ids = new Set(staleCourses(d).map((c) => c.id));
+      return { ...d, setupStep: "running", courses: d.courses.map((c) => (ids.has(c.id) ? { ...c, setupStatus: "waiting" } : c)) };
+    });
 
   return (
     <div className="setup-card">
@@ -625,66 +744,46 @@ function Done({ env, draft, md, onDone, setEnv, today }: StepProps) {
       {semester && (
         <p>
           {semester.courses.length} {semester.courses.length === 1 ? "course" : "courses"}, {semester.skills.length} skills to learn and track.
+          {todo.length > 0 && " A few things are still open. Work through them below, one at a time, whenever you like."}
         </p>
       )}
 
-      {dates.length > 0 && (
+      {todo.length > 0 && (
         <>
-          <h2 className="setup-h2">Important dates: please double-check them</h2>
-          <ul className="setup-dates">
-            {dates.map((d, i) => (
-              <li key={i}>
-                <span className="setup-slot-time">{d.when}</span>
-                <span>{d.label}</span>
+          <h2 className="setup-h2">
+            To do <span className="quest-muted">· {left.length ? `${left.length} left` : "all done"}</span>
+          </h2>
+          <ol className="setup-todo">
+            {todo.map((t) => (
+              <li key={t.key} className={t.done ? "is-done" : ""}>
+                <div className="setup-todo-head">
+                  <input type="checkbox" checked={t.done} aria-label={`Mark "${t.title}" done`} onChange={(e) => tick(t.key, e.target.checked)} />
+                  <button type="button" className="setup-todo-title" aria-expanded={shownKey === t.key} onClick={() => setOpenKey(shownKey === t.key ? "" : t.key)}>
+                    {t.title}
+                  </button>
+                </div>
+                {shownKey === t.key && (
+                  <div className="setup-todo-body">
+                    {md(`todo-${t.key}`, t.body, `the to-do list after setup ("${t.title}")`)}
+                    <button type="button" className="mini-btn" onClick={() => startInChat(t)}>
+                      {t.key === "upload" ? "Add files in the chat" : "Answer in the chat"}
+                    </button>
+                  </div>
+                )}
               </li>
             ))}
-          </ul>
-          <p className="quest-muted">If anything turns out different later, just tell me and I'll fix it.</p>
+          </ol>
         </>
       )}
 
-      {conflicts.length > 0 && (
-        <>
-          <h2 className="setup-h2">Where your files disagree with what you said</h2>
-          <p className="quest-muted">Your word was used.</p>
-          <ul className="setup-list">
-            {conflicts.map(({ c, t }, i) => (
-              <li key={i}>
-                <strong>{c.short || c.name}:</strong> {t}
-              </li>
-            ))}
-          </ul>
-        </>
+      {stale.length > 0 && (
+        <p className="setup-stale">
+          You added answers or files for {stale.map((c) => c.short || c.name).join(", ")}.{" "}
+          <button type="button" className="mini-btn primary" onClick={reread}>
+            Update {stale.length === 1 ? "this course" : `these ${stale.length} courses`}
+          </button>
+        </p>
       )}
-
-      {questions.length > 0 && (
-        <>
-          <h2 className="setup-h2">Still open</h2>
-          <ul className="setup-list">
-            {questions.map(({ c, t }, i) => (
-              <li key={i}>
-                <strong>{c.short || c.name}:</strong> {t}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      <h2 className="setup-h2">What StudyDesk found</h2>
-      {draft.courses
-        .filter((c) => draft.results[c.id])
-        .map((c) => {
-          const r = draft.results[c.id];
-          return (
-            <div key={c.id} className="setup-report">
-              <h3>
-                {c.name} <span className="quest-muted">· {r.topics.length} topics, {r.skills.length} skills, taught in {r.teachingLanguage}</span>
-              </h3>
-              {r.summary && md(`sum-${c.id}`, r.summary)}
-              <p className="quest-muted">{r.basis === "materials" ? `Mapped to your files: ${r.catalog.length} references to pages or lines.` : "No files yet, so this is what such a course usually covers."}</p>
-            </div>
-          );
-        })}
 
       <h2 className="setup-h2">Next: a placement check</h2>
       <p>One short problem on each basic your courses build on and on each topic already taught, so StudyDesk knows how far you actually are. From the results it recommends how much to do each day for your target grades.</p>
@@ -699,6 +798,41 @@ function Done({ env, draft, md, onDone, setEnv, today }: StepProps) {
           {semester?.placementQuestId ? "Open your quests" : "Start my placement check"}
         </button>
       </Actions>
+
+      <h2 className="setup-h2">Details</h2>
+      {dates.length > 0 && (
+        <details className="setup-fold">
+          <summary>Important dates ({dates.length}): please double-check them</summary>
+          <ul className="setup-dates">
+            {dates.map((d, i) => (
+              <li key={i}>
+                <span className="setup-slot-time">{d.when}</span>
+                <span>{d.label}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {conflicts.length > 0 && (
+        <details className="setup-fold">
+          <summary>Where your files disagree with what you said ({conflicts.length}). Your word was used.</summary>
+          {md("conflicts", conflicts.join("\n"), "the list of places where the student's files disagree with what they said")}
+        </details>
+      )}
+      {draft.courses
+        .filter((c) => draft.results[c.id])
+        .map((c) => {
+          const r = draft.results[c.id];
+          return (
+            <details key={c.id} className="setup-fold">
+              <summary>
+                {c.name} <span className="quest-muted">· {r.topics.length} topics, {r.skills.length} skills{r.basis === "general" ? ", estimated" : ""}</span>
+              </summary>
+              {r.summary && md(`sum-${c.id}`, r.summary)}
+              <p className="quest-muted">{r.basis === "materials" ? `Mapped to your files: ${r.catalog.length} references to pages or lines.` : "No files yet, so this is what such a course usually covers."}</p>
+            </details>
+          );
+        })}
     </div>
   );
 }

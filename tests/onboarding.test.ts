@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseSetup, buildSemester, localSetup, setupTurns, type SetupInput } from "../src/onboarding/setup";
+import { parseSetup, buildSemester, localSetup, setupTurns, liveProgress, type SetupInput } from "../src/onboarding/setup";
+import { setupTodo, staleCourses, asksForFiles } from "../src/onboarding/todo";
 import { planPlacement, recommendWorkload, studyDaysUntil } from "../src/onboarding/placement";
 import { gradeSteps } from "../src/onboarding/scales";
 import { applySheetUpdate, chatTurns, setupReady, sheetSnapshot } from "../src/onboarding/agent";
@@ -329,5 +330,52 @@ describe("calendar", () => {
   });
   it("counts busy minutes once where events overlap", () => {
     expect(busyMinutesFromEvents(events, "2026-11-23")).toBe(120);
+  });
+});
+
+describe("liveProgress", () => {
+  it("shows finished log lines while the log is still being written", () => {
+    const p = liveProgress("=== LOG ===\n- Reading F1 (Skript.pdf), p. 1-40: limits\n- F2 (Blatt");
+    expect(p.log).toEqual(["Reading F1 (Skript.pdf), p. 1-40: limits"]);
+    expect(p.stage).toBe("reading");
+  });
+  it("counts topics and skills as they stream in", () => {
+    const p = liveProgress("=== LOG ===\n- a\n- b\n=== SUMMARY ===\nx\n=== TOPICS ===\nt1 | A | taught\n=== SKILLS ===\ns1 | t1 | One | course | 4 | normal | 5 | 1 | -\ns2 | t1 | Two");
+    expect(p.log).toEqual(["a", "b"]);
+    expect(p.stage).toBe("listing skills");
+    expect(p.topics).toBe(1);
+    expect(p.skills).toBe(2);
+  });
+  it("asks the agent to write its log first and to say when it is only estimating", () => {
+    const c = setupTurns({ ...input, draft: { name: "WS", startDate: "2026-10-01", endDate: "2027-02-28" }, facts: [], files: [] }).turns[0].content;
+    expect(c.indexOf("=== LOG ===")).toBeLessThan(c.indexOf("=== SUMMARY ==="));
+    expect(c).toContain("not from the internet");
+  });
+});
+
+describe("setup to-do list", () => {
+  const withQuestions = (qs: string[], basis: "materials" | "general" = "materials") => {
+    const d = draftWith();
+    d.results.c1 = { ...d.results.c1, questions: qs, basis };
+    return d;
+  };
+  it("merges file requests into one upload item and keeps at most 3 questions per course", () => {
+    const d = withQuestions(["Please upload the syllabus", "When is the exam?", "How is it graded?", "Which language?", "Is a calculator allowed?"]);
+    const items = setupTodo(d);
+    expect(items.map((i) => i.key)).toEqual(["upload", "q-c1"]);
+    expect(items[1].body.split("\n")).toHaveLength(3);
+    expect(items[1].chatPrompt).toContain("1. When is the exam?");
+  });
+  it("asks for materials when a course was only estimated", () => {
+    expect(setupTodo(withQuestions([], "general")).map((i) => i.key)).toEqual(["upload"]);
+    expect(asksForFiles("Could you share the current UE sheets?")).toBe(true);
+    expect(asksForFiles("When is the exam?")).toBe(false);
+  });
+  it("marks ticked items done and finds courses with new answers", () => {
+    const d = { ...withQuestions(["When is the exam?"]), todoDone: ["q-c1"] };
+    expect(setupTodo(d)[0].done).toBe(true);
+    expect(staleCourses(d)).toHaveLength(0);
+    d.facts = [{ id: "f", courseId: "c1", text: "exam on 28 Jan", addedAt: d.results.c1.finishedAt + 1 }];
+    expect(staleCourses(d).map((c) => c.id)).toEqual(["c1"]);
   });
 });

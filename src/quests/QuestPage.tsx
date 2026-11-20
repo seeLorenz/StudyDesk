@@ -45,7 +45,7 @@ function nowLocal(d = new Date()): string {
 
 function message(e: unknown): string {
   if (e instanceof GradingFailed) return "The grading agent's answer couldn't be used, even after a retry. Try handing in again.";
-  if (e && typeof e === "object" && "code" in e) return errorCopy(e as AskError);
+  if (e && typeof e === "object" && typeof (e as { code?: unknown }).code === "string") return errorCopy(e as AskError);
   return e instanceof Error ? e.message : "Something went wrong.";
 }
 

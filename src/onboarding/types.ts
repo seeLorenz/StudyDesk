@@ -111,6 +111,8 @@ export type SemesterDraft = {
   calendarImportedAt?: number | null;
   /** Side notes from select-to-reply on the chat and the setup report. */
   notes?: Note[];
+  /** To-do items on the done screen the student ticked off ("upload", "q-<courseId>"). */
+  todoDone?: string[];
   createdAt: number;
   updatedAt: number;
 };

@@ -19,6 +19,8 @@ import type { CatalogEntry, CourseSetup, DraftCourse, Profile, SemesterDraft, St
 
 /** At most this much file text goes into one course's run. */
 export const MAX_COURSE_CHARS = 150_000;
+/** The done screen is a to-do list, so each course asks at most this many questions. */
+export const MAX_QUESTIONS = 3;
 
 export type FileForSetup = { upload: Upload; text: string | null; image: Blob | null };
 
@@ -78,7 +80,7 @@ export function setupTurns(input: SetupInput): { turns: Turn[]; images: Blob[]; 
 ${facts.length ? facts.map((f) => `- "${f.text}"`).join("\n") : "- nothing"}
 ${prior}
 ## Files
-${files.length ? fileBlocks.join("\n\n") : "No files. Use what a course with this name usually covers in this program and country, and say so in the summary. Ask under QUESTIONS for the syllabus."}
+${files.length ? fileBlocks.join("\n\n") : "No files. Use what a course with this name usually covers in this program and country, and say so in the summary. Don't ask for files under QUESTIONS: StudyDesk asks for missing materials itself."}
 
 ## What to write
 
@@ -95,6 +97,13 @@ Skills are the unit of mastery: one kind of problem the student must be able to 
 - Teaching language: the language the course is taught and examined in.
 
 Reply with exactly these sections, in this order, and nothing else. Use "|" between fields. Leave a section empty if there's nothing for it.
+
+=== LOG ===
+The student watches this section appear live, so write it first, as you work through the material: 3 to 12 short lines in English, one per thing you look at and what you take from it. Name the file and pages, e.g.:
+- Reading F1 (Skript.pdf), p. 1-40: limits and sequences, 3 worked examples per section
+- F2 (Blatt 3.pdf): homework due 2026-11-27, 4 tasks on series
+- Grading rules: F3 p. 2 says the exam counts 100 %
+If there are no files, say plainly that you are estimating from the course name and your general knowledge, not from their materials and not from the internet.
 
 === SUMMARY ===
 Two to four plain sentences in English for the student: what you read and what you found (how many topics and skills), and anything they should double-check.
@@ -129,7 +138,7 @@ skill id | F1 | p. 3-5
 - one line each
 
 === QUESTIONS ===
-- what you still need from the student, one line each`;
+- at most 3, most important first: only what would change the skill map, the dates or the grading. One short line each. Never ask them to upload files.`;
   return { turns: [{ role: "user", content }], images, fileKeys, clipped };
 }
 
@@ -274,7 +283,7 @@ export function parseSetup(reply: string, input: Pick<SetupInput, "course" | "pr
     assignments,
     catalog,
     conflicts: bullets(sec.get("CONFLICTS")),
-    questions: bullets(sec.get("QUESTIONS")).map((q) => q.replace(new RegExp(`\\*?\\(?${CUT_SHORT}[\\s\\S]*$`), "").trim()).filter(Boolean),
+    questions: bullets(sec.get("QUESTIONS")).map((q) => q.replace(new RegExp(`\\*?\\(?${CUT_SHORT}[\\s\\S]*$`), "").trim()).filter(Boolean).slice(0, MAX_QUESTIONS),
     basis: fileKeys.size ? "materials" : "general",
     truncated: reply.includes(CUT_SHORT),
     finishedAt: now,
@@ -282,9 +291,14 @@ export function parseSetup(reply: string, input: Pick<SetupInput, "course" | "pr
 }
 
 /** Runs one course. Retries once with the problem named if the reply can't be used. */
-export async function runCourseSetup(input: SetupInput, ask: Ask, signal?: AbortSignal): Promise<CourseSetup & { clipped: string[] }> {
+export async function runCourseSetup(
+  input: SetupInput,
+  ask: Ask,
+  signal?: AbortSignal,
+  onText?: (text: string) => void,
+): Promise<CourseSetup & { clipped: string[] }> {
   const { turns, images, fileKeys, clipped } = setupTurns(input);
-  const reply = await ask(turns, { images, tier: "complex", signal });
+  const reply = await ask(turns, { images, tier: "complex", signal, onText });
   try {
     return { ...parseSetup(reply, input, fileKeys), clipped };
   } catch (e) {
@@ -293,9 +307,48 @@ export async function runCourseSetup(input: SetupInput, ask: Ask, signal?: Abort
       { role: "assistant", content: reply },
       { role: "user", content: `That reply couldn't be used: ${(e as Error).message} Write the whole reply again in exactly the section format, with at least one line under SKILLS.` },
     ];
-    const again = await ask(retry, { images, tier: "complex", signal });
+    onText?.("=== LOG ===\n- The first answer couldn't be used, so I'm writing it again");
+    const again = await ask(retry, { images, tier: "complex", signal, onText });
     return { ...parseSetup(again, input, fileKeys), clipped };
   }
+}
+
+/** What the student sees while one course is being read: the agent's own log, then what it is writing now. */
+export type LiveProgress = { log: string[]; stage: string | null; topics: number; skills: number };
+
+const STAGES: Record<string, string> = {
+  LOG: "reading",
+  SUMMARY: "writing the summary",
+  LANGUAGE: "writing the summary",
+  TOPICS: "listing topics",
+  SKILLS: "listing skills",
+  GRADING: "noting the grading rules",
+  DATES: "noting exam dates",
+  HOMEWORK: "copying homework",
+  CATALOG: "noting which pages cover which skill",
+  CONFLICTS: "checking for contradictions",
+  QUESTIONS: "writing questions for you",
+};
+
+/** Reads the half-written reply as it streams in. Pure, so it can run on every update. */
+export function liveProgress(text: string): LiveProgress {
+  const sec = parseSections(text);
+  const keys = [...text.matchAll(/^===\s*(.+?)\s*===\s*$/gm)].map((m) => m[1].toUpperCase());
+  const last = keys[keys.length - 1] ?? null;
+  const lines = (k: string) =>
+    (sec.get(k) ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("("));
+  // While LOG is still the last section, its final line may be half written.
+  const logAll = lines("LOG").map((l) => l.replace(/^[-*]\s*/, ""));
+  const log = last === "LOG" && !/\n\s*$/.test(text) ? logAll.slice(0, -1) : logAll;
+  return {
+    log,
+    stage: last ? STAGES[last] ?? null : null,
+    topics: lines("TOPICS").filter((l) => l.includes("|")).length,
+    skills: lines("SKILLS").filter((l) => l.includes("|")).length,
+  };
 }
 
 /** Local preview stand-in: a small generic map so the flow can be clicked through. */

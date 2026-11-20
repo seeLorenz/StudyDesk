@@ -43,6 +43,7 @@ export function sheetSnapshot(d: SemesterDraft, p: Profile, today: string): stri
       studyGoalMinutes: Object.fromEntries([1, 2, 3, 4, 5, 6, 0].map((wd) => [DAY[wd], d.studyGoal[wd] ?? 0])),
       calendarImported: !!d.calendarImportedAt,
       readyToStart: setupReady(d),
+      setupDone: d.setupStep === "done",
     },
     null,
     1,
@@ -71,7 +72,12 @@ How to use update_sheet:
 - Record what you learn right away, in the same reply, before you answer. Several changes go in one call.
 - Things the student says about a course (dates, how it's graded, what a file is) go into facts, word for word as they said them.
 - Files the student drops are saved by the page as unsortedFiles. Assign each one to its course with a short note on what it is (from what they said, or what you can see).
-- The sheet below each message is the current state: trust it over your memory, the student may have edited it.`;
+- The sheet below each message is the current state: trust it over your memory, the student may have edited it.
+
+After setup (setupDone is true):
+- The student works through a short to-do list below the chat, one item at a time; an item's questions appear in the chat as your message. Record every answer right away as a fact of its course, word for word, and assign new files to their course.
+- Don't ask the next item yourself; when one is answered, say in one line that they can tick it off.
+- Once answers or files changed something, offer to update those courses. Only when they say yes, call start_setup: it re-reads just the courses that changed.`
 }
 
 const SHEET_SCHEMA = {

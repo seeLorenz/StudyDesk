@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { planQuest, type PlanInput, doneTasks, recentBlockers, formatDue, busyMinutes } from "../src/quests/plan";
-import { parseSections, writeQuest, claudeWriter, type Ask } from "../src/quests/write";
+import { parseSections, writeQuest, QuestIncomplete, claudeWriter, type Ask } from "../src/quests/write";
 import { handIn, lockedParts, gateFailed, emptyProgress, isFinished, ungraded } from "../src/quests/handin";
 import { sampleSemester, sampleWriter, sampleGradingAsk, SAMPLE_SKILLS } from "../src/quests/seed";
 import type { Attempt } from "../src/mastery/types";
@@ -259,5 +259,42 @@ describe("round 4", () => {
     const wed = "2026-11-04";
     const q2 = plan({ today: wed, nowLocal: `${wed}T08:00` });
     expect(carriedOver([r1], q2).map((c) => c.label)).toContain("4.2a");
+  });
+});
+
+describe("writeQuest pacing", () => {
+  it("writes at most two parts at once and keeps written parts when one fails", async () => {
+    const base = sampleWriter(SAMPLE_SKILLS);
+    let running = 0;
+    let peak = 0;
+    let calls = 0;
+    const slow = <T,>(fn: () => Promise<T>) => async () => {
+      running++;
+      peak = Math.max(peak, running);
+      calls++;
+      const fail = calls === 3;
+      await new Promise((r) => setTimeout(r, 5));
+      running--;
+      if (fail) throw { code: "rate_limited", message: "busy" };
+      return fn();
+    };
+    const writer = {
+      learn: (q: Quest, p: never) => slow(() => base.learn(q, p))(),
+      lesson: (q: Quest, p: never) => slow(() => base.lesson(q, p))(),
+      practice: (q: Quest, p: never) => slow(() => base.practice(q, p))(),
+      assignment: (q: Quest, p: never) => slow(() => base.assignment(q, p))(),
+    } as unknown as typeof base;
+    const p = plan();
+    let err: QuestIncomplete | null = null;
+    try {
+      await writeQuest(p, writer);
+    } catch (e) {
+      err = e as QuestIncomplete;
+    }
+    expect(peak).toBeLessThanOrEqual(2);
+    expect(err).toBeInstanceOf(QuestIncomplete);
+    expect(err!.code).toBe("rate_limited");
+    const again = await writeQuest(err!.quest, base, undefined, { skip: new Set(err!.writtenIds) });
+    expect(again.parts).toHaveLength(p.parts.length);
   });
 });
