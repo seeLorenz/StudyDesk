@@ -8,7 +8,7 @@
 
 import { uid } from "../chat/types";
 import type { IntakeReport, Upload, ZipRecord } from "../onboarding/types";
-import type { UploadContent } from "../platform/onboardingStore";
+import type { StorageUsage, UploadContent } from "../platform/onboardingStore";
 import { compressImage } from "../quests/images";
 import type { PendingAttachment } from "./files";
 import { readPdf } from "./files";
@@ -23,7 +23,14 @@ const MANY = 8;
 export type KeepStore = {
   saveUploadContent(id: string, c: UploadContent): Promise<void>;
   storeOriginal(file: Blob, type?: string | null): Promise<string | null>;
+  storageUsage?(): Promise<StorageUsage | null>;
 };
+
+/** Room left in the file store while a drop is kept; null when the platform doesn't say. */
+type Room = { files: number; bytes: number; skipped: number; skippedBytes: number } | null;
+
+const MB = 1024 * 1024;
+export const fmtMB = (b: number) => (b >= 1024 * MB ? `${(b / 1024 / MB).toFixed(1)} GB` : `${Math.max(1, Math.round(b / MB))} MB`);
 
 export type KeptDrop = {
   uploads: Upload[];
@@ -50,7 +57,7 @@ const clip = (t: string) => (t.length > MAX_FILE_CHARS ? t.slice(0, MAX_FILE_CHA
 type One = { upload: Upload; content: UploadContent | null; image: Blob | null; problem?: string };
 
 /** Keeps one file: its readable content and outline in the student's data, the original in the file store. */
-async function keepOne(f: IntakeFile, zipId: string | null, store: KeepStore, now: number): Promise<One> {
+async function keepOne(f: IntakeFile, zipId: string | null, store: KeepStore, now: number, room: Room = null): Promise<One> {
   const id = `up_${uid()}`;
   const upload: Upload = {
     id,
@@ -71,7 +78,19 @@ async function keepOne(f: IntakeFile, zipId: string | null, store: KeepStore, no
   }
   const keepOriginal = async () => {
     const type = originalType(f.name, f.cls);
-    return type ? await store.storeOriginal(f.blob!, type) : null;
+    if (!type) return null;
+    const size = f.blob!.size;
+    if (room && (room.files < 1 || room.bytes < size)) {
+      room.skipped++;
+      room.skippedBytes += size;
+      return null;
+    }
+    const id = await store.storeOriginal(f.blob!, type);
+    if (id && room) {
+      room.files--;
+      room.bytes -= size;
+    }
+    return id;
   };
   let content: UploadContent;
   let image: Blob | null = null;
@@ -80,7 +99,7 @@ async function keepOne(f: IntakeFile, zipId: string | null, store: KeepStore, no
     upload.pages = pdf.pages;
     if (pdf.scan) {
       upload.assetId = await keepOriginal();
-      if (!upload.assetId) return { upload: { ...upload, state: "listed" }, content: null, image: null, problem: "a scan without text, too big to keep for the agent" };
+      if (!upload.assetId) return { upload: { ...upload, state: "listed" }, content: null, image: null, problem: room && room.skipped ? "a scan without text; the file store is full, so it couldn't be kept for the agent" : "a scan without text, too big to keep for the agent" };
       await store.saveUploadContent(id, { outline: `(a scan: ${pdf.pages} pages without text)` });
       return { upload: { ...upload, state: "agent" }, content: null, image: null };
     }
@@ -109,7 +128,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 export function describeCounts(us: Upload[]): string {
   const n = (p: (u: Upload) => boolean) => us.filter(p).length;
   const parts = [
-    [n((u) => u.type === "pdf" && u.state === "readable"), "PDF"],
+    [n((u) => u.type === "pdf" && u.state !== "agent" && u.state !== "listed"), "PDF"],
     [n((u) => u.type === "office"), "Office file"],
     [n((u) => u.type === "image"), "image"],
     [n((u) => u.type === "text"), "text file"],
@@ -145,6 +164,8 @@ export async function keepDrop(files: PendingAttachment[], store: KeepStore, onB
   const lines: string[] = [];
 
   const zipFiles = files.filter((f) => f.deferred === "zip" && f.file).map((f) => f.file!);
+  const usage = store.storageUsage ? await store.storageUsage().catch(() => null) : null;
+  const room: Room = usage ? { files: usage.maxFiles - usage.files, bytes: usage.maxBytes - usage.bytes, skipped: 0, skippedBytes: 0 } : null;
   const loose: IntakeFile[] = files
     .filter((f) => f.deferred !== "zip")
     .map((f) => {
@@ -157,7 +178,7 @@ export async function keepDrop(files: PendingAttachment[], store: KeepStore, onB
   for (const [k, f] of loose.entries()) {
     onBusy(`Keeping ${f.name} (${k + 1} of ${loose.length})…`);
     try {
-      const one = await keepOne(f, null, store, now);
+      const one = await keepOne(f, null, store, now, room);
       uploads.push(one.upload);
       if (one.problem) failed.push(`${f.name}: ${one.problem}`);
       const u = one.upload;
@@ -192,11 +213,16 @@ export async function keepDrop(files: PendingAttachment[], store: KeepStore, onB
       continue;
     }
     const z: ZipRecord = { id: `zip_${uid()}`, fileName: zf.name, courseId: null, addedAt: now, files: 0 };
+    // Say before keeping when the originals won't all fit. The text of every file is kept anyway.
+    const need = opened.files.filter((f) => f.blob && originalType(f.name, f.cls)).reduce((n, f) => n + f.size, 0);
+    if (room && need > room.bytes) lines.push(`${zf.name} needs about ${fmtMB(need)} for its original files, but your StudyDesk's file store has ${fmtMB(Math.max(0, room.bytes))} left. StudyDesk keeps the text of every file, and the originals that fit, PDFs first.`);
+    // When it's tight, PDFs go first: a scan can only be read from its original.
+    if (room && need > room.bytes) opened.files.sort((a, b) => Number(b.cls === "pdf") - Number(a.cls === "pdf"));
     const mine: Upload[] = [];
     for (const [k, f] of opened.files.entries()) {
       if (k % 5 === 0) onBusy(`Keeping ${zf.name}: ${k + 1} of ${opened.files.length} files…`);
       try {
-        const one = await keepOne(f, z.id, store, now);
+        const one = await keepOne(f, z.id, store, now, room);
         mine.push(one.upload);
         if (one.problem) failed.push(`${f.path}: ${one.problem}`);
       } catch (e) {
@@ -211,6 +237,10 @@ export async function keepDrop(files: PendingAttachment[], store: KeepStore, onB
     lines.push(`${zf.name}: ${plural(mine.length, "file")}${mine.length ? `, ${describeCounts(mine)}` : ""}.`);
   }
 
+  if (room && room.skipped) {
+    lines.push(`${plural(room.skipped, "original")} (${fmtMB(room.skippedBytes)}) didn't fit in the file store; their text is kept.`);
+    previews.push(`The file store is full: ${room.skipped} originals weren't kept (their text is). Tell the student once, and ask which courses matter most before they add more.`);
+  }
   if (failed.length) lines.push(`${plural(failed.length, "file")} couldn't be kept completely: ${failed.slice(0, 5).join("; ")}${failed.length > 5 ? "; …" : ""}`);
   const videos = uploads.filter((u) => u.type === "video").map((u) => ({ uploadId: u.id, name: u.fileName }));
   const report: IntakeReport | null = lines.length || videos.length ? { lines, ...(videos.length ? { videos } : {}) } : null;

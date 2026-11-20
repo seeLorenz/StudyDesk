@@ -22,6 +22,8 @@ export type UploadContent = {
   description?: string;
 };
 
+export type StorageUsage = { files: number; bytes: number; maxFiles: number; maxBytes: number };
+
 export interface OnboardingStore {
   mode: "cloud" | "local";
   loadProfile(): Promise<Profile | null>;
@@ -32,6 +34,8 @@ export interface OnboardingStore {
   loadUploadContent(id: string): Promise<UploadContent | null>;
   /** Keeps the original file; resolves with its asset id, or null when this view can't store files. */
   storeOriginal(file: Blob, type?: string | null): Promise<string | null>;
+  /** How full the file store is, from the platform itself; null when this view can't tell. */
+  storageUsage(): Promise<StorageUsage | null>;
   archiveSemester(s: Semester): Promise<void>;
 }
 
@@ -123,6 +127,15 @@ function cloudStore(db: DB, uid: string, assets: Claude.Assets | null): Onboardi
         return null; // too large or an unsupported type: the readable copy is still kept
       }
     },
+    async storageUsage() {
+      if (!assets) return null;
+      try {
+        const u = (await assets.list()).usage;
+        return u && u.maxBytes > 0 ? { files: u.files, bytes: u.bytes, maxFiles: u.maxFiles, maxBytes: u.maxBytes } : null;
+      } catch {
+        return null;
+      }
+    },
     async archiveSemester(s) {
       await archive.doc(s.id).set(plain(s));
     },
@@ -172,6 +185,9 @@ function localStore(): OnboardingStore {
       return read<UploadContent>(`upload.${id}`);
     },
     async storeOriginal() {
+      return null;
+    },
+    async storageUsage() {
       return null;
     },
     async archiveSemester(s) {

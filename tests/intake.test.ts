@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { strToU8, zipSync } from "fflate";
 import { buildOutline, classify, expandDrop, selectPart, unzipStream } from "../src/lib/intake";
 import { officeText, odfText } from "../src/lib/office";
-import { courseFileList, describeCounts, describeVideo, filesOf, originalType, unsortedList, zipInventory } from "../src/lib/keep";
+import { courseFileList, describeCounts, describeVideo, filesOf, keepDrop, originalType, unsortedList, zipInventory } from "../src/lib/keep";
 import { fileTools, inventoryLine, setupTurns, type FileForSetup, type SetupInput } from "../src/onboarding/setup";
 import { startJob } from "../src/orchestrator/jobs";
 import { jobInstructions } from "../src/platform/handoff";
@@ -228,5 +228,40 @@ describe("assigning a whole zip", () => {
     expect(r.desk.draft.uploads.map((u) => u.courseId)).toEqual(["c1", "c1", null]);
     expect(r.desk.draft.zips![0].courseId).toBe("c1");
     expect(r.job.uploadIds).toEqual(["u1", "u2"]);
+  });
+});
+
+describe("room in the file store", () => {
+  const fakeStore = (maxBytes: number) => {
+    const stored: string[] = [];
+    return {
+      stored,
+      store: {
+        saveUploadContent: async () => undefined,
+        storeOriginal: async (b: Blob) => (stored.push(String(b.size)), `asset${stored.length}`),
+        storageUsage: async () => ({ files: 0, bytes: 0, maxFiles: 100, maxBytes }),
+      },
+    };
+  };
+  const zipOf = (files: Record<string, string>) => new File([zipSync(Object.fromEntries(Object.entries(files).map(([k, v]) => [k, strToU8(v)])))], "C.zip");
+  const drop = (f: File) => [{ id: "a", name: f.name, kind: "text" as const, status: "ready" as const, file: f, deferred: "zip" as const }];
+
+  it("keeps every original when there is room", async () => {
+    const { store, stored } = fakeStore(10_000);
+    const r = await keepDrop(drop(zipOf({ "a.md": "# A\ntext", "b.md": "# B\ntext" })), store, () => undefined);
+    expect(stored).toHaveLength(2);
+    expect(r.uploads.every((u) => u.assetId)).toBe(true);
+    expect(r.report!.lines).toEqual(["C.zip: 2 files, 2 text files."]);
+  });
+
+  it("warns first, keeps the text, and stores only the originals that fit", async () => {
+    const { store, stored } = fakeStore(30);
+    const r = await keepDrop(drop(zipOf({ "a.md": "x".repeat(20), "b.md": "y".repeat(20) })), store, () => undefined);
+    expect(stored).toHaveLength(1);
+    expect(r.uploads).toHaveLength(2);
+    expect(r.uploads.every((u) => u.state === "readable")).toBe(true);
+    expect(r.report!.lines[0]).toContain("needs about 1 MB for its original files");
+    expect(r.report!.lines).toContain("1 original (1 MB) didn't fit in the file store; their text is kept.");
+    expect(r.previews.some((p) => p.includes("The file store is full"))).toBe(true);
   });
 });

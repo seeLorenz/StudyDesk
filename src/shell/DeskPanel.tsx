@@ -5,6 +5,8 @@ import { replay } from "../mastery/replay";
 import { subscribe } from "../platform/deskBus";
 import { openMasteryStore, type MasteryData } from "../platform/masteryStore";
 import { openQuestStore } from "../platform/questStore";
+import { openOnboardingStore, type StorageUsage } from "../platform/onboardingStore";
+import { describeCounts, fmtMB } from "../lib/keep";
 import type { Semester } from "../quests/types";
 import { askAboutItem } from "./ComingUp";
 import { countdown, upcoming } from "./upcoming";
@@ -29,6 +31,7 @@ export function DeskPanel({ onOpenSetup }: { onOpenSetup: () => void }) {
   const [semester, setSemester] = useState<Semester | null>(null);
   const [mastery, setMastery] = useState<MasteryData | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const [usage, setUsage] = useState<StorageUsage | null>(null);
   const today = toDay();
 
   useEffect(() => {
@@ -40,6 +43,10 @@ export function DeskPanel({ onOpenSetup }: { onOpenSetup: () => void }) {
         setMastery(m);
       })
       .catch((e) => live && setFailed(e instanceof Error ? e.message : "Your desk couldn't be loaded."));
+    openOnboardingStore()
+      .then((os) => os.storageUsage())
+      .then((u) => live && setUsage(u))
+      .catch(() => undefined);
     const stop = subscribe("semester", "desk-panel", (s) => setSemester(s));
     return () => {
       live = false;
@@ -68,6 +75,11 @@ export function DeskPanel({ onOpenSetup }: { onOpenSetup: () => void }) {
   const dates = upcoming(semester, today, 400);
   const weekly = semester.studyGoal.reduce((a, b) => a + b, 0);
   const uploads = semester.uploads ?? [];
+  // Files by course: a course's count and kinds, not hundreds of names.
+  const fileGroups = [...semester.courses.map((c) => ({ id: c.id as string | null, name: c.name })), { id: null, name: "Not sorted" }]
+    .map((c) => ({ c, us: uploads.filter((u) => (u.courseId ?? null) === c.id) }))
+    .filter((g) => g.us.length > 0)
+    .map(({ c, us }) => ({ key: c.id ?? "none", name: c.name, detail: us.length === 1 ? us[0].fileName : `${us.length} files: ${describeCounts(us)}` }));
   const range = semester.startDate && semester.endDate ? `${fmtDay(semester.startDate)} to ${fmtDay(semester.endDate)}` : null;
 
   return (
@@ -155,18 +167,28 @@ export function DeskPanel({ onOpenSetup }: { onOpenSetup: () => void }) {
         </div>
       </section>
 
-      {uploads.length > 0 && (
+      {(uploads.length > 0 || usage) && (
         <section className="desk-section" aria-label="Files">
           <h3 className="section-label">Files</h3>
           <ul className="file-list">
-            {uploads.slice(0, FILES_SHOWN).map((u) => (
-              <li key={u.id}>
-                {u.fileName}
-                <span className="quest-muted"> · {semester.courses.find((c) => c.id === u.courseId)?.name ?? "not sorted"}</span>
+            {fileGroups.slice(0, FILES_SHOWN).map((g) => (
+              <li key={g.key}>
+                {g.name}
+                <span className="quest-muted"> · {g.detail}</span>
               </li>
             ))}
           </ul>
-          {uploads.length > FILES_SHOWN && <p className="quest-muted">and {uploads.length - FILES_SHOWN} more</p>}
+          {fileGroups.length > FILES_SHOWN && <p className="quest-muted">and {fileGroups.length - FILES_SHOWN} more</p>}
+          {usage && (
+            <div className="storage-meter" title="Your StudyDesk's file store, where original files are kept">
+              <div className="bar" aria-hidden="true">
+                <span style={{ width: `${Math.min(100, Math.round((usage.bytes / usage.maxBytes) * 100))}%` }} />
+              </div>
+              <p className="quest-muted">
+                File store: {fmtMB(usage.bytes)} of {fmtMB(usage.maxBytes)} used · {usage.files} of {usage.maxFiles} files
+              </p>
+            </div>
+          )}
         </section>
       )}
     </div>

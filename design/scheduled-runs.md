@@ -51,7 +51,7 @@ The page takes the outbox in when it opens, and every few minutes while it's ope
 
 Applied changes show up in the StudyDesk chat as change cards marked as found overnight, each with **Undo**.
 
-**Deep sweeps.** The check also picks, per course, the date of the next deep sweep: sooner before an exam phase or a new block of material, later in quiet weeks, always between 3 and 28 days ahead. The first one is a week after setup unless the check picks earlier. On that night the course is read again completely, like at setup, with the web; the result replaces the course's map, and questions it raises go to the student the same way.
+**Deep sweeps.** The check also picks, per course, the date of the next deep sweep: sooner before an exam phase or a new block of material, later in quiet weeks, always between 3 and 28 days ahead. The first one is a week after setup unless the check picks earlier. On that night the course is read again like at setup: by reason from its file inventory (design/course-files.md), re-opening what matters for the exams ahead, and with the web; the result replaces the course's map, and questions it raises go to the student the same way.
 
 ## Changing it through StudyDesk's chat
 
@@ -80,7 +80,7 @@ The Orchestrator sees the run's status, its settings, each course's next sweep a
 ## Limits, for now
 
 - **No calendar at night.** Scheduled tasks can't use connectors, so the nightly quest is sized from the weekly timetable, not today's Google Calendar. (The page still uses the calendar when it writes a quest itself.)
-- **Images in course files** aren't read in deep sweeps, as with cloud setup runs; text and PDFs are.
+- **Files in deep sweeps** are opened by the session itself from the student's data and file store, like cloud setup runs (images and scans included).
 - **A new semester** creates no new task: the same one keeps running and reads whatever semester is current.
 - **Cost:** one Opus session a night on the student's own plan, longer on nights with a deep sweep.
 

@@ -3618,3 +3618,11 @@ input::placeholder {
   scrollbar-width: thin;
   scrollbar-color: var(--field-line) transparent;
 }
+
+.storage-meter {
+  margin-top: 12px;
+}
+.storage-meter p {
+  margin: 6px 0 0;
+  font-size: 13px;
+}

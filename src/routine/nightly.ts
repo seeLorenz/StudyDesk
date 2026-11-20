@@ -89,7 +89,7 @@ export type NightInput = {
   /** Answer photos by id, as data URLs. */
   images: Map<string, string>;
   /** Readable content of the student's files, by upload id. */
-  uploads: Map<string, { text?: string; image?: string }>;
+  uploads: Map<string, { text?: string; image?: string; outline?: string }>;
 };
 
 /** One document to write. Paths are relative to the student's own area, data/users/<uid>. */
@@ -266,13 +266,14 @@ async function organize(input: NightInput, desk: Desk, org: OrgState, mastery: M
       (async () => {
         const course = draft.courses.find((c) => c.id === cid)!;
         const files: FileForSetup[] = [];
+        // The session answering this opens the files itself, so it gets the inventory, not the text (design/course-files.md).
         for (const u of draft.uploads.filter((x) => x.courseId === cid)) {
           const content = input.uploads.get(u.id);
-          if (content?.text) files.push({ upload: u, text: content.text, image: null });
+          files.push({ upload: u, text: content?.text ?? null, image: null, outline: content?.outline });
         }
         const si: SetupInput = { profile, draft, course, facts: draft.facts.filter((f) => f.courseId === cid), files, today, priorFundamentals: prior };
-        const { turns, fileKeys } = setupTurns(si, { web: true });
-        const ask = d.ask(`Deep sweep of ${course.name}: read its materials and pages again`, true);
+        const { turns, fileKeys } = setupTurns(si, { web: true, navigate: "cloud" });
+        const ask = d.ask(`Deep sweep of ${course.name}: check its materials again where it matters, and look it up online`, true);
         const reply = await ask(turns, { tier: "complex" });
         let setup;
         try {

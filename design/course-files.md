@@ -37,7 +37,7 @@ This part has one right answer, so it is code (guideline 3).
 | Anything else | Listed in the inventory as "unknown format, not read"; the agent decides whether it matters |
 | A single file over the file store's limit (20 MB) | Text and outline kept, original not; said once in the summary |
 
-**Room.** Before storing, the page checks how much room the file store has left. If a drop doesn't fit, it stores what fits, says how much didn't, and the Orchestrator asks which courses come first.
+**Room.** Before storing, the page checks how much room the file store has left (the platform reports its caps and use). If a drop doesn't fit, it says so first, keeps every file's text, stores the originals that fit (PDFs first), and the Orchestrator asks which courses come first before more is added.
 
 **Which course.** A zip from a learning platform is almost always one course, and its name or top folder says which. So the Orchestrator assigns **the whole zip** to a course in one decision (that's judgment, so Claude does it), not file by file. Loose files are assigned one by one, as today.
 
@@ -144,8 +144,10 @@ When a drop holds videos, its summary card says so once, for all of them togethe
 - **Page run**: the setup prompt holds the inventory (with outlines while they add up to under 20,000 characters) and the navigation steps; Claude reads through `outline` and `open` (`fileTools` in `src/onboarding/setup.ts`). Every call adds a line to the live log, which shows the newest 14 steps. Files new since a course was last read are marked NEW.
 - **Cloud run**: the job holds only the inventory with upload and asset ids. The session reads kept text and outlines from the student's data and originals from the file store, and may write back the text of scans it transcribed (the one extra write its instructions allow), handing long transcriptions to a Sonnet helper. The old 45,000-character limit and "has images" fallback are gone.
 
+- **Room** (`keepDrop`): before storing, StudyDesk reads the file store's real limits and use from the platform. When a zip's originals won't all fit, the report says so first, PDFs are stored first (a scan can only be read from its original), the text of every file is kept anyway, and Claude is told to ask which courses matter most before more is added. Organize shows a meter ("File store: 120 MB of 1 GB used · 300 of 1000 files") and lists files per course with counts instead of every name.
+- **Deep sweeps** in the nightly run read by reason too: the session answering the sweep gets the inventory and opens files itself (it already has the student's data downloaded).
+
 **Not in this version**
 
-- No room check before storing: when the file store is full, originals that don't fit are skipped and said in the report (a scan that can't be kept is listed by name).
-- The nightly deep sweep (`src/routine/nightly.ts`) still sends the course's text in one reading; it should move to the inventory too.
-- Not yet tried in claude.ai: whether a session may read `data/users/me/files/uploads` and download assets, and the file store's real limits.
+- Not yet tried in claude.ai: whether a session may read `data/users/me/files/uploads` and download assets, and the file store's real limits (the meter will show them).
+- The database (text, outlines) has its own caps that the platform doesn't report ahead; StudyDesk only learns of them when a write is refused.
