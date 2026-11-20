@@ -11,6 +11,7 @@ import { OrchestratorPanel, type OrchStatus } from "./orchestrator/OrchestratorP
 import { subscribe } from "./platform/deskBus";
 import type { Semester } from "./quests/types";
 import { DeskPanel } from "./shell/DeskPanel";
+import { VersionLabel } from "./updates/VersionPanel";
 import { daysBetween, toDay } from "./mastery/days";
 
 const newChat = (): Chat => ({ id: uid(), title: "New chat", createdAt: Date.now(), updatedAt: Date.now(), messages: [], notes: [] });
@@ -212,6 +213,7 @@ export function App() {
         <div className="brand">
           <Logo />
           <span className="nav-text">StudyDesk</span>
+          <VersionLabel />
           <button type="button" className="icon-btn focus-btn" onClick={toggleFocus} aria-pressed={focus} aria-label={focus ? "Show the full sidebar" : "Focus mode: shrink the sidebar"} title={focus ? "Show the full sidebar" : "Focus mode"}>
             <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M2.5 3h11v10h-11zM6 3v10" />

@@ -39,6 +39,14 @@ Release notes are the tag's message: `git tag -a v1.1 -m "Grading now shows the 
 
 The page has no internet, so it can't look. The **nightly run** already starts a cloud session every night: its program reads `latest.json` from the `releases` branch with git (falling back to the tags with `git ls-remote --tags`) and writes `{ latest: "v1.1", notes, dataVersion }` into the student's `release` document. Only built releases are in `latest.json`, so the button never points at a release that isn't there yet. The page compares that with its own built-in version and shows **"Update to v1.1"** at the top of the Orchestrator panel, with the release notes. Nothing updates on its own: the student presses the button. A release whose data version is older than the student's data (only possible coming from a development build) isn't offered.
 
+### Checking by hand
+
+The version shows as a small grey label next to "StudyDesk" in the sidebar (`v1.1.1`, or `dev`). Clicking it opens a small panel that works any time, also during setup:
+
+- **Check for updates** starts a quick cloud session (the same "StudyDesk agent" task) that reads every `release.json` on the `releases` branch and answers with the list. Code reads the answer and saves it as the `release` document, so "Update to vX" shows within a minute or two instead of after the next nightly run.
+- **Update to vX** (the same button as in Organize) when a newer release can read the data.
+- **What's new**: the notes of the installed release and every newer one, newest first, from the tags' messages. The nightly run saves the same list.
+
 ### Where the update state lives
 
 Two small documents next to the student's data, not the profile (the profile is saved whole from many screens, and update state must never be lost to a stale copy):

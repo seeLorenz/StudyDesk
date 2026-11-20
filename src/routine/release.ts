@@ -10,7 +10,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ReleaseDoc } from "../updates/plan";
+import { releaseDocFrom, type ReleaseDoc } from "../updates/plan";
 import { newestRelease, RELEASE_BRANCH, RELEASE_REPO } from "../updates/version";
 
 const git = (args: string[]) => execFileSync("git", args, { encoding: "utf8", timeout: 90_000, stdio: ["ignore", "pipe", "ignore"] });
@@ -46,7 +46,16 @@ export function checkRelease(dir: string, now: number, repo = RELEASE_REPO): Rel
   try {
     const into = join(dir, "releases-check");
     if (!existsSync(into)) git(["clone", "--quiet", "--depth", "1", "--branch", RELEASE_BRANCH, "--filter=blob:none", "--no-checkout", url, into]);
-    found = parseLatest(git(["-C", into, "show", "HEAD:latest.json"]), now);
+    // Every release with its notes (for "What's new"), and latest.json as the newest when the folders can't be read.
+    const list: unknown[] = [];
+    for (const d of git(["-C", into, "ls-tree", "-d", "--name-only", "HEAD"]).split("\n").filter(Boolean)) {
+      try {
+        list.push(JSON.parse(git(["-C", into, "show", `HEAD:${d}/release.json`])));
+      } catch {
+        /* not a release folder */
+      }
+    }
+    found = releaseDocFrom(list, now) ?? parseLatest(git(["-C", into, "show", "HEAD:latest.json"]), now);
   } catch {
     try {
       const tag = tagsFromLsRemote(git(["ls-remote", "--tags", url]));

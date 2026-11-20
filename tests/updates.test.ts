@@ -6,7 +6,7 @@ import { compareVersions, newestRelease, parseVersion } from "../src/updates/ver
 import { countDocs, diffSnapshots, docPath, emptySnapshot, kindOf, toSnapshot, type Snapshot } from "../src/updates/layout";
 import { dataVersionOf, mapDocs, upgrade, type Step } from "../src/updates/migrations";
 import { validateSnapshot } from "../src/updates/validate";
-import { emptyUpdates, goBackTarget, keepBackups, offer, planLoad, publishJobBody, readUpdates, type Pending, type UpdatesDoc } from "../src/updates/plan";
+import { checkJobBody, emptyUpdates, goBackTarget, keepBackups, LIST_RELEASES_SCRIPT, offer, parseCheckAnswer, planLoad, publishJobBody, readUpdates, releaseDocFrom, whatsNewList, type Pending, type UpdatesDoc } from "../src/updates/plan";
 import { contentTypeOf, parseBackupZip, prepareImport, relink } from "../src/updates/importZip";
 import { parseLatest, tagsFromLsRemote } from "../src/routine/release";
 import { whatsNewTurns, plainNote } from "../src/updates/whatsNew";
@@ -277,5 +277,46 @@ describe("read-only mode", () => {
       setReadOnly(null);
       delete (globalThis as { claude?: unknown }).claude;
     }
+  });
+});
+
+describe("checking for updates by hand, and what's new", () => {
+  const list = [
+    { version: "v1.1.1", notes: "Imports stay responsive.", dataVersion: 1, builtAt: "x" },
+    { version: "v1", notes: "First release.", dataVersion: 1 },
+    { version: "v1.1", notes: "  ", dataVersion: 1 },
+    { version: "main", notes: "not a release" },
+  ];
+  it("turns the releases branch's release.json files into the release note", () => {
+    const r = releaseDocFrom(list, 7)!;
+    expect(r).toMatchObject({ latest: "v1.1.1", notes: "Imports stay responsive.", dataVersion: 1, checkedAt: 7 });
+    expect(r.releases!.map((x) => x.version)).toEqual(["v1.1.1", "v1.1", "v1"]);
+    expect(r.releases![1].notes).toBeNull();
+    expect(releaseDocFrom([], 1)).toBeNull();
+  });
+  it("reads the check session's answer, with or without text around the list", () => {
+    expect(parseCheckAnswer(JSON.stringify(list), 1)?.latest).toBe("v1.1.1");
+    expect(parseCheckAnswer(`Here it is:\n${JSON.stringify(list)}\n`, 1)?.latest).toBe("v1.1.1");
+    expect(parseCheckAnswer("[]", 1)).toBeNull();
+    expect(parseCheckAnswer("no list", 1)).toBeNull();
+  });
+  it("shows the installed version and newer ones, newest first", () => {
+    const r = releaseDocFrom(list, 1);
+    expect(whatsNewList("v1.1", r).map((x) => [x.version, x.installed])).toEqual([
+      ["v1.1.1", false],
+      ["v1.1", true],
+    ]);
+    expect(whatsNewList("v1.1.1", { latest: "v1.1.1", notes: "n", dataVersion: 1, checkedAt: 1 })).toEqual([{ version: "v1.1.1", notes: "n", dataVersion: 1, installed: true }]);
+    expect(whatsNewList("v1", null)).toEqual([]);
+  });
+  it("tells the session to list the releases and answer with the list only", () => {
+    const body = checkJobBody("someone/studydesk");
+    expect(body).toContain("--branch releases --filter=blob:none --no-checkout https://github.com/someone/studydesk.git");
+    expect(body).toContain(LIST_RELEASES_SCRIPT);
+    expect(body).toMatch(/answer \[\]/);
+  });
+  it("keeps a running check in the update state", () => {
+    expect(readUpdates({ check: { jobId: "j1", startedAt: 5 } }).check).toEqual({ jobId: "j1", startedAt: 5 });
+    expect(readUpdates({ check: { nope: 1 } }).check).toBeNull();
   });
 });

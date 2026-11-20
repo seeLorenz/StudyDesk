@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { checkPublishJob, loadRelease, loadUpdates, startGoBack, startUpdate, updateEnv } from "../platform/updateStore";
+import { checkPublishJob, loadRelease, loadUpdates, RELEASE_EVENT, startGoBack, startUpdate, updateEnv } from "../platform/updateStore";
 import { goBackTarget, offer, type Pending, type ReleaseDoc, type UpdatesDoc } from "./plan";
 import { APP_VERSION } from "./version";
 
@@ -22,13 +22,19 @@ export function useUpdateState(): { doc: UpdatesDoc | null; release: ReleaseDoc 
   useEffect(() => {
     void reload().catch(() => undefined);
     const t = setInterval(() => void reload().catch(() => undefined), 5 * 60_000);
-    return () => clearInterval(t);
+    // A "Check for updates" just saved a new release note.
+    const now = () => void reload().catch(() => undefined);
+    window.addEventListener(RELEASE_EVENT, now);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener(RELEASE_EVENT, now);
+    };
   }, [reload]);
   return { doc, release, reload };
 }
 
 /** "StudyDesk v1.1 is out" with its notes and the button, or the running update's progress. */
-export function UpdateNotice({ md, always = false }: { md: Md; always?: boolean }) {
+export function UpdateNotice({ md, always = false, notes = true }: { md: Md; always?: boolean; notes?: boolean }) {
   const { doc, release, reload } = useUpdateState();
   const [line, setLine] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +101,7 @@ export function UpdateNotice({ md, always = false }: { md: Md; always?: boolean 
       <p>
         <strong>StudyDesk {next.latest} is out.</strong> You have {APP_VERSION === "dev" ? "a development version" : APP_VERSION}.
       </p>
-      {next.notes && <div className="update-notes">{md(`update-${next.latest}`, next.notes)}</div>}
+      {notes && next.notes && <div className="update-notes">{md(`update-${next.latest}`, next.notes)}</div>}
       <p className="quest-muted">Your data stays: StudyDesk saves a backup first, and you can go back if anything goes wrong. A Claude session does the update; it takes a few minutes.</p>
       {line && <p className="quest-muted">{line}</p>}
       {error && <p className="quest-error">{error}</p>}

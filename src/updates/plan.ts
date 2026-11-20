@@ -46,10 +46,19 @@ export type UpdatesDoc = {
   pending: Pending | null;
   lastUpdate: LastUpdate | null;
   failure: Failure | null;
+  /** A "Check for updates" in progress. */
+  check?: UpdateCheck | null;
   updatedAt: number;
 };
 
-export type ReleaseDoc = { latest: string; notes: string | null; dataVersion: number | null; checkedAt: number };
+/** One built release, as its release.json on the releases branch describes it. */
+export type ReleaseInfo = { version: string; notes: string | null; dataVersion: number | null };
+
+/** What's known about releases: the newest one, and (when read) every release with its notes, for "What's new". */
+export type ReleaseDoc = { latest: string; notes: string | null; dataVersion: number | null; checkedAt: number; releases?: ReleaseInfo[] };
+
+/** A "Check for updates" session that's running (started from the version panel). */
+export type UpdateCheck = { jobId: string; startedAt: number };
 
 export const KEEP_BACKUPS = 3;
 /** An update whose session never published counts as failed after this. */
@@ -69,6 +78,7 @@ export function readUpdates(x: unknown): UpdatesDoc {
     pending: o.pending && typeof o.pending === "object" ? o.pending : null,
     lastUpdate: o.lastUpdate && typeof o.lastUpdate === "object" ? o.lastUpdate : null,
     failure: o.failure && typeof o.failure === "object" ? o.failure : null,
+    check: o.check && typeof o.check === "object" && typeof o.check.jobId === "string" ? o.check : null,
     updatedAt: Number(o.updatedAt) || 0,
   };
 }
@@ -117,6 +127,65 @@ export function keepBackups(list: Backup[], add: Backup): { keep: Backup[]; drop
   const all = [...list.filter((b) => b.assetId !== add.assetId), add].sort((a, b) => a.at - b.at);
   const cut = Math.max(0, all.length - KEEP_BACKUPS);
   return { keep: all.slice(cut), drop: all.slice(0, cut) };
+}
+
+// ---------- releases and their notes ----------
+
+/** Release objects (from release.json / latest.json files) → a ReleaseDoc, or null when none is a release. Pure. */
+export function releaseDocFrom(list: unknown[], now: number): ReleaseDoc | null {
+  const seen = new Map<string, ReleaseInfo>();
+  for (const x of list) {
+    const o = (x && typeof x === "object" ? x : {}) as { version?: unknown; notes?: unknown; dataVersion?: unknown };
+    if (typeof o.version !== "string" || !isRelease(o.version)) continue;
+    seen.set(o.version, {
+      version: o.version,
+      notes: typeof o.notes === "string" && o.notes.trim() ? o.notes.trim().slice(0, 4000) : null,
+      dataVersion: Number.isInteger(o.dataVersion) ? (o.dataVersion as number) : null,
+    });
+  }
+  const releases = [...seen.values()].sort((a, b) => compareVersions(b.version, a.version)).slice(0, 30);
+  const newest = releases[0];
+  return newest ? { latest: newest.version, notes: newest.notes, dataVersion: newest.dataVersion, checkedAt: now, releases } : null;
+}
+
+/** "What's new": the installed release and every newer one, newest first. Pure. */
+export function whatsNewList(appVersion: string, release: ReleaseDoc | null): Array<ReleaseInfo & { installed: boolean }> {
+  const all = release?.releases ?? (release ? [{ version: release.latest, notes: release.notes, dataVersion: release.dataVersion }] : []);
+  return all
+    .filter((r) => compareVersions(r.version, appVersion) >= 0)
+    .sort((a, b) => compareVersions(b.version, a.version))
+    .map((r) => ({ ...r, installed: r.version === appVersion }));
+}
+
+/** A cloud session's answer to the check job → a ReleaseDoc. Accepts the JSON list with text around it. Pure. */
+export function parseCheckAnswer(answer: string, now: number): ReleaseDoc | null {
+  const a = answer.indexOf("[");
+  const b = answer.lastIndexOf("]");
+  if (a < 0 || b <= a) return null;
+  try {
+    const list = JSON.parse(answer.slice(a, b + 1));
+    return Array.isArray(list) ? releaseDocFrom(list, now) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A shell line that prints every release.json on the releases branch as one JSON list (run inside a clone of it). */
+export const LIST_RELEASES_SCRIPT = `node -e 'const x=(c)=>require("child_process").execSync(c,{encoding:"utf8"});const out=[];for(const d of x("git ls-tree -d --name-only HEAD").split("\\n").filter(Boolean)){try{out.push(JSON.parse(x("git show HEAD:"+d+"/release.json")))}catch(e){}}console.log(JSON.stringify(out))'`;
+
+/** What a "Check for updates" session does: read the releases and answer with the list. Pure, tested. */
+export function checkJobBody(repo = RELEASE_REPO): string {
+  const dir = "<your scratchpad directory>/studydesk-check";
+  return `The student pressed "Check for updates" in StudyDesk. Read which StudyDesk releases exist, with their notes. This is quick: don't do anything else.
+
+For this job you may clone into your scratchpad directory (nowhere else). Don't change the student's data except your job document.
+
+1. git clone --quiet --depth 1 --branch ${RELEASE_BRANCH} --filter=blob:none --no-checkout https://github.com/${repo}.git ${dir}
+   If the branch doesn't exist, report done with the answer [] (no release yet).
+2. In ${dir}, run exactly:
+   ${LIST_RELEASES_SCRIPT}
+   It prints one line: a JSON list.
+3. Report done with that line as the answer, exactly as printed, nothing added.`;
 }
 
 // ---------- the job a cloud session does ----------
