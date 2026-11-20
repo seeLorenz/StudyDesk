@@ -2097,7 +2097,15 @@ sup.sd-ref {
   font-size: 13px;
   color: var(--ink-2);
 }
+/* The chat column is at least a screen tall, so the chat box always sits at
+   the bottom of the screen (like claude.ai), not right under a short chat. */
+.setup-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - 150px);
+}
 .setup-composer {
+  margin-top: auto;
   position: sticky;
   /* Chrome keeps sticky boxes inside the page's 48px bottom padding, which
      left a strip of chat showing under the box; reach down over it. */
@@ -3625,4 +3633,41 @@ input::placeholder {
 .storage-meter p {
   margin: 6px 0 0;
   font-size: 13px;
+}
+
+/* Files sent with a message: compact chips that never run past the bubble. */
+.bubble .file-chip,
+.note-body .file-chip {
+  min-width: 0;
+  max-width: 100%;
+}
+.bubble .file-name,
+.note-body .file-name {
+  min-width: 0;
+  max-width: 100%;
+}
+/* Long unbroken names must not widen the chat column itself. */
+.setup-thread {
+  grid-template-columns: minmax(0, 1fr);
+}
+.bubble {
+  min-width: 0;
+}
+.bubble .file-chip.static {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border-color: transparent;
+  font-size: 12.5px;
+}
+.file-more {
+  cursor: pointer;
+  color: var(--ink-2);
+  font: inherit;
+}
+.row-user .bubble-text + .bubble-files {
+  margin-top: 8px;
+}
+.setup-wait {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--ink-2);
 }

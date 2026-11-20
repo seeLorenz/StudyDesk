@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SentFiles } from "../chat/SentFiles";
 import { Logo } from "../shell/Logo";
 import { createPortal } from "react-dom";
 import type { Note } from "../chat/types";
@@ -814,7 +815,7 @@ export function OrchestratorPanel(props: Props) {
                 <div className="bubble">
                   {(m.quote || m.fromTutor) && <div className="orch-quote">{m.fromTutor ? "Passed on by the tutor" : `About: “${m.quote}”`}</div>}
                   {m.text && <div className="bubble-text">{m.text}</div>}
-                  {m.files && m.files.length > 0 && <div className="setup-files">{m.files.map((f) => `📎 ${f}`).join("  ")}</div>}
+                  {m.files && m.files.length > 0 && <SentFiles names={m.files} />}
                   {m.intake && (
                     <IntakeCard
                       report={m.intake}

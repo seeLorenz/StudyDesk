@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { SentFiles } from "../chat/SentFiles";
 import type { Note } from "../chat/types";
 import { uid } from "../chat/types";
 import { InputBox } from "../chat/InputBox";
@@ -517,7 +518,15 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
   const patchMsg = (id: string, p: Partial<SetupMessage>) => update((d) => ({ ...d, chat: (d.chat ?? []).map((m) => (m.id === id ? { ...m, ...p } : m)) }));
 
   /** Keeps each dropped file (zips opened): readable content and outline in the student's data, the original in the file store. */
-  const keepFiles = (files: PendingAttachment[]) => keepDrop(files, env.os, setBusy);
+  const [keeping, setKeeping] = useState(false);
+  const keepFiles = async (files: PendingAttachment[]) => {
+    setKeeping(true);
+    try {
+      return await keepDrop(files, env.os, setBusy);
+    } finally {
+      setKeeping(false);
+    }
+  };
 
   const send = async (text: string, files: PendingAttachment[]) => {
     if (!open) return;
@@ -623,7 +632,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
             <div key={m.id} className="row-user">
               <div className="bubble">
                 {m.text && <div className="bubble-text">{m.text}</div>}
-                {m.files && m.files.length > 0 && <div className="setup-files">{m.files.map((f) => `📎 ${f}`).join("  ")}</div>}
+                {m.files && m.files.length > 0 && <SentFiles names={m.files} />}
                 {m.intake && (
                   <IntakeCard
                     report={m.intake}
@@ -645,7 +654,8 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
       </div>
       {open && (
         <div className="setup-composer">
-          {busy && <p className="quest-muted">{busy}</p>}
+          {busy && <p className="quest-muted setup-busy">{busy}</p>}
+          {keeping && <p className="setup-wait">This can take a few minutes, especially with many files. Keep this tab open until it's done; the files are read here in the page.</p>}
           <InputBox
             id="setup-chat"
             keepAll
