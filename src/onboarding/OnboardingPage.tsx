@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { SentFiles } from "../chat/SentFiles";
 import type { Note } from "../chat/types";
 import { uid } from "../chat/types";
 import { InputBox } from "../chat/InputBox";
@@ -630,7 +631,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
             <div key={m.id} className="row-user">
               <div className="bubble">
                 {m.text && <div className="bubble-text">{m.text}</div>}
-                {m.files && m.files.length > 0 && <div className="setup-files">{m.files.map((f) => `📎 ${f}`).join("  ")}</div>}
+                {m.files && m.files.length > 0 && <SentFiles names={m.files} />}
                 {m.intake && (
                   <IntakeCard
                     report={m.intake}

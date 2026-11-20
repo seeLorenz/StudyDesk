@@ -64,9 +64,9 @@ export function NoteCard({ note, number, busy, missing, onCollapse, onDelete, on
                     a.thumb ? (
                       <img key={a.id} src={a.thumb} alt={a.name} className="bubble-thumb small" />
                     ) : (
-                      <span key={a.id} className="file-chip static">
+                      <span key={a.id} className="file-chip static" title={a.name}>
                         <FileIcon kind={a.kind} />
-                        {a.name}
+                        <span className="file-name">{a.name}</span>
                       </span>
                     ),
                   )}

@@ -31,9 +31,9 @@ export const MessageRow = memo(function MessageRow({ message, notes, generating,
                 a.thumb ? (
                   <img key={a.id} src={a.thumb} alt={a.name} className="bubble-thumb" />
                 ) : (
-                  <span key={a.id} className="file-chip static">
+                  <span key={a.id} className="file-chip static" title={a.name}>
                     <FileIcon kind={a.kind} />
-                    {a.name}
+                    <span className="file-name">{a.name}</span>
                   </span>
                 ),
               )}
