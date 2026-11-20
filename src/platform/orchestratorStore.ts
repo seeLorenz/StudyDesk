@@ -4,6 +4,7 @@
 //   data/users/<uid>/orchestrator/days/<sem>_<day>   the chat, one document per semester day
 // Elsewhere it falls back to this browser's localStorage.
 
+import { host } from "./host";
 import type { Day } from "../mastery/types";
 import { emptyState, type OrchMessage, type OrchState } from "../orchestrator/types";
 
@@ -39,7 +40,7 @@ let shared: Promise<OrchestratorStore> | null = null;
 export function openOrchestratorStore(): Promise<OrchestratorStore> {
   if (!shared)
     shared = (async () => {
-      const c = (window as Window & { claude?: Claude }).claude;
+      const c = host();
       if (c?.use) {
         const [db, user] = await Promise.all([c.use("db").catch(() => null), c.use("user").catch(() => null)]);
         const uid = user ? await user.id().catch(() => null) : null;

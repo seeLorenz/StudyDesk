@@ -27,6 +27,7 @@ import { gradeSteps } from "./scales";
 import { setupTodo, staleCourses, type TodoItem } from "./todo";
 import { buildSemester, CLOUD_CHARS, localSetup, parseSetup, runCourseSetup, setupTurns, type FileForSetup, type SetupInput, liveProgress, type LiveProgress } from "./setup";
 import { buildBackup, freshStart, saveBackup } from "../platform/backup";
+import { RestoreBackup } from "../updates/RestoreBackup";
 import { latestOf, publish, subscribe } from "../platform/deskBus";
 import { byteLength, checkHandoff, jobProgress, MAX_JOB_BYTES, readJobDoc, removeJob, sessionUrl, startJob, type HandoffSetup, type HandoffState } from "../platform/handoff";
 import type { CloudJob, CourseSetup, DraftCourse, Profile, SemesterDraft, SetupMessage, SetupStep, Upload } from "./types";
@@ -393,6 +394,7 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
           {freshError && <p className="quest-error">{freshError}</p>}
         </div>
       )}
+      {draft.status === "setting_up" && !returning && env.current?.source !== "onboarding" && draft.courses.length === 0 && <RestoreBackup />}
       <div className="setup-grid">
         <section className="setup-main">
           {draft.setupStep !== "running" && <HandoffCard {...props} />}

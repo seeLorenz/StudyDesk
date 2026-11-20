@@ -8,6 +8,7 @@
 // store files; their ids are kept on the upload records.
 // Elsewhere it falls back to this browser's localStorage.
 
+import { host } from "./host";
 import type { Semester } from "../quests/types";
 import type { Profile, SemesterDraft } from "../onboarding/types";
 
@@ -41,7 +42,7 @@ export function openOnboardingStore(): Promise<OnboardingStore> {
 }
 
 async function openStoreOnce(): Promise<OnboardingStore> {
-  const c = (window as Window & { claude?: Claude }).claude;
+  const c = host();
   if (c?.use) {
     const [db, user, assets] = await Promise.all([
       c.use("db").catch(() => null),
@@ -174,7 +175,7 @@ function localStore(): OnboardingStore {
 
 /** Offers a file to save: through the artifact's downloads capability, or a plain browser download. */
 export async function offerDownload(filename: string, data: string): Promise<"saved" | "declined"> {
-  const c = (window as Window & { claude?: Claude }).claude;
+  const c = host();
   const dl = c?.use ? await c.use("downloads").catch(() => null) : null;
   if (dl) {
     try {

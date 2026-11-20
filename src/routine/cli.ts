@@ -16,11 +16,17 @@ import type { MasteryData } from "../platform/masteryStore";
 import type { OutboxDoc } from "./apply";
 import { deferredAsk, type PendingCall } from "./deferred";
 import { runNightly, type NightInput, type RoutineDoc, type ScheduleInfo, type Write } from "./nightly";
+import { checkRelease } from "./release";
+import { COLLECTION_KINDS, COLLECTION_KIND_LIST, DOC_KINDS, DOC_KIND_LIST, diffSnapshots, emptySnapshot, type Snapshot } from "../updates/layout";
+import { dataVersionOf, upgrade } from "../updates/migrations";
+import { validateSnapshot } from "../updates/validate";
+import { DATA_VERSION } from "../updates/version";
 
 const ME = "data/users/me";
 /** Collections to download (under data/users/me). Paths alternate collection/document. */
-const COLLECTIONS = ["quests/records", "quests/images", "mastery/skills", "mastery/targets", "mastery/attempts", "mastery/reviews", "routine/outbox", "files/uploads"];
-const DOCS = ["profile", "onboarding", "semester", "routine"];
+// Everything StudyDesk stores (src/updates/layout.ts), so the data can be upgraded here after an update.
+const COLLECTIONS = Object.values(COLLECTION_KINDS).map((p) => p.join("/"));
+const DOCS = [...(Object.values(DOC_KINDS) as string[]), "release"];
 const BATCH_BYTES = 800_000;
 
 type Night = { now: number; today: string; nowLocal: string; timeZone: string; seed: number };
@@ -153,21 +159,25 @@ async function callsStep(dir: string, calls: PendingCall[]): Promise<void> {
   ]);
 }
 
-function uploadStep(dir: string, url: string, writes: Write[], versions: Map<string, number | null>): void {
+function uploadStep(dir: string, url: string, writes: UploadWrite[], versions: Map<string, number | null>, upgrade?: { from: number; to: number }): void {
   const up = join(dir, "upload");
   mkdirSync(up, { recursive: true });
-  type Entry = { op: "set"; collection: string; doc_id: string; file_path: string; if_version?: number };
+  type Entry = { op: "set"; collection: string; doc_id: string; file_path: string; if_version?: number } | { op: "delete"; collection: string; doc_id: string };
   const batches: Entry[][] = [[]];
   let size = 0;
   writes.forEach((w, i) => {
     const file = join(up, `${String(i).padStart(3, "0")}.json`);
-    const text = JSON.stringify(w.data);
-    writeFileSync(file, text);
     const path = w.path;
     const collection = [ME, ...path.slice(0, -1)].join("/");
-    const entry: Entry = { op: "set", collection, doc_id: path[path.length - 1], file_path: file };
-    const v = versions.get(`${ME}/${path.join("/")}`);
-    if (w.mode === "replace" && v) entry.if_version = v;
+    const text = w.mode === "delete" ? "" : JSON.stringify(w.data);
+    let entry: Entry;
+    if (w.mode === "delete") entry = { op: "delete", collection, doc_id: path[path.length - 1] };
+    else {
+      writeFileSync(file, text);
+      entry = { op: "set", collection, doc_id: path[path.length - 1], file_path: file };
+      const v = versions.get(`${ME}/${path.join("/")}`);
+      if (w.mode === "replace" && v) entry.if_version = v;
+    }
     let batch = batches[batches.length - 1];
     if (batch.length >= 50 || size + text.length > BATCH_BYTES) {
       batch = [];
@@ -177,6 +187,18 @@ function uploadStep(dir: string, url: string, writes: Write[], versions: Map<str
     batch.push(entry);
     size += text.length;
   });
+  if (upgrade) {
+    say([
+      `NEXT STEP: upgrade the student's StudyDesk data from data version ${upgrade.from} to ${upgrade.to} (StudyDesk was updated and the page hasn't been opened since).`,
+      "",
+      `Use ArtifactData action "batch" with url "${url}", one call per list below, in this order. Use the entries exactly as given.`,
+      "If a batch is refused because a document's version changed: for that document only, get it (action \"get\") to learn its version and redo the entry with \"if_version\".",
+      ...batches.filter((b) => b.length).map((b, i) => `\nBatch ${i + 1}:\n${JSON.stringify(b)}`),
+      "",
+      `When every batch is saved, delete the folder ${join(dir, "data")} (the downloaded data is out of date now) and run this program again with the same arguments.`,
+    ]);
+    return;
+  }
   say([
     "NEXT STEP: save tonight's results into the student's StudyDesk.",
     "",
@@ -186,6 +208,18 @@ function uploadStep(dir: string, url: string, writes: Write[], versions: Map<str
     "",
     `When every batch is saved, run this program again with the same arguments plus --saved.`,
   ]);
+}
+
+// ---------- updates (design/updates.md) ----------
+
+type UploadWrite = Write | { path: string[]; data: null; mode: "delete" };
+
+/** The downloaded data as one snapshot (src/updates/layout.ts). */
+function snapshotOf(all: Map<string, Loaded>): Snapshot {
+  const s = emptySnapshot() as Record<string, unknown>;
+  for (const k of DOC_KIND_LIST) s[k] = doc(all, DOC_KINDS[k]);
+  for (const k of COLLECTION_KIND_LIST) s[k] = Object.fromEntries(collection<Record<string, unknown>>(all, COLLECTION_KINDS[k].join("/")).map((x) => [x.id, x.data]));
+  return s as Snapshot;
 }
 
 // ---------- main ----------
@@ -236,6 +270,28 @@ async function main(): Promise<void> {
     say(["STOP. The student paused the nightly run. Don't write anything. Reply \"Paused: nothing to do.\" and end. NIGHTLY RUN FINISHED"]);
     return;
   }
+  // StudyDesk's data must be in the shape this program reads (design/updates.md).
+  const stored = snapshotOf(all);
+  const dataVersion = dataVersionOf(stored);
+  if (dataVersion > DATA_VERSION) {
+    say([`STOP. The student's data is from a newer StudyDesk (data version ${dataVersion}) than this nightly program (${DATA_VERSION}). Don't write anything. Reply "Data is newer than the program: nothing done." and end. NIGHTLY RUN FINISHED`]);
+    return;
+  }
+  if (dataVersion < DATA_VERSION) {
+    const up = upgrade(stored, dataVersion);
+    const check = up.ok ? validateSnapshot(up.snapshot) : null;
+    if (!up.ok || !check?.ok) {
+      say([`STOP. StudyDesk was updated, but the student's data couldn't be upgraded here: ${up.ok ? check!.problems.slice(0, 5).join("; ") : up.error}. Nothing was written; the page tries again (with a backup) when the student opens it. Don't write anything. Reply with this sentence and end. NIGHTLY RUN FINISHED`]);
+      return;
+    }
+    const writes: UploadWrite[] = diffSnapshots({ ...stored, updates: null }, { ...up.snapshot, updates: null }).map((w) =>
+      w.data ? { path: w.path, data: w.data, mode: "replace" as const } : { path: w.path, data: null, mode: "delete" as const },
+    );
+    writes.push({ path: ["updates"], data: { ...(stored.updates ?? {}), dataVersion: DATA_VERSION, updatedAt: night.now }, mode: "replace" });
+    const versions = new Map([...all.entries()].map(([k, v]) => [k, v.version]));
+    return uploadStep(dir, url, writes, versions, { from: dataVersion, to: DATA_VERSION });
+  }
+
   const routine = doc<RoutineDoc>(all, "routine");
   // Fired twice by mistake: the second stops. (A run the student started earlier in the day doesn't block tonight's.)
   if (!dry && routine?.nights.some((n) => n.day === night.today && n.status === "done" && night.now - n.startedAt < 3 * 3_600_000) && !process.argv.includes("--saved")) {
@@ -300,7 +356,11 @@ async function main(): Promise<void> {
     return;
   }
   const versions = new Map([...all.entries()].map(([k, v]) => [k, v.version]));
-  uploadStep(dir, url, result.writes, versions);
+  const writes: UploadWrite[] = [...result.writes];
+  // Is there a newer StudyDesk? The page shows "Update to vX"; nothing updates on its own.
+  const release = checkRelease(dir, night.now);
+  if (release) writes.push({ path: ["release"], data: { ...release }, mode: "replace" });
+  uploadStep(dir, url, writes, versions);
 }
 
 main().catch((e) => {

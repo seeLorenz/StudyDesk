@@ -11,24 +11,14 @@
 // reviews), and optionally the Ask chats. It's only offered after a backup
 // was saved.
 
+import { host } from "./host";
 import { zipSync, strToU8 } from "fflate";
 
-/** Paths under data/users/<uid>/: single documents and collections. */
-const DOCS = { profile: "profile", setup: "onboarding", semester: "semester", orchestrator: "orchestrator" } as const;
-const COLLECTIONS = {
-  askChats: ["profile", "chats"],
-  uploadContents: ["files", "uploads"],
-  archivedSemesters: ["archive", "semesters"],
-  questRecords: ["quests", "records"],
-  questReviews: ["quests", "reviews"],
-  answerPhotos: ["quests", "images"],
-  masterySkills: ["mastery", "skills"],
-  masteryTargets: ["mastery", "targets"],
-  masteryAttempts: ["mastery", "attempts"],
-  masteryReviews: ["mastery", "reviews"],
-  orchestratorChat: ["orchestrator", "days"],
-} as const;
-type CollectionKey = keyof typeof COLLECTIONS;
+import { COLLECTION_KINDS, COLLECTION_KIND_LIST, DOC_KINDS, DOC_KIND_LIST, emptySnapshot, type CollectionKind, type Snapshot } from "../updates/layout";
+import { APP_VERSION } from "../updates/version";
+import { dataVersionOf } from "../updates/migrations";
+
+type CollectionKey = CollectionKind;
 
 /** What a fresh start removes. Everything else stays. */
 export const FRESH_START_REMOVES: CollectionKey[] = ["uploadContents", "archivedSemesters", "questRecords", "questReviews", "answerPhotos"];
@@ -39,7 +29,7 @@ const LOCAL_PREFIX = "studydesk.";
 type Original = { assetId: string; fileName: string; courseName: string | null };
 
 async function use<K extends string>(name: K) {
-  const c = (window as Window & { claude?: Claude }).claude;
+  const c = host();
   return c?.use ? await c.use(name as never).catch(() => null) : null;
 }
 
@@ -49,7 +39,7 @@ async function cloud(): Promise<{ db: DB; uid: string; assets: Claude.Assets | n
   return db && uid ? { db: db as DB, uid, assets: assets as Claude.Assets | null } : null;
 }
 
-/** Every document StudyDesk keeps for this student, by kind. */
+/** Every document StudyDesk keeps for this student, by kind (design/updates.md: the same set the update backup holds). */
 export async function collectData(): Promise<Record<string, unknown>> {
   const c = await cloud();
   if (!c) {
@@ -64,17 +54,23 @@ export async function collectData(): Promise<Record<string, unknown>> {
     }
     return { mode: "local", data: out };
   }
-  const base = `data/users/${c.uid}`;
-  const out: Record<string, unknown> = { mode: "cloud" };
-  for (const [key, path] of Object.entries(DOCS)) {
-    const s = await c.db.doc(`${base}/${path}`).get();
-    out[key] = s.exists ? s.data() : null;
+  return { mode: "cloud", ...(await readSnapshot(c.db, c.uid)) };
+}
+
+/** Reads every kind in layout.ts for one student. */
+export async function readSnapshot(db: DB, uid: string): Promise<Snapshot> {
+  const base = `data/users/${uid}`;
+  const out = emptySnapshot() as Record<string, unknown>;
+  for (const key of DOC_KIND_LIST) {
+    const s = await db.doc(`${base}/${DOC_KINDS[key]}`).get();
+    out[key] = s.exists ? s.data() ?? null : null;
   }
-  for (const [key, [doc, col]] of Object.entries(COLLECTIONS)) {
-    const snap = await c.db.doc(`${base}/${doc}`).collection(col).get();
-    out[key] = Object.fromEntries(snap.docs.map((d) => [d.id, d.data()]));
+  for (const key of COLLECTION_KIND_LIST) {
+    const [doc, col] = COLLECTION_KINDS[key];
+    const snap = await db.doc(`${base}/${doc}`).collection(col).get();
+    out[key] = Object.fromEntries(snap.docs.filter((d) => d.exists).map((d) => [d.id, d.data()]));
   }
-  return out;
+  return out as Snapshot;
 }
 
 /** The original files referenced by the setup, the semester and archived semesters. */
@@ -97,6 +93,19 @@ export function originalsIn(data: Record<string, unknown>): Original[] {
 
 const safe = (s: string) => s.replace(/[\\/:*?"<>|]+/g, "-").trim() || "file";
 
+/** Where each original file goes in the zip: files/<course>/<name>, numbered when two share a name. Pure. */
+export function zipPaths(originals: Original[]): Map<string, string> {
+  const used = new Set<string>();
+  const out = new Map<string, string>();
+  for (const o of originals) {
+    let path = `files/${o.courseName ? `${safe(o.courseName)}/` : ""}${safe(o.fileName)}`;
+    for (let n = 2; used.has(path); n++) path = path.replace(/(\.[^./]+)?$/, ` (${n})$1`);
+    used.add(path);
+    out.set(o.assetId, path);
+  }
+  return out;
+}
+
 /** Builds the backup zip. `onProgress` gets a short line per step. */
 export async function buildBackup(onProgress?: (line: string) => void): Promise<{ zip: Uint8Array; files: number; missing: string[] }> {
   onProgress?.("Collecting your data…");
@@ -104,21 +113,23 @@ export async function buildBackup(onProgress?: (line: string) => void): Promise<
   const originals = originalsIn(data);
   const entries: Record<string, Uint8Array> = {};
   const missing: string[] = [];
-  const used = new Set<string>();
+  const paths = zipPaths(originals);
+  const manifest: Record<string, string> = {};
   for (const [i, o] of originals.entries()) {
     onProgress?.(`Adding your files (${i + 1} of ${originals.length})…`);
     try {
       const res = await fetch(`/_blob/${o.assetId}`);
       if (!res.ok) throw new Error(String(res.status));
-      let path = `files/${o.courseName ? `${safe(o.courseName)}/` : ""}${safe(o.fileName)}`;
-      for (let n = 2; used.has(path); n++) path = path.replace(/(\.[^./]+)?$/, ` (${n})$1`);
-      used.add(path);
+      const path = paths.get(o.assetId)!;
       entries[path] = new Uint8Array(await res.arrayBuffer());
+      manifest[path] = o.assetId;
     } catch {
       missing.push(o.fileName);
     }
   }
-  entries["studydesk-data.json"] = strToU8(JSON.stringify({ exportedAt: new Date().toISOString(), ...data }, null, 2));
+  // Which file was which, so an import can link the files back to their records.
+  entries["files.json"] = strToU8(JSON.stringify(manifest, null, 2));
+  entries["studydesk-data.json"] = strToU8(JSON.stringify({ exportedAt: new Date().toISOString(), appVersion: APP_VERSION, dataVersion: data.mode === "cloud" ? dataVersionOf(data as Snapshot) : 1, ...data }, null, 2));
   entries["README.txt"] = strToU8(
     `StudyDesk backup, ${new Date().toLocaleString("en")}\n\nfiles/  the original files you imported, by course\nstudydesk-data.json  everything StudyDesk kept for you: profile, semester and setup, archived semesters, quests with your answers, Ask chats, the StudyDesk chat and its memory, mastery and stats\n${missing.length ? `\nThese files couldn't be included: ${missing.join(", ")}\n` : ""}`,
   );
@@ -176,11 +187,11 @@ export async function freshStart(keepChats: boolean, onProgress?: (line: string)
   }
   const remove: CollectionKey[] = keepChats ? FRESH_START_REMOVES : [...FRESH_START_REMOVES, "askChats"];
   for (const key of remove) {
-    const [doc, col] = COLLECTIONS[key];
+    const [doc, col] = COLLECTION_KINDS[key];
     const snap = await c.db.doc(`${base}/${doc}`).collection(col).get();
     onProgress?.(`Removing ${key.replace(/[A-Z]/g, (m) => ` ${m.toLowerCase()}`)}…`);
     for (const d of snap.docs) await c.db.doc(`${base}/${doc}`).collection(col).doc(d.id).delete();
   }
-  await c.db.doc(`${base}/${DOCS.semester}`).delete().catch(() => undefined);
-  await c.db.doc(`${base}/${DOCS.setup}`).delete().catch(() => undefined);
+  await c.db.doc(`${base}/${DOC_KINDS.semester}`).delete().catch(() => undefined);
+  await c.db.doc(`${base}/${DOC_KINDS.setup}`).delete().catch(() => undefined);
 }

@@ -107,6 +107,7 @@ What you do:
 - Dropping a course always needs the student's yes: call change with drop_course, and the student gets a yes/no card.
 - After a change that affects today (todaysQuest exists and started is false), you may rebuild today's quest with rebuild_quest; the change card also offers it.
 - The nightly run (nightlyRun in the snapshot) grades at its time, runs the organization agent's check and deep sweeps, and writes tomorrow's quest. Change it with set_nightly (time, pause, turn parts off) and set_sweep (when a course is read again completely); start it at once with run_nightly_now only when the student asks.
+- StudyDesk's own updates: update_studydesk. "check" answers questions about the version and what's new; when the student wants the new version, "update" shows the button card (never claim it's updating before they press it); "go_back" only when they ask to undo an update.
 - Learning questions ("how does the chain rule work?", explaining a problem) belong to the tutor: call open_ask with the question and say in one line that you opened it there. Don't teach here.
 - When the student is on a screen, "this" means what's on it (studentIsOn) or the quoted selection.
 
@@ -307,6 +308,13 @@ export const NIGHTLY_TOOL = {
   description:
     "Starts the nightly run right now instead of waiting for its time: grades what's handed in, checks the courses, writes tomorrow's quest. Results arrive within about 15 minutes. Only when the student asks for it.",
   inputSchema: { type: "object", properties: {} },
+} as const;
+
+export const UPDATE_TOOL = {
+  name: "update_studydesk",
+  description:
+    'StudyDesk\'s own version and updates. action "check": the installed version, the newest release and its notes. action "update": shows the student a card with the release notes and the "Update to vX" button (nothing starts until they press it; their data stays). action "go_back": shows a card to return to the version before the last update, which loses everything done since that update; only when the student asks to undo an update.',
+  inputSchema: { type: "object", properties: { action: { type: "string", enum: ["check", "update", "go_back"] } }, required: ["action"] },
 } as const;
 
 export const REBUILD_TOOL = {

@@ -3,6 +3,7 @@
 // lectures and fixed commitments, and by quests to size today's quest from
 // what is actually in the calendar today.
 
+import { host } from "./host";
 import type { Day } from "../mastery/types";
 
 export const CALENDAR_SERVER = "Google Calendar";
@@ -49,7 +50,7 @@ export function toEvents(raw: RawEvent[]): CalendarEvent[] {
 }
 
 async function mcp() {
-  const c = (window as Window & { claude?: Claude }).claude;
+  const c = host();
   return c?.use ? await c.use("mcp").catch(() => null) : null;
 }
 
