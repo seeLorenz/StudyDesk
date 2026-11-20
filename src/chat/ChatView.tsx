@@ -5,6 +5,7 @@ import { MessageRow } from "./MessageRow";
 import { InputBox } from "./InputBox";
 import { SelectionReply } from "./SelectionReply";
 import { askClaude, errorCopy, type AskError } from "../platform/claude";
+import { tutorTools } from "../orchestrator/passOn";
 import { mainTurns, noteTurns, titleFrom } from "./prompts";
 import type { PendingAttachment } from "../lib/files";
 import type { Anchor } from "../lib/highlight";
@@ -16,6 +17,8 @@ type Props = {
   /** Standing instructions for Claude in this chat; defaults to the general study assistant. */
   rules?: string;
   placeholder?: string;
+  /** A question to send as soon as the chat opens (handed over from the StudyDesk chat). */
+  autoSend?: string;
 };
 
 const STARTERS = [
@@ -24,7 +27,7 @@ const STARTERS = [
   "What caused the French Revolution? Keep it to the main causes",
 ];
 
-export function ChatView({ initial, save, onSaveError, rules, placeholder }: Props) {
+export function ChatView({ initial, save, onSaveError, rules, placeholder, autoSend }: Props) {
   const [chat, setChat] = useState<Chat>(initial);
   const chatRef = useRef(chat);
   chatRef.current = chat;
@@ -62,6 +65,16 @@ export function ChatView({ initial, save, onSaveError, rules, placeholder }: Pro
     if (el && stickToBottom.current && generatingId) el.scrollTop = el.scrollHeight;
   }, [chat.messages, generatingId]);
 
+  const autoSent = useRef(false);
+  useEffect(() => {
+    if (autoSend && !autoSent.current && !chatRef.current.messages.length) {
+      autoSent.current = true;
+      void sendMain(autoSend, []);
+    }
+    // Runs once, when the chat opens with a handed-over question.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function sendMain(text: string, attachments: PendingAttachment[]) {
     const now = Date.now();
     const userMsg: Message = {
@@ -86,7 +99,8 @@ export function ChatView({ initial, save, onSaveError, rules, placeholder }: Pro
     const images = blobs(attachments);
     try {
       const turns = mainTurns(chatRef.current.messages.filter((m) => m.id !== reply.id), rules);
-      const answer = await askClaude(turns, { signal: ctl.signal, images, onText: (t) => patchMessage(reply.id, { text: t }) });
+      const tools = await tutorTools(rules ? "the mistake review" : `the Ask chat "${chatRef.current.title}"`);
+      const answer = await askClaude(turns, { signal: ctl.signal, images, tools, onText: (t) => patchMessage(reply.id, { text: t }) });
       patchMessage(reply.id, { text: answer });
     } catch (e) {
       const err = e as AskError;
@@ -108,7 +122,8 @@ export function ChatView({ initial, save, onSaveError, rules, placeholder }: Pro
     setBusyNoteId(noteId);
     try {
       const turns = noteTurns(chatRef.current, note);
-      const answer = await askClaude(turns, { signal: ctl.signal, images, onText: (t) => setLastNoteTurn(noteId, { text: t }) });
+      const tools = await tutorTools("a side note in an Ask chat");
+      const answer = await askClaude(turns, { signal: ctl.signal, images, tools, onText: (t) => setLastNoteTurn(noteId, { text: t }) });
       setLastNoteTurn(noteId, { text: answer });
     } catch (e) {
       const err = e as AskError;

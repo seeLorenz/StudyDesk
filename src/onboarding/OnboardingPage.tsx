@@ -27,6 +27,7 @@ import { gradeSteps } from "./scales";
 import { setupTodo, staleCourses, type TodoItem } from "./todo";
 import { buildSemester, CLOUD_CHARS, localSetup, parseSetup, runCourseSetup, setupTurns, type FileForSetup, type SetupInput, liveProgress, type LiveProgress } from "./setup";
 import { buildBackup, freshStart, saveBackup } from "../platform/backup";
+import { latestOf, publish, subscribe } from "../platform/deskBus";
 import { byteLength, checkHandoff, jobProgress, MAX_JOB_BYTES, readJobDoc, removeJob, sessionUrl, startJob, type HandoffSetup, type HandoffState } from "../platform/handoff";
 import type { CloudJob, CourseSetup, DraftCourse, Profile, SemesterDraft, SetupMessage, SetupStep, Upload } from "./types";
 
@@ -107,6 +108,9 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
       const [p, d, current, mastery] = await Promise.all([os.loadProfile(), os.loadDraft(), qs.loadSemester(), ms.load()]);
       // A finished draft belongs to the current semester; starting again makes a new one.
       let usable = d && (d.status === "setting_up" || (current && current.id === d.id)) ? d : null;
+      // Another screen (the StudyDesk chat) may hold a newer version that's still being saved.
+      const held = latestOf("draft");
+      if (usable && held && held.id === usable.id && held.updatedAt >= usable.updatedAt) usable = held;
       // Drafts from the first (form) version continue as a chat.
       if (usable && !["chat", "running", "done"].includes(usable.setupStep)) usable = { ...usable, setupStep: "chat" };
       if (p) setProfile(p);
@@ -114,6 +118,8 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
       const returning = current?.source === "onboarding" && current.id !== draft.id;
       if (!draft.chat?.length) draft.chat = [{ id: uid(), role: "assistant", text: greeting(returning || !!p, null), createdAt: Date.now() }];
       setDraft(draft);
+      publish("draft", draft, "setup");
+      if (p) publish("profile", p, "setup");
       setEnv({ os, qs, ms, mastery, live, current });
     })().catch((e) => setLoadError(message(e)));
   }, [today]);
@@ -123,6 +129,23 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   draftRef.current = draft;
   const profileRef = useRef(profile);
   profileRef.current = profile;
+  // Changes made elsewhere (the Orchestrator panel) replace what's held here.
+  useEffect(() => {
+    const a = subscribe("draft", "setup", (d) => {
+      if (draftRef.current && d.id === draftRef.current.id) {
+        draftRef.current = d;
+        setDraft(d);
+      }
+    });
+    const b = subscribe("profile", "setup", (p) => {
+      profileRef.current = p;
+      setProfile(p);
+    });
+    return () => {
+      a();
+      b();
+    };
+  }, []);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirtyProfile = useRef(false);
   const flush = useCallback(() => {
@@ -158,6 +181,7 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
       const next = fn(cur);
       draftRef.current = next;
       setDraft(next);
+      publish("draft", next, "setup");
       schedule();
     },
     [schedule],
@@ -167,6 +191,7 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
       const next = fn(profileRef.current);
       profileRef.current = next;
       setProfile(next);
+      publish("profile", next, "setup");
       dirtyProfile.current = true;
       schedule();
     },
@@ -225,6 +250,7 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
       next.chat = [{ id: uid(), role: "assistant", text: greeting(true, null), createdAt: Date.now() }];
       draftRef.current = next;
       setDraft(next);
+      publish("draft", next, "setup");
       setEnv({ ...env, current });
       setFresh(null);
       setWipeArmed(false);
@@ -862,9 +888,10 @@ function Running({ env, draft, profile, update, updateProfile, go, today, flush,
       const current = (await env.qs.loadSemester().catch(() => null)) ?? env.current;
       const built = buildSemester(d, profile);
       // Re-reading courses after answers keeps the same semester and its placement check.
-      const semester = current && current.id === built.id && current.placementQuestId ? { ...built, placementQuestId: current.placementQuestId } : built;
+      const semester = current && current.id === built.id && current.placementQuestId ? { ...built, placementQuestId: current.placementQuestId, studyGoalSource: current.studyGoalSource, studyGoalDecidedAt: current.studyGoalDecidedAt } : built;
       if (current && current.source === "onboarding" && current.id !== semester.id) await env.os.archiveSemester(current);
       await env.qs.saveSemester(semester);
+      publish("semester", semester, "setup");
       const known = new Set(env.mastery.skills.map((s) => s.id));
       await env.ms.putSkills(semester.skills.filter((s) => !known.has(s.id)));
       for (const t of semester.targets) await env.ms.putTarget(t);
@@ -1023,6 +1050,7 @@ function Done({ env, draft, md, onDone, setEnv, today, update }: StepProps) {
       if (!quest.parts.length) {
         const s = { ...semester, placementQuestId: "none" };
         await env.qs.saveSemester(s);
+      publish("semester", s, "setup");
         return onDone();
       }
       // Every part is listed from the start, so the count never grows while it writes.
@@ -1044,6 +1072,7 @@ function Done({ env, draft, md, onDone, setEnv, today, update }: StepProps) {
       await env.qs.saveRecord({ quest: written, progress: emptyProgress(written.id) });
       const s = { ...semester, placementQuestId: written.id };
       await env.qs.saveSemester(s);
+      publish("semester", s, "setup");
       setEnv({ ...env, current: s });
       onDone();
     } catch (e) {

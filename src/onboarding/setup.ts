@@ -432,6 +432,8 @@ export function buildSemester(draft: SemesterDraft, profile: Profile, now = Date
     gradeRules: res.flatMap((r) => (r.gradeRules ? [r.gradeRules] : [])),
     uploads: draft.uploads,
     catalog: res.flatMap((r) => r.catalog),
+    daysOff: (draft.daysOff ?? []).map((d) => d.date),
+    questSettings: draft.questSettings,
   };
 }
 

@@ -29,7 +29,18 @@ export interface OnboardingStore {
 
 const plain = <T>(x: T) => JSON.parse(JSON.stringify(x)) as Record<string, unknown>;
 
-export async function openOnboardingStore(): Promise<OnboardingStore> {
+// One store per page, so every screen shares the same write queue.
+let shared: Promise<OnboardingStore> | null = null;
+
+export function openOnboardingStore(): Promise<OnboardingStore> {
+  if (!shared) shared = openStoreOnce().catch((e) => {
+    shared = null;
+    throw e;
+  });
+  return shared;
+}
+
+async function openStoreOnce(): Promise<OnboardingStore> {
   const c = (window as Window & { claude?: Claude }).claude;
   if (c?.use) {
     const [db, user, assets] = await Promise.all([

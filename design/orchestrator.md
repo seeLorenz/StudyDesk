@@ -2,7 +2,7 @@
 
 The Orchestrator is the only agent the student talks to about their desk. The one exception is the tutor: when the student asks about a problem, an explanation or any passage through the improved interface (Ask and select-to-reply), or works through the mistake review after grading, a separate Claude instance answers there. Everything else goes through the Orchestrator. It answers questions about their StudyDesk, takes every change to their semester, and passes the heavy work on to the organization agent, which the student never sees. This file covers what the Orchestrator does after setup. Setting up a semester ([onboarding.md](onboarding.md)) is its first job and stays as designed there.
 
-Status: design agreed in principle (see Decisions), nothing built yet beyond the setup chat.
+Status: design agreed (see Decisions); first version built (see the end of this file).
 
 ## The idea in short
 
@@ -221,3 +221,28 @@ Settled with Lorenz on 2026-11-20.
 7. **Each call gets the snapshot, the memory summary and the last 30 messages.** See "Memory".
 8. **Organization agent runs:** a shallow run daily; deep sweeps scheduled by the organization agent itself after setup and after each sweep; new material from the student starts a job at once. Details belong to its own design.
 9. **Check-in margin:** "too slow" starts at 30% over planned time across the last 3 quests, tunable in code.
+
+## First version (built)
+
+The code lives in `src/orchestrator/`, storage in `src/platform/orchestratorStore.ts`, tests in `tests/orchestrator.test.ts`.
+
+**How it works now**
+
+- **The panel.** "Talk to StudyDesk" in the sidebar, the chat icon in the top bar on phones, or Ctrl/⌘ J opens it over any screen; the expand button turns it into a full window. Selecting text anywhere shows "Ask StudyDesk" next to "Reply", which opens the chat with that passage quoted. The chat accepts typed text, dropped and pasted files, and supports select-to-reply on its messages and cards.
+- **Changes** (`changes.ts`): Claude calls one tool, `change`, with typed operations (target grade, exam dates, homework and due dates, study goal, days off, weekly slots, teaching language, facts, profile, results, new course, drop course). Code checks each one and applies it to the semester draft, then rebuilds the quests' semester from it (keeping the placement check and the workload decision). Every change shows a card with its lines and **Undo**; undo is refused when something changed the same part since, so it never throws away newer work. Results can't be undone (they add to the attempt log). Dropping a course shows a Yes/No card and is applied only on yes.
+- **Days off** really empty that day's quest budget (`planQuest`).
+- **Jobs** (`jobs.ts`): `start_job` assigns dropped files to their course, records the student's words as facts, and marks the course for reading. The reading is the setup run itself (cloud session when hand-off is on, the page otherwise), which keeps running hidden while the student is on any screen. A second job for a course that's still being read waits its turn. When the course is read, the job card shows what changed ("2 new skills, 1 question for you"). Re-reading everything a course has asks first.
+- **Check-ins** (`signals.ts`): every 10 minutes and when a job ends, code checks: open questions from the organization agent, finished jobs, too slow (30% over planned across the last 3 quests), off track or slipping per course, doing great (ahead of plan, a topic fully mastered), an exam within 14 days to double-check, and a note after each grading. Each reason is sent once (same kind and course at most every few days). Claude writes one short message from the facts; a badge shows unseen ones.
+- **Memory** (`agent.ts`): a running summary rewritten after about 6,000 new words or on a new day, seeded once from the setup chat. Each call gets the summary, the last 30 messages and the desk snapshot (every number computed by code). The chat is stored per semester day; the summary carries across semesters.
+- **Look-ups**: skills, homework, dates, facts, files, timetable, recent quests, results, the change log and the memory, read only.
+- **Learning questions** go to Ask: `open_ask` opens a new Ask chat with the question already sent.
+- **One version everywhere** (`src/platform/deskBus.ts`): the setup screen, the quest page and the panel publish every change they make, and the others take it over, so no screen saves an older copy on top.
+
+- **Rebuild today's quest** (`rebuild_quest`, and a button on change cards): while today's quest isn't started, it's marked replaced and the quest page writes a new one from the current desk. A started quest is never rewritten.
+- **Quest settings by talking** (`set_quest_settings`): hints per homework task (0 to 5), lesson reading minutes (2 to 15) and new skills per quest (0 to 4), stored per student and used from the next quest (`applyQuestSettings` in `src/quests/config.ts`).
+- **The tutor passes remarks on** (`src/orchestrator/passOn.ts`): every tutor call (Ask chats, side notes, the mistake review) has a `pass_to_studydesk` tool. The remark arrives in the StudyDesk chat word for word, marked "Passed on by the tutor", with where it was said; it's handled one at a time and shows on the badge.
+
+**Not in this version (next steps)**
+
+- The organization agent's own daily and deep runs are its own module; jobs today are started from the chat.
+- The live reading log stays on the setup screen ("Watch it live" on the job card).

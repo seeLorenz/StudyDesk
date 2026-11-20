@@ -4,6 +4,7 @@ import { uid } from "../chat/types";
 import type { PendingAttachment } from "../lib/files";
 import type { Anchor } from "../lib/highlight";
 import { askClaude, errorCopy, type AskError, type Turn } from "../platform/claude";
+import { tutorTools } from "../orchestrator/passOn";
 import type { NoteEntry, NoteHandlers } from "./AnnotatedMarkdown";
 
 // The state behind select-to-reply on any page: asking about a passage,
@@ -49,7 +50,8 @@ export function useSideNotes({ notes, setNotes, turnsFor, onSettled }: Options) 
       ctl.current = c;
       setBusyNoteId(noteId);
       try {
-        const answer = await askClaude(turnsRef.current(note), { signal: c.signal, images, onText: (t) => setLast(noteId, { text: t }) });
+        const tools = await tutorTools("a side note");
+        const answer = await askClaude(turnsRef.current(note), { signal: c.signal, images, tools, onText: (t) => setLast(noteId, { text: t }) });
         setLast(noteId, { text: answer });
       } catch (e) {
         const err = e as AskError;

@@ -2414,3 +2414,180 @@ sup.sd-ref {
   margin: -4px 0 12px;
   word-break: break-word;
 }
+
+/* ---------- the StudyDesk chat (Orchestrator), a side panel over every screen ---------- */
+.setup-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.setup-host.is-hidden {
+  display: none;
+}
+.orch-badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.orch-top {
+  position: relative;
+  order: 3;
+  margin-left: auto;
+}
+.orch-top .orch-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  margin: 0;
+}
+.orch {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  width: min(440px, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: -8px 0 30px rgb(20 28 45 / 10%);
+  transform: translateX(105%);
+  transition: transform 0.18s ease, width 0.18s ease;
+  visibility: hidden;
+}
+.orch.is-open {
+  transform: none;
+  visibility: visible;
+}
+.orch.is-expanded {
+  width: min(100vw, calc(100vw - 260px));
+}
+.orch-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.orch-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  margin-right: auto;
+}
+.orch-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.orch.is-expanded .orch-body > *,
+.orch.is-expanded .orch-composer > * {
+  width: 100%;
+  max-width: 760px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.orch-body .row-user,
+.orch-body .row-assistant {
+  margin: 0;
+}
+.orch-body .row-assistant.is-checkin {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+}
+.orch-empty {
+  color: var(--ink-2);
+  line-height: 1.55;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+.orch-composer {
+  border-top: 1px solid var(--line);
+  padding: 10px 12px max(12px, env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.orch-quote {
+  font-size: 13px;
+  color: var(--ink-2);
+  border-left: 3px solid var(--hl-edge);
+  padding: 2px 0 2px 8px;
+  margin-bottom: 6px;
+  white-space: pre-wrap;
+}
+.orch-quote.is-pending {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+}
+.orch-card {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: var(--sunken);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.orch-card p {
+  margin: 0;
+}
+.orch-card .md ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.orch-card.is-undone .md {
+  text-decoration: line-through;
+  color: var(--ink-3);
+}
+.orch-card-title {
+  font-weight: 600;
+}
+.orch-card-foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.orch-job-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-2);
+}
+.sel-actions {
+  display: flex;
+  gap: 2px;
+}
+@media (max-width: 760px) {
+  .orch,
+  .orch.is-expanded {
+    width: 100vw;
+  }
+}
+.orch-card .md > :last-child {
+  margin-bottom: 0;
+}
+.sel-actions .reply-btn {
+  white-space: nowrap;
+}

@@ -12,6 +12,11 @@ type Props = {
   onAsk: (messageId: string, anchor: Anchor, question: string, attachments: PendingAttachment[]) => void;
 };
 
+/** Opens the StudyDesk (Orchestrator) chat with the selected text quoted. */
+export function askStudyDesk(quote: string) {
+  window.dispatchEvent(new CustomEvent("studydesk:ask", { detail: { quote: quote.trim().slice(0, 600) } }));
+}
+
 const supportsHighlights = typeof CSS !== "undefined" && "highlights" in CSS;
 
 /**
@@ -92,7 +97,7 @@ export function SelectionReply({ scope, disabled, onAsk }: Props) {
 
   const coarse = window.matchMedia?.("(pointer: coarse)").matches;
   const r = pending.rect;
-  const width = asking ? Math.min(420, window.innerWidth - 32) : 92;
+  const width = asking ? Math.min(420, window.innerWidth - 32) : 232;
   const left = Math.max(16, Math.min(window.innerWidth - width - 16, r.left + r.width / 2 - width / 2));
   // On touch screens the system's own copy menu sits above the selection, so go below it.
   // The question box always opens under the selected text, so the passage stays readable.
@@ -116,17 +121,32 @@ export function SelectionReply({ scope, disabled, onAsk }: Props) {
           }}
         />
       ) : (
-        <button
-          type="button"
-          className="reply-btn"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => setAsking(true)}
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M6.5 4L3 7.5 6.5 11M3.5 7.5H9a4 4 0 014 4V12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          Reply
-        </button>
+        <span className="sel-actions">
+          <button
+            type="button"
+            className="reply-btn"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setAsking(true)}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M6.5 4L3 7.5 6.5 11M3.5 7.5H9a4 4 0 014 4V12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Reply
+          </button>
+          <button
+            type="button"
+            className="reply-btn"
+            title="Ask StudyDesk about this (change a date, plan, homework…)"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              askStudyDesk(pending.range.toString());
+              window.getSelection()?.removeAllRanges();
+              close();
+            }}
+          >
+            Ask StudyDesk
+          </button>
+        </span>
       )}
     </div>
   );
