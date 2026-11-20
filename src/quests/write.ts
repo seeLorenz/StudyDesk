@@ -273,7 +273,7 @@ export function claudeWriter(semester: Semester, quest: Quest, knownSkillIds: st
   };
 }
 
-export type WriteStatus = { partId: string; state: "writing" | "done" | "failed"; error?: string };
+export type WriteStatus = { partId: string; state: "waiting" | "writing" | "done" | "failed"; error?: string };
 
 /**
  * Fills every part of a planned quest. Parts are written in parallel; the

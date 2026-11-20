@@ -337,11 +337,11 @@ export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
           <p className="quest-muted">{building.plan.reason}</p>
           <ol>
             {building.plan.parts.map((p, i) => {
-              const st = building.status[p.id]?.state ?? "writing";
+              const st = building.status[p.id]?.state ?? "waiting";
               return (
                 <li key={p.id} className={`b-${st}`}>
                   Part {i + 1} · {kindLabel(p)}: {p.title}
-                  <span>{st === "done" ? "ready" : st === "failed" ? "failed" : "writing…"}</span>
+                  <span>{st === "done" ? "ready" : st === "failed" ? "failed" : st === "waiting" ? "waiting" : "writing…"}</span>
                 </li>
               );
             })}

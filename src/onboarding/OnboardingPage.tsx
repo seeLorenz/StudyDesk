@@ -681,7 +681,8 @@ function Done({ env, draft, md, onDone, setEnv, today, update }: StepProps) {
         await env.qs.saveSemester(s);
         return onDone();
       }
-      setBuilding({});
+      // Every part is listed from the start, so the count never grows while it writes.
+      setBuilding(Object.fromEntries(quest.parts.map((p) => [p.id, { partId: p.id, state: "waiting" } as WriteStatus])));
       const writer = placementWriter(semester, quest, partCourse, askClaude, env.live ? null : sampleWriter(semester.skills));
       // A retry carries on from the parts already written.
       const prev = partial.current;
@@ -789,7 +790,7 @@ function Done({ env, draft, md, onDone, setEnv, today, update }: StepProps) {
       <p>One short problem on each basic your courses build on and on each topic already taught, so StudyDesk knows how far you actually are. From the results it recommends how much to do each day for your target grades.</p>
       {building && (
         <p className="quest-muted">
-          Writing your placement check… {Object.values(building).filter((s) => s.state === "done").length} of {Math.max(1, Object.keys(building).length)} courses ready
+          Writing your placement check… {Object.values(building).filter((s) => s.state === "done").length} of {Object.keys(building).length} parts ready (two at a time)
         </p>
       )}
       {error && <p className="quest-error">{error}</p>}
