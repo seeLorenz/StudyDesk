@@ -221,15 +221,15 @@ export function App() {
             <Svg>{Icon.today}</Svg>
             <span className="nav-text">Today</span>
           </button>
-          <div className="nav-split">
-            <button type="button" className={"nav-item" + (shown === "chat" ? " is-current" : "")} aria-current={shown === "chat" ? "page" : undefined} title="Ask" onClick={() => go("chat")}>
-              <Svg>{Icon.ask}</Svg>
-              <span className="nav-text">Ask</span>
-            </button>
-            <button type="button" className="icon-btn nav-new" aria-label="New chat" title="New chat" onClick={() => open(newChat())}>
-              <Svg>{Icon.plus}</Svg>
-            </button>
-          </div>
+          <button
+            type="button"
+            className={"nav-item" + (shown === "chat" && !chats.some((c) => c.id === current.id) ? " is-current" : "")}
+            title="Ask: start a new chat"
+            onClick={() => open(newChat())}
+          >
+            <Svg>{Icon.ask}</Svg>
+            <span className="nav-text">Ask</span>
+          </button>
         </nav>
 
         <p className="side-label">Recent chats</p>
@@ -380,7 +380,7 @@ export function App() {
             <Svg>{Icon.today}</Svg>
             Today
           </button>
-          <button type="button" className={shown === "chat" ? "is-current" : ""} onClick={() => go("chat")}>
+          <button type="button" className={shown === "chat" ? "is-current" : ""} onClick={() => open(newChat())}>
             <Svg>{Icon.ask}</Svg>
             Ask
           </button>

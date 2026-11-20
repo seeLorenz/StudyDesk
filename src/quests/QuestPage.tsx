@@ -239,7 +239,7 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
     return null;
   }, [archive, data]);
   const [openArchived, setOpenArchived] = useState<string | null>(null);
-  const [reviewOpen, setReviewOpen] = useState(true);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   const build = useCallback(
     async (budgetOverride?: number) => {

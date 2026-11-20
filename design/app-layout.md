@@ -9,7 +9,7 @@ The sidebar has three places, each named after what you do there:
 | Place | What it's for | What's on it |
 | --- | --- | --- |
 | **Today** | Doing the work. The home screen. | Mistake review (after grading), today's quest, and the **Coming up** row under the quest's header. |
-| **Ask** | Understanding something. | The tutor chats. Recent chats are listed under it in the sidebar, with + for a new chat. |
+| **Ask** | Understanding something. | Clicking Ask starts a new tutor chat; recent chats are listed under it to pick one up again. |
 | **Organize** | Running your desk. | The Orchestrator chat on the left, everything StudyDesk knows about the semester on the right. |
 
 Organize sits apart at the bottom of the sidebar as a dark button, because it works from every screen. Ctrl/⌘ J opens it as a quick panel over whatever you're looking at; on the Organize page itself it puts the cursor in the chat.
@@ -46,7 +46,7 @@ The footer shows whether the nightly run is set up and at what time. The ⋯ men
 
 ## Focus mode
 
-A button next to the StudyDesk name shrinks the sidebar to an icon strip (Today, Ask, new chat, Organize with its badge, ⋯). The badge stays visible, so nothing is missed. The choice is remembered in this browser. Phones don't have it (the sidebar is already a drawer there).
+A button next to the StudyDesk name shrinks the sidebar to an icon strip (Today, Ask, Organize with its badge, ⋯). The badge stays visible, so nothing is missed. The choice is remembered in this browser. Phones don't have it (the sidebar is already a drawer there).
 
 ## Phones
 
