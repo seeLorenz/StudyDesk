@@ -360,7 +360,14 @@ export function OrchestratorPanel(props: Props) {
     saveMessages((ms) => ms.map((m) => (m.id === messageId ? { ...m, cards: [...(m.cards ?? []), card] } : m)));
 
   // ---------- keeping dropped files ----------
-  const keepFiles = (files: PendingAttachment[]) => keepDrop(files, env!.os, setBusy);
+  const keepFiles = (files: PendingAttachment[]) =>
+    keepDrop(files, env!.os, setBusy, {
+      // Each zip is saved as soon as it's kept, so closing the window loses at most the one in progress.
+      onZipKept: async (uploads, zip) => {
+        if (!draftRef.current || !profileRef.current) return;
+        await commitDesk({ draft: { ...draftRef.current, uploads: [...draftRef.current.uploads, ...uploads], zips: [...(draftRef.current.zips ?? []), zip] }, profile: profileRef.current });
+      },
+    });
 
   // ---------- memory ----------
   const summarize = useCallback(async () => {
@@ -853,6 +860,9 @@ export function OrchestratorPanel(props: Props) {
             </div>
           )}
           {busy && <p className="quest-muted">{busy}</p>}
+          {busy && /^(Keeping|Opening)/.test(busy) && (
+            <p className="quest-muted keep-note">This takes a few minutes with a lot of files. Keep this window open until it's done; each finished zip is saved, so closing early only loses the one in progress.</p>
+          )}
           <InputBox id="orch-chat" keepAll placeholder="Ask, or tell me what changed. Drop or paste files or course zips." busy={!!busy} autoFocus={open} compact onSend={(t, f) => void send(t, f)} onStop={() => ctl.current?.abort()} />
         </div>
       )}
