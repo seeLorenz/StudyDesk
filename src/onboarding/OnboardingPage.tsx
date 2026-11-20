@@ -173,6 +173,21 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   );
   const go = (setupStep: SetupStep) => update((d) => ({ ...d, setupStep }));
 
+  // ---- starting the next semester while one is active ----
+  const [confirmFresh, setConfirmFresh] = useState(false);
+  const startFresh = useCallback(async () => {
+    if (!env) return;
+    await flush();
+    const current = (await env.qs.loadSemester().catch(() => null)) ?? env.current;
+    const fresh = newDraft();
+    fresh.chat = [{ id: uid(), role: "assistant", text: greeting(true, null), createdAt: Date.now() }];
+    draftRef.current = fresh;
+    setDraft(fresh);
+    setEnv({ ...env, current });
+    setConfirmFresh(false);
+    schedule();
+  }, [env, flush, schedule]);
+
   // ---- hand-off: can long work go to cloud sessions? ----
   const [handoff, setHandoff] = useState<HandoffState | null>(null);
   const recheckHandoff = useCallback(
@@ -231,6 +246,32 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
       <header className="quest-head">
         <p className="quest-kicker">Start New Semester{draft.name ? ` · ${draft.name}` : ""}</p>
       </header>
+      {draft.status === "active" && (
+        <div className="setup-current">
+          {!confirmFresh ? (
+            <>
+              <span>
+                This is your current semester{draft.name ? `, ${draft.name}` : ""}. Finish its to-do list here, or start the next one.
+              </span>
+              <button type="button" className="mini-btn primary" onClick={() => setConfirmFresh(true)}>
+                Start a new semester
+              </button>
+            </>
+          ) : (
+            <>
+              <span>
+                Start a new semester? {draft.name || "The current one"} stays saved and moves to your archive once the new one is set up. Your profile carries over.
+              </span>
+              <button type="button" className="mini-btn primary" onClick={() => void startFresh()}>
+                Yes, start a new one
+              </button>
+              <button type="button" className="mini-btn" onClick={() => setConfirmFresh(false)}>
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
+      )}
       <div className="setup-grid">
         <section className="setup-main">
           {draft.setupStep !== "running" && <HandoffCard {...props} />}
