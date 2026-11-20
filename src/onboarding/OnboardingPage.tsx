@@ -174,11 +174,20 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   const go = (setupStep: SetupStep) => update((d) => ({ ...d, setupStep }));
 
   // ---- starting the next semester while one is active ----
-  const [confirmFresh, setConfirmFresh] = useState(false);
+  // Opening Start New Semester while a semester is active asks first.
+  const [confirmFresh, setConfirmFresh] = useState(true);
+  const [freshBusy, setFreshBusy] = useState(false);
   const startFresh = useCallback(async () => {
     if (!env) return;
+    setFreshBusy(true);
     await flush();
     const current = (await env.qs.loadSemester().catch(() => null)) ?? env.current;
+    if (current) {
+      const mastery = await env.ms.load().catch(() => env.mastery);
+      const data = JSON.stringify({ semester: current, setup: draftRef.current, mastery, exportedAt: new Date().toISOString() }, null, 2);
+      await offerDownload(`studydesk-${(current.name || "semester").replace(/[^\w-]+/g, "-")}.json`, data).catch(() => undefined);
+    }
+    setFreshBusy(false);
     const fresh = newDraft();
     fresh.chat = [{ id: uid(), role: "assistant", text: greeting(true, null), createdAt: Date.now() }];
     draftRef.current = fresh;
@@ -251,7 +260,7 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
           {!confirmFresh ? (
             <>
               <span>
-                This is your current semester{draft.name ? `, ${draft.name}` : ""}. Finish its to-do list here, or start the next one.
+                This is your current semester{draft.name ? `, ${draft.name}` : ""}.
               </span>
               <button type="button" className="mini-btn primary" onClick={() => setConfirmFresh(true)}>
                 Start a new semester
@@ -260,12 +269,18 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
           ) : (
             <>
               <span>
-                Start a new semester? {draft.name || "The current one"} stays saved and moves to your archive once the new one is set up. Your profile carries over.
+                <strong>Are you sure?</strong>{" "}
+                {draft.endDate && draft.endDate > today
+                  ? `${draft.name || "Your current semester"} runs until ${new Date(`${draft.endDate}T12:00`).toLocaleDateString("en", { day: "numeric", month: "short", year: "numeric" })}. `
+                  : ""}
+                This exports {draft.name || "your current semester"} as a backup file and starts setting up a new one. Your mastery and stats stay saved, such as what
+                you've mastered and how long work takes you. Until the new semester is ready, your current quests keep working, and the old semester then moves to
+                your archive.
               </span>
-              <button type="button" className="mini-btn primary" onClick={() => void startFresh()}>
-                Yes, start a new one
+              <button type="button" className="mini-btn primary" disabled={freshBusy} onClick={() => void startFresh()}>
+                {freshBusy ? "Exporting…" : "Export and start new"}
               </button>
-              <button type="button" className="mini-btn" onClick={() => setConfirmFresh(false)}>
+              <button type="button" className="mini-btn" disabled={freshBusy} onClick={() => setConfirmFresh(false)}>
                 Cancel
               </button>
             </>
