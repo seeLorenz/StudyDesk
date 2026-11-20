@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Logo } from "./shell/Logo";
 import { ChatView } from "./chat/ChatView";
 import type { Chat } from "./chat/types";
 import { uid } from "./chat/types";
@@ -209,7 +210,7 @@ export function App() {
     <div className={"app" + (menuOpen ? " menu-open" : "") + (focus ? " is-focus" : "")}>
       <aside className="side" aria-label="StudyDesk">
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true" />
+          <Logo />
           <span className="nav-text">StudyDesk</span>
           <button type="button" className="icon-btn focus-btn" onClick={toggleFocus} aria-pressed={focus} aria-label={focus ? "Show the full sidebar" : "Focus mode: shrink the sidebar"} title={focus ? "Show the full sidebar" : "Focus mode"}>
             <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
