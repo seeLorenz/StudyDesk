@@ -5,7 +5,9 @@ import { uid } from "../chat/types";
 import { InputBox } from "../chat/InputBox";
 import { SelectionReply } from "../chat/SelectionReply";
 import { passageNoteTurns } from "../chat/prompts";
-import { readFullText, type PendingAttachment } from "../lib/files";
+import type { PendingAttachment } from "../lib/files";
+import { describedVideos, describeVideo, keepDrop } from "../lib/keep";
+import { IntakeCard } from "../chat/IntakeCard";
 import { toDay } from "../mastery/days";
 import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
 import { useSideNotes } from "../notes/useSideNotes";
@@ -357,36 +359,7 @@ export function OrchestratorPanel(props: Props) {
     saveMessages((ms) => ms.map((m) => (m.id === messageId ? { ...m, cards: [...(m.cards ?? []), card] } : m)));
 
   // ---------- keeping dropped files ----------
-  const keepFiles = async (files: PendingAttachment[]) => {
-    const uploads: Upload[] = [];
-    const previews: string[] = [];
-    const images: Blob[] = [];
-    const failed: string[] = [];
-    for (const [k, f] of files.entries()) {
-      setBusy(`Keeping ${f.name} (${k + 1} of ${files.length})…`);
-      try {
-        const id = `up_${uid()}`;
-        let pages: number | null = null;
-        if (f.kind === "image" && f.blob) {
-          const image = await compressImage(f.blob);
-          if (!image) throw new Error("couldn't be read");
-          await env!.os.saveUploadContent(id, { image });
-          images.push(f.blob);
-          previews.push(`File ${id} "${f.name}": image ${images.length} of the attached images.`);
-        } else {
-          const full = f.file ? await readFullText(f.file, MAX_FILE_CHARS) : { text: f.text ?? "", pages: null, cut: false };
-          pages = full.pages;
-          await env!.os.saveUploadContent(id, { text: full.text });
-          previews.push(`File ${id} "${f.name}"${pages ? `, ${pages} pages` : ""}. Beginning:\n"""\n${full.text.slice(0, PREVIEW_CHARS)}\n"""`);
-        }
-        const assetId = f.file ? await env!.os.storeOriginal(f.file) : null;
-        uploads.push({ id, courseId: null, fileName: f.name, type: f.kind, studentNote: "", addedAt: Date.now(), cataloguedAt: null, assetId, pages });
-      } catch (e) {
-        failed.push(`${f.name}: ${message(e)}`);
-      }
-    }
-    return { uploads, previews, images, failed };
-  };
+  const keepFiles = (files: PendingAttachment[]) => keepDrop(files, env!.os, setBusy);
 
   // ---------- memory ----------
   const summarize = useCallback(async () => {
@@ -414,8 +387,9 @@ export function OrchestratorPanel(props: Props) {
     const userMsg: OrchMessage = { id: uid(), role: "user", text, createdAt: Date.now(), files: files.map((f) => f.name), screen, quote: quote ?? undefined, fromTutor: opts.fromTutor };
     saveMessages((ms) => [...ms, userMsg]);
     onClearQuote();
-    const kept = files.length ? await keepFiles(files) : { uploads: [], previews: [], images: [], failed: [] };
-    if (kept.uploads.length) await commitDesk({ draft: { ...draftRef.current!, uploads: [...draftRef.current!.uploads, ...kept.uploads] }, profile: profileRef.current! });
+    const kept = files.length ? await keepFiles(files) : { uploads: [], zips: [], previews: [], images: [], failed: [], report: null };
+    if (kept.uploads.length || kept.zips.length) await commitDesk({ draft: { ...draftRef.current!, uploads: [...draftRef.current!.uploads, ...kept.uploads], zips: [...(draftRef.current!.zips ?? []), ...kept.zips] }, profile: profileRef.current! });
+    if (kept.report) saveMessages((ms) => ms.map((m) => (m.id === userMsg.id ? { ...m, intake: kept.report! } : m)));
     const reply: OrchMessage = { id: uid(), role: "assistant", text: "", createdAt: Date.now() + 1 };
     saveMessages((ms) => [...ms, reply], false);
     setBusy("Thinking…");
@@ -427,7 +401,7 @@ export function OrchestratorPanel(props: Props) {
         if (!(await canUseTools())) throw new Error("This view can't let StudyDesk make changes. Open StudyDesk on claude.ai in a browser or the desktop app.");
         const sendImages = (await canSendImages()) ? kept.images : [];
         const extra = [
-          kept.previews.length ? `The student just dropped these files (saved as unsortedFiles). New files start a job: assign each to its course in start_job.\n${kept.previews.join("\n\n")}` : "",
+          kept.previews.length ? `The student just dropped these files (saved as unsortedFiles). New files start a job: assign each to its course in start_job; a zip as a whole by its zip id, unless its folders clearly hold several courses.\n${kept.previews.join("\n\n")}` : "",
           kept.images.length && !sendImages.length ? "Images can't be sent in this view; ask the student what the images show." : "",
           kept.failed.length ? `These files couldn't be kept: ${kept.failed.join("; ")}` : "",
         ]
@@ -840,6 +814,17 @@ export function OrchestratorPanel(props: Props) {
                   {(m.quote || m.fromTutor) && <div className="orch-quote">{m.fromTutor ? "Passed on by the tutor" : `About: “${m.quote}”`}</div>}
                   {m.text && <div className="bubble-text">{m.text}</div>}
                   {m.files && m.files.length > 0 && <div className="setup-files">{m.files.map((f) => `📎 ${f}`).join("  ")}</div>}
+                  {m.intake && (
+                    <IntakeCard
+                      report={m.intake}
+                      described={describedVideos(draft?.uploads ?? [])}
+                      onChoose={(choice) => saveMessages((ms) => ms.map((x) => (x.id === m.id ? { ...x, intake: { ...m.intake!, videoChoice: choice } } : x)))}
+                      onDescribe={async (uploadId, note) => {
+                        if (!draftRef.current || !profileRef.current) return;
+                        await commitDesk({ draft: describeVideo(draftRef.current, uploadId, note), profile: profileRef.current });
+                      }}
+                    />
+                  )}
                 </div>
               </div>
             ) : (
@@ -867,7 +852,7 @@ export function OrchestratorPanel(props: Props) {
             </div>
           )}
           {busy && <p className="quest-muted">{busy}</p>}
-          <InputBox id="orch-chat" placeholder="Ask, or tell me what changed. Drop or paste files." busy={!!busy} autoFocus={open} compact onSend={(t, f) => void send(t, f)} onStop={() => ctl.current?.abort()} />
+          <InputBox id="orch-chat" keepAll placeholder="Ask, or tell me what changed. Drop or paste files or course zips." busy={!!busy} autoFocus={open} compact onSend={(t, f) => void send(t, f)} onStop={() => ctl.current?.abort()} />
         </div>
       )}
       <SelectionReply scope={scroller} disabled={false} onAsk={notes.ask} />

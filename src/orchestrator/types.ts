@@ -27,6 +27,8 @@ export type OrchMessage = {
   text: string;
   createdAt: number;
   files?: string[];
+  /** What the dropped files turned into (zips opened, videos found). */
+  intake?: import("../onboarding/types").IntakeReport;
   error?: string;
   /** Where the student was, and what they had selected, when they wrote. */
   screen?: string;

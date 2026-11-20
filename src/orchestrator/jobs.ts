@@ -8,6 +8,7 @@
 // back from those courses. Pure, so it is tested.
 
 import { uid } from "../chat/types";
+import { filesOf } from "../lib/keep";
 import type { SemesterDraft } from "../onboarding/types";
 import { findCourse, type Desk } from "./changes";
 import type { Job, JobRequest } from "./types";
@@ -47,11 +48,16 @@ export function startJob(
   const files = input.files ?? [];
   const uploadIds: string[] = [];
   for (const f of files) {
-    const u = draft.uploads.find((x) => x.id === f.uploadId);
+    const fileIds = new Set(filesOf(f.uploadId, draft.uploads));
     const c = findCourse(draft, f.course);
-    if (!u || !c) return { ok: false, reason: `File ${f.uploadId} can't be assigned: ${!u ? "no such file" : "no such course"}.` };
-    draft = { ...draft, uploads: draft.uploads.map((x) => (x.id === u.id ? { ...x, courseId: c.id, studentNote: f.note?.trim() || x.studentNote } : x)) };
-    uploadIds.push(u.id);
+    if (!fileIds.size || !c) return { ok: false, reason: `File ${f.uploadId} can't be assigned: ${!fileIds.size ? "no such file" : "no such course"}.` };
+    const isZip = f.uploadId.startsWith("zip_");
+    draft = {
+      ...draft,
+      uploads: draft.uploads.map((x) => (fileIds.has(x.id) ? { ...x, courseId: c.id, studentNote: (!isZip && f.note?.trim()) || x.studentNote } : x)),
+      ...(isZip ? { zips: (draft.zips ?? []).map((z) => (z.id === f.uploadId ? { ...z, courseId: c.id } : z)) } : {}),
+    };
+    uploadIds.push(...fileIds);
     if (!ids.includes(c.id)) ids.push(c.id);
   }
   const words = input.studentWords.trim();

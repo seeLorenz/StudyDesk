@@ -1,5 +1,7 @@
 import type { Attachment } from "../chat/types";
 import { uid } from "../chat/types";
+import { classify, type FileClass } from "./intake";
+import { officeText } from "./office";
 
 export const MAX_TEXT_CHARS = 60_000;
 
@@ -9,6 +11,8 @@ export type PendingAttachment = Attachment & {
   file?: File;
   status: "reading" | "ready" | "error";
   error?: string;
+  /** A zip, video or other file that is only kept and opened by Start New Semester and Organize (src/lib/keep.ts). */
+  deferred?: FileClass;
 };
 
 const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|xml|html?|css|js|ts|tsx|jsx|py|java|c|cpp|h|cs|go|rs|rb|php|sql|tex|bib|yaml|yml|ini|log)$/i;
@@ -52,6 +56,45 @@ function loadPdfjs() {
   return pdfjsPromise;
 }
 
+export type PdfRead = { text: string; pages: number; bookmarks: Array<{ title: string; page: number | null; depth: number }>; scan: boolean };
+
+/** Reads a PDF: page-marked text up to `limit`, its bookmarks, and whether it is a scan (no text at all). */
+export async function readPdf(file: Blob, limit = MAX_TEXT_CHARS): Promise<PdfRead> {
+  const pdfjs = await loadPdfjs();
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const pages: string[] = [];
+  let total = 0;
+  for (let p = 1; p <= doc.numPages && total < limit; p++) {
+    const content = await (await doc.getPage(p)).getTextContent();
+    const text = content.items.map((it) => ("str" in it ? it.str + (it.hasEOL ? "\n" : " ") : "")).join("");
+    pages.push(`--- page ${p} ---\n${text.trim()}`);
+    total += text.length;
+  }
+  const text = pages.join("\n\n");
+  const bookmarks: PdfRead["bookmarks"] = [];
+  try {
+    type Item = { title: string; dest: unknown; items: Item[] };
+    const walk = async (items: Item[], depth: number) => {
+      for (const it of items) {
+        if (bookmarks.length >= 300) return;
+        let page: number | null = null;
+        try {
+          const dest = typeof it.dest === "string" ? await doc.getDestination(it.dest) : (it.dest as unknown[] | null);
+          if (Array.isArray(dest) && dest[0]) page = (await doc.getPageIndex(dest[0] as never)) + 1;
+        } catch {
+          // A bookmark without a page still helps.
+        }
+        bookmarks.push({ title: it.title, page, depth });
+        if (it.items?.length) await walk(it.items, depth + 1);
+      }
+    };
+    await walk(((await doc.getOutline()) ?? []) as Item[], 0);
+  } catch {
+    // No bookmarks.
+  }
+  return { text, pages: doc.numPages, bookmarks, scan: !text.replace(/--- page \d+ ---/g, "").trim() };
+}
+
 async function pdfText(file: File, limit = MAX_TEXT_CHARS): Promise<string> {
   const pdfjs = await loadPdfjs();
   const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
@@ -70,18 +113,38 @@ async function pdfText(file: File, limit = MAX_TEXT_CHARS): Promise<string> {
   return out;
 }
 
-/** Read a dropped, pasted or picked file into an attachment. */
-export async function readAttachment(file: File): Promise<PendingAttachment> {
+/**
+ * Read a dropped, pasted or picked file into an attachment. With `keepAll`
+ * (the boxes that keep course files), zips, videos and any other file are
+ * accepted as they are and opened when the message is sent.
+ */
+export async function readAttachment(file: File, opts: { keepAll?: boolean } = {}): Promise<PendingAttachment> {
   const kind = kindOf(file);
+  const cls = classify(file.name || "file", file.type);
   const base = { id: uid(), name: file.name || (kind === "image" ? "pasted image" : "file"), status: "ready" as const, file };
+  if (cls === "office") {
+    try {
+      return { ...base, kind: "text", text: clip(officeText(file.name, new Uint8Array(await file.arrayBuffer()))) };
+    } catch {
+      return { ...base, kind: "text", status: "error", error: "This file couldn't be opened. Save it as PDF and try again." };
+    }
+  }
   if (!kind) {
-    return { ...base, kind: "text", status: "error", error: "StudyDesk can read images, PDFs and text files. This file type isn't supported yet." };
+    if (opts.keepAll) return { ...base, kind: "text", deferred: cls };
+    return {
+      ...base,
+      kind: "text",
+      status: "error",
+      error: cls === "zip" ? "Drop course zips in Organize: StudyDesk unpacks and keeps them there." : cls === "video" ? "Claude can't watch or listen to videos. Describe what happens in it instead." : "StudyDesk can't read this kind of file here. Save it as PDF, or drop it in Organize.",
+    };
   }
   try {
     if (kind === "image") return { ...base, kind, blob: file, thumb: await thumbnail(file) };
     if (kind === "pdf") return { ...base, kind, text: clip(await pdfText(file)) };
     return { ...base, kind, text: clip(await file.text()) };
   } catch (e) {
+    // A scan has no text: the boxes that keep course files keep it for the agent.
+    if (opts.keepAll && kind === "pdf") return { ...base, kind, deferred: "pdf" };
     return { ...base, kind, status: "error", error: e instanceof Error ? e.message : "The file couldn't be read." };
   }
 }

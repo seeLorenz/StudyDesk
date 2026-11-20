@@ -6,6 +6,7 @@
 // the setup run when the student confirms (start_setup). Everything Claude
 // changes is visible and editable in the sheet beside the chat.
 
+import { courseFileList, filesOf, unsortedList } from "../lib/keep";
 import { uid } from "../chat/types";
 import type { Turn } from "../platform/claude";
 import type { TimetableEntry } from "../quests/types";
@@ -35,9 +36,9 @@ export function sheetSnapshot(d: SemesterDraft, p: Profile, today: string, cloud
         credits: c.credits,
         targetGrade: c.targetGrade,
         facts: d.facts.filter((f) => f.courseId === c.id).map((f) => f.text),
-        files: d.uploads.filter((u) => u.courseId === c.id).map((u) => `${u.fileName}${u.studentNote ? ` (${u.studentNote})` : ""}`),
+        files: courseFileList(d.uploads, d.zips, c.id),
       })),
-      unsortedFiles: d.uploads.filter((u) => !u.courseId).map((u) => ({ uploadId: u.id, name: u.fileName, type: u.type, pages: u.pages })),
+      unsortedFiles: unsortedList(d.uploads, d.zips),
       generalFacts: d.facts.filter((f) => !f.courseId).map((f) => f.text),
       weeklySlots: slots,
       studyGoalMinutes: Object.fromEntries([1, 2, 3, 4, 5, 6, 0].map((wd) => [DAY[wd], d.studyGoal[wd] ?? 0])),
@@ -108,7 +109,7 @@ const SHEET_SCHEMA = {
     },
     removeSlots: { type: "array", description: "Slot numbers (#n) from weeklySlots.", items: { type: "number" } },
     facts: { type: "array", items: { type: "object", properties: { course: { type: "string", description: "Course id or name; omit for general facts." }, text: { type: "string" } }, required: ["text"] } },
-    files: { type: "array", items: { type: "object", properties: { uploadId: { type: "string" }, course: { type: "string" }, note: { type: "string" } }, required: ["uploadId", "course"] } },
+    files: { type: "array", description: "Assign files to courses: uploadId is a file's id, or a zip's id (zip_…) for all files of that zip.", items: { type: "object", properties: { uploadId: { type: "string" }, course: { type: "string" }, note: { type: "string" } }, required: ["uploadId", "course"] } },
     studyGoalMinutes: { type: "object", description: "Minutes per weekday, lectures included, e.g. {Mon: 180, Sun: 0}. Only days that change.", properties: Object.fromEntries(DAY.map((d) => [d, { type: "number" }])) },
   },
 } as const;
@@ -226,12 +227,15 @@ export function applySheetUpdate(d: SemesterDraft, p: Profile, input: Record<str
   }
   for (const f of (input.files as Array<Record<string, unknown>>) ?? []) {
     const c = findCourse(f.course);
-    const u = draft.uploads.find((x) => x.id === str(f.uploadId));
-    if (!u || !c) {
-      notes.push(`File ${str(f.uploadId)} not assigned: ${!u ? "no such file" : "no such course"}.`);
+    const ref = str(f.uploadId);
+    const ids = new Set(filesOf(ref, draft.uploads));
+    if (!ids.size || !c) {
+      notes.push(`File ${ref} not assigned: ${!ids.size ? "no such file" : "no such course"}.`);
       continue;
     }
-    draft.uploads = draft.uploads.map((x) => (x.id === u.id ? { ...x, courseId: c.id, studentNote: str(f.note) || x.studentNote } : x));
+    const isZip = ref.startsWith("zip_");
+    draft.uploads = draft.uploads.map((x) => (ids.has(x.id) ? { ...x, courseId: c.id, studentNote: (!isZip && str(f.note)) || x.studentNote } : x));
+    if (isZip) draft.zips = (draft.zips ?? []).map((z) => (z.id === ref ? { ...z, courseId: c.id } : z));
     draft.courses = draft.courses.map((x) => (x.id === c.id && x.setupStatus !== "waiting" ? { ...x, setupStatus: "waiting" } : x));
   }
   const goal = input.studyGoalMinutes as Record<string, unknown> | undefined;

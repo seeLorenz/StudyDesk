@@ -4,7 +4,9 @@ import { uid } from "../chat/types";
 import { InputBox } from "../chat/InputBox";
 import { SelectionReply } from "../chat/SelectionReply";
 import { passageNoteTurns } from "../chat/prompts";
-import { readFullText, type PendingAttachment } from "../lib/files";
+import type { PendingAttachment } from "../lib/files";
+import { describedVideos, describeVideo, keepDrop } from "../lib/keep";
+import { IntakeCard } from "../chat/IntakeCard";
 import { toDay } from "../mastery/days";
 import { replay } from "../mastery/replay";
 import type { Skill } from "../mastery/types";
@@ -40,9 +42,7 @@ import type { CloudJob, CourseSetup, DraftCourse, Profile, SemesterDraft, SetupM
 // placement check.
 
 /** Keep at most this much readable text per file (one database document holds 256 KiB). */
-const MAX_FILE_CHARS = 240_000;
 /** How much of a dropped file Claude sees in the chat, to tell what it is. */
-const PREVIEW_CHARS = 3_000;
 const WEEK = [1, 2, 3, 4, 5, 6, 0];
 const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -510,44 +510,16 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
 
   const patchMsg = (id: string, p: Partial<SetupMessage>) => update((d) => ({ ...d, chat: (d.chat ?? []).map((m) => (m.id === id ? { ...m, ...p } : m)) }));
 
-  /** Keeps each dropped file: readable content in the student's data, the original in the file store. */
-  const keepFiles = async (files: PendingAttachment[]): Promise<{ uploads: Upload[]; previews: string[]; images: Blob[]; failed: string[] }> => {
-    const uploads: Upload[] = [];
-    const previews: string[] = [];
-    const images: Blob[] = [];
-    const failed: string[] = [];
-    for (const [k, f] of files.entries()) {
-      setBusy(`Keeping ${f.name} (${k + 1} of ${files.length})…`);
-      try {
-        const id = `up_${uid()}`;
-        let pages: number | null = null;
-        if (f.kind === "image" && f.blob) {
-          const image = await compressImage(f.blob);
-          if (!image) throw new Error("couldn't be read");
-          await env.os.saveUploadContent(id, { image });
-          images.push(f.blob);
-          previews.push(`File ${id} "${f.name}": image ${images.length} of the attached images.`);
-        } else {
-          const full = f.file ? await readFullText(f.file, MAX_FILE_CHARS) : { text: f.text ?? "", pages: null, cut: false };
-          pages = full.pages;
-          await env.os.saveUploadContent(id, { text: full.text });
-          previews.push(`File ${id} "${f.name}"${pages ? `, ${pages} pages` : ""}. Beginning:\n"""\n${full.text.slice(0, PREVIEW_CHARS)}\n"""`);
-        }
-        const assetId = f.file ? await env.os.storeOriginal(f.file) : null;
-        uploads.push({ id, courseId: null, fileName: f.name, type: f.kind, studentNote: "", addedAt: Date.now(), cataloguedAt: null, assetId, pages });
-      } catch (e) {
-        failed.push(`${f.name}: ${message(e)}`);
-      }
-    }
-    return { uploads, previews, images, failed };
-  };
+  /** Keeps each dropped file (zips opened): readable content and outline in the student's data, the original in the file store. */
+  const keepFiles = (files: PendingAttachment[]) => keepDrop(files, env.os, setBusy);
 
   const send = async (text: string, files: PendingAttachment[]) => {
     if (!open) return;
     const userMsg: SetupMessage = { id: uid(), role: "user", text, files: files.map((f) => f.name), createdAt: Date.now() };
     update((d) => ({ ...d, chat: [...(d.chat ?? []), userMsg] }));
-    const kept = files.length ? await keepFiles(files) : { uploads: [], previews: [], images: [], failed: [] };
-    if (kept.uploads.length) update((d) => ({ ...d, uploads: [...d.uploads, ...kept.uploads] }));
+    const kept = files.length ? await keepFiles(files) : { uploads: [], zips: [], previews: [], images: [], failed: [], report: null };
+    if (kept.uploads.length || kept.zips.length) update((d) => ({ ...d, uploads: [...d.uploads, ...kept.uploads], zips: [...(d.zips ?? []), ...kept.zips] }));
+    if (kept.report) patchMsg(userMsg.id, { intake: kept.report });
     const reply: SetupMessage = { id: uid(), role: "assistant", text: "", createdAt: Date.now() };
     update((d) => ({ ...d, chat: [...(d.chat ?? []), reply] }));
     setBusy("Thinking…");
@@ -563,7 +535,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
         if (!(await canUseTools())) throw new Error("This view can't let Claude fill in the sheet. Open StudyDesk on claude.ai in a browser or the desktop app.");
         const sendImages = (await canSendImages()) ? kept.images : [];
         const extra = [
-          kept.previews.length ? `The student just dropped these files (saved as unsortedFiles; assign each to a course):\n${kept.previews.join("\n\n")}` : "",
+          kept.previews.length ? `The student just dropped these files (saved as unsortedFiles; assign each to a course, and a zip as a whole by its zip id unless its folders clearly hold several courses):\n${kept.previews.join("\n\n")}` : "",
           kept.images.length && !sendImages.length ? "Images can't be sent in this view; ask the student what the images show." : "",
           kept.failed.length ? `These files couldn't be kept: ${kept.failed.join("; ")}` : "",
         ]
@@ -646,6 +618,14 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
               <div className="bubble">
                 {m.text && <div className="bubble-text">{m.text}</div>}
                 {m.files && m.files.length > 0 && <div className="setup-files">{m.files.map((f) => `📎 ${f}`).join("  ")}</div>}
+                {m.intake && (
+                  <IntakeCard
+                    report={m.intake}
+                    described={describedVideos(draft.uploads)}
+                    onChoose={(choice) => patchMsg(m.id, { intake: { ...m.intake!, videoChoice: choice } })}
+                    onDescribe={async (uploadId, note) => update((d) => describeVideo(d, uploadId, note))}
+                  />
+                )}
               </div>
             </div>
           ) : (
@@ -662,6 +642,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
           {busy && <p className="quest-muted">{busy}</p>}
           <InputBox
             id="setup-chat"
+            keepAll
             placeholder="Type, paste or drop anything: your timetable, a course list, syllabus, homework sheets…"
             busy={!!busy}
             onSend={(t, f) => void send(t, f)}
