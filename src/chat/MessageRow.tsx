@@ -23,7 +23,7 @@ type Props = {
 export const MessageRow = memo(function MessageRow({ message, notes, generating, busyNoteId, onToggleNote, onDeleteNote, onFollowUp, onStopNote }: Props) {
   if (message.role === "user") {
     return (
-      <div className="row row-user">
+      <div className="row row-user" data-msg={message.id}>
         <div className="bubble">
           {message.attachments?.length ? (
             <div className="bubble-files">

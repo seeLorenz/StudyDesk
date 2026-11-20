@@ -1989,6 +1989,10 @@ sup.sd-ref {
 .setup-sheet {
   position: sticky;
   top: 0;
+  /* Scrolls on its own, so the whole sheet can be read without moving the chat. */
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--sunken);
   border-radius: 14px;
   padding: 18px 18px 14px;
@@ -2102,6 +2106,8 @@ sup.sd-ref {
 .setup-chat {
   display: flex;
   flex-direction: column;
+}
+.setup-chat.has-composer {
   min-height: calc(100dvh - 150px);
 }
 .setup-composer {
@@ -2248,6 +2254,8 @@ sup.sd-ref {
 @media (max-width: 900px) {
   .setup-sheet {
     position: static;
+    max-height: none;
+    overflow: visible;
   }
 }
 .setup-sheet .chat-del {
@@ -2260,19 +2268,51 @@ sup.sd-ref {
 .setup-count {
   margin: 14px 0 6px;
 }
+/* One running course: a small box with its latest step; "All n steps" opens the log. */
 .setup-now {
-  margin: 12px 0;
-  padding: 12px 16px;
-  border-left: 3px solid var(--accent);
+  margin: 8px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
   background: var(--paper);
-  border-radius: 0 10px 10px 0;
+  border-radius: 10px;
 }
-.setup-now h3 {
+.setup-now-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 0 0 6px;
-  font-size: 15px;
+  font-size: 14.5px;
+}
+.setup-now-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.setup-now-latest .md {
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.setup-now-latest .md p {
+  margin: 0;
+  display: inline;
+}
+.setup-now.is-open .md {
+  margin-top: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.setup-now-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--ink-3);
 }
 .setup-now .md {
   font-size: 14px;

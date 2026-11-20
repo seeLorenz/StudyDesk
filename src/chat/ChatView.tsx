@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSentToTop } from "./useSentToTop";
 import type { Chat, Message, Note } from "./types";
 import { uid } from "./types";
 import { MessageRow } from "./MessageRow";
@@ -38,7 +39,6 @@ export function ChatView({ initial, save, onSaveError, rules, placeholder, autoS
   const scrollRef = useRef<HTMLDivElement>(null);
   const [dropped, setDropped] = useState<File[] | null>(null);
   const [dragging, setDragging] = useState(false);
-  const stickToBottom = useRef(true);
 
   const persist = useCallback(() => {
     const c = chatRef.current;
@@ -59,11 +59,9 @@ export function ChatView({ initial, save, onSaveError, rules, placeholder, autoS
   const setLastNoteTurn = (id: string, patch: { text?: string; error?: string }) =>
     patchNote(id, (n) => ({ ...n, turns: n.turns.map((t, i) => (i === n.turns.length - 1 ? { ...t, ...patch } : t)) }));
 
-  // Keep the newest text in view while Claude writes, unless the student scrolled up.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el && stickToBottom.current && generatingId) el.scrollTop = el.scrollHeight;
-  }, [chat.messages, generatingId]);
+  // A sent message moves to the top of the view, and the answer comes in below it.
+  const lastSent = [...chat.messages].reverse().find((m) => m.role === "user")?.id;
+  const { tail, tailRef } = useSentToTop(scrollRef, lastSent);
 
   const autoSent = useRef(false);
   useEffect(() => {
@@ -91,8 +89,6 @@ export function ChatView({ initial, save, onSaveError, rules, placeholder, autoS
       updatedAt: now,
       messages: [...c.messages, userMsg, reply],
     }));
-    stickToBottom.current = true;
-    requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }));
     setGeneratingId(reply.id);
     const ctl = new AbortController();
     mainCtl.current = ctl;
@@ -224,10 +220,6 @@ export function ChatView({ initial, save, onSaveError, rules, placeholder, autoS
         className="scroll"
         ref={scrollRef}
         data-select-scope=""
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-        }}
       >
         {chat.messages.length === 0 ? (
           <div className="empty">
@@ -259,6 +251,7 @@ export function ChatView({ initial, save, onSaveError, rules, placeholder, autoS
                 onStopNote={stopNote}
               />
             ))}
+            <div ref={tailRef} style={{ height: tail }} aria-hidden="true" />
           </div>
         )}
       </div>
