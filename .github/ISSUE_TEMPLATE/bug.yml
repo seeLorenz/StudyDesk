@@ -1,0 +1,53 @@
+name: Report a problem
+description: Something broke, looked wrong, or didn't do what you expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time! Everything you write here is **public**, so please leave out personal details: names, grades, school accounts, and links to your own StudyDesk.
+  - type: textarea
+    id: what-you-did
+    attributes:
+      label: What did you do?
+      description: The steps that led to the problem, as you remember them.
+      placeholder: "I opened Today, handed in part 2 of the quest, then…"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened instead?
+      description: Copy any error message you saw. A screenshot helps a lot; paste or drag it in here (cover anything personal first).
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where in StudyDesk?
+      options:
+        - Today (quest, Coming up, mistake review)
+        - Ask (chat, select to reply)
+        - Organize (setup, changes, calendar)
+        - The nightly run (grading, tomorrow's quest)
+        - Getting or updating my StudyDesk
+        - Somewhere else / not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: StudyDesk version
+      description: If you know it. Leave empty if not.
+      placeholder: "v1"
+  - type: input
+    id: device
+    attributes:
+      label: Device and browser
+      placeholder: "Laptop, Chrome / iPhone, Safari"
