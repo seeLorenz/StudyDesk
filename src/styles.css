@@ -1524,6 +1524,63 @@ sup.sd-ref {
   color: var(--accent);
 }
 
+.keyrule {
+  margin: 18px 0 4px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+.keyrule label {
+  display: block;
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+.keyrule input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 8px 10px;
+}
+.keyrule-compare {
+  margin-top: 10px;
+}
+.keyrule-compare summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--accent);
+}
+.keyrule-compare .md {
+  margin-top: 8px;
+}
+.rater {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.rater span {
+  margin-right: 4px;
+}
+.rate-btn {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.rate-btn.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* ---------- narrow screens ---------- */
 @media (max-width: 760px) {
   .app {

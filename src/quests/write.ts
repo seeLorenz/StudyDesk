@@ -47,10 +47,11 @@ export class WritingFailed extends Error {
   }
 }
 
-type Ctx = { course: Course; skills: Map<string, Skill>; known: string[] };
+type Ctx = { course: Course; skills: Map<string, Skill>; known: string[]; feel: string[] };
 
-function context(semester: Semester, quest: Quest, knownSkillIds: string[]): Ctx {
+function context(semester: Semester, quest: Quest, knownSkillIds: string[], feel: string[] = []): Ctx {
   return {
+    feel,
     course: semester.courses.find((c) => c.id === quest.courseId)!,
     skills: new Map(semester.skills.map((s) => [s.id, s])),
     known: knownSkillIds.map((id) => semester.skills.find((s) => s.id === id)?.name).filter(Boolean) as string[],
@@ -65,7 +66,11 @@ const skillLine = (ctx: Ctx, id: string) => {
 
 const header = (ctx: Ctx) =>
   `Course: ${ctx.course.name}. Write in ${ctx.course.teachingLanguage}, the language the course is taught in.
-${ctx.known.length ? `The student can already do: ${ctx.known.join(", ")}.` : "Assume the student knows only school basics unless a skill says otherwise."}`;
+${ctx.known.length ? `The student can already do: ${ctx.known.join(", ")}.` : "Assume the student knows only school basics unless a skill says otherwise."}${
+    ctx.feel.length
+      ? `\nHow recent quest parts felt to the student (adjust: "too hard" means slower, smaller steps and an easier own problem; "too easy" means brisker and a harder own problem):\n${ctx.feel.map((f) => `- ${f}`).join("\n")}`
+      : ""
+  }`;
 
 /** What comes after a learn part, so the explanation prepares for it. */
 function upcoming(quest: Quest, part: { skillIds?: string[] }, ctx: Ctx): string {
@@ -129,6 +134,8 @@ a short title in the form of a question the student would ask
 Markdown
 === WORKED EXAMPLE ===
 Markdown: the problem, then the solution step by step
+=== KEY RULE ===
+the one key rule of this idea, in one plain sentence (the student writes theirs first, then compares)
 === ${p.id} PROMPT ===
 the student's problem, Markdown
 === ${p.id} ANSWER ===
@@ -211,13 +218,13 @@ async function askSections(ask: Ask, turns: Turn[], keys: string[], what: string
 
 export type PartWriter = {
   learn(quest: Quest, part: LearnPart): Promise<Pick<LearnPart, "title" | "body">>;
-  lesson(quest: Quest, part: ProblemPart): Promise<{ title: string; body: string; problems: Array<Pick<QuestProblem, "id" | "prompt" | "answerKey">> }>;
+  lesson(quest: Quest, part: ProblemPart): Promise<{ title: string; body: string; keyRule?: string; problems: Array<Pick<QuestProblem, "id" | "prompt" | "answerKey">> }>;
   practice(quest: Quest, part: ProblemPart): Promise<Array<Pick<QuestProblem, "id" | "prompt" | "answerKey">>>;
   assignment(quest: Quest, part: ProblemPart): Promise<Array<Pick<QuestProblem, "id" | "answerKey" | "hints" | "similarSolved">>>;
 };
 
-export function claudeWriter(semester: Semester, quest: Quest, knownSkillIds: string[], ask: Ask, signal?: AbortSignal): PartWriter {
-  const ctx = context(semester, quest, knownSkillIds);
+export function claudeWriter(semester: Semester, quest: Quest, knownSkillIds: string[], ask: Ask, signal?: AbortSignal, feel: string[] = []): PartWriter {
+  const ctx = context(semester, quest, knownSkillIds, feel);
   const t = QUEST_CONFIG.tiers;
   return {
     async learn(q, part) {
@@ -229,7 +236,7 @@ export function claudeWriter(semester: Semester, quest: Quest, knownSkillIds: st
       const s = await askSections(
         ask,
         lessonTurns(q, part, ctx),
-        ["TITLE", "EXPLANATION", "WORKED EXAMPLE", `${pid} PROMPT`, `${pid} ANSWER`],
+        ["TITLE", "EXPLANATION", "WORKED EXAMPLE", "KEY RULE", `${pid} PROMPT`, `${pid} ANSWER`],
         `the lesson "${part.title}"`,
         t.lesson,
         signal,
@@ -237,6 +244,7 @@ export function claudeWriter(semester: Semester, quest: Quest, knownSkillIds: st
       return {
         title: s.get("TITLE")!.replace(/^#+\s*/, ""),
         body: `${s.get("EXPLANATION")!}\n\n### Worked example\n\n${s.get("WORKED EXAMPLE")!}`,
+        keyRule: s.get("KEY RULE")!,
         problems: [{ id: part.problems[0].id, prompt: s.get(`${pid} PROMPT`)!, answerKey: s.get(`${pid} ANSWER`)! }],
       };
     },
@@ -283,6 +291,7 @@ export async function writeQuest(plan: Quest, writer: PartWriter, onStatus?: (s:
         const l = await writer.lesson(plan, part);
         part.title = l.title;
         part.body = l.body;
+        if (l.keyRule) part.keyRule = l.keyRule;
         for (const f of l.problems) Object.assign(part.problems.find((p) => p.id === f.id)!, f);
       } else {
         const filled = part.kind === "practice" ? await writer.practice(plan, part) : await writer.assignment(plan, part);

@@ -126,6 +126,7 @@ export function sampleWriter(skills: Skill[]): PartWriter {
       return {
         title: `How does ${name(id).toLowerCase()} work?`,
         body: `*Local preview: inside claude.ai, Claude writes a short first-principles explanation here.*\n\n### What is this about?\nOne idea only: **${name(id)}**, with numbers first.\n\n### Worked example\n\nA solved example in the same shape as your problem below.`,
+        keyRule: `The one rule behind ${name(id).toLowerCase()}, in a sentence (local preview).`,
         problems: [{ id: part.problems[0].id, prompt, answerKey }],
       };
     },

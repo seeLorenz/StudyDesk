@@ -362,3 +362,49 @@ export function doneTasks(records: Array<{ quest: Quest; progress: { work: Recor
         for (const q of p.problems) if (q.assignmentTaskId && r.progress.work[q.id]?.attemptId) done.add(q.assignmentTaskId);
   return done;
 }
+
+const FEEL = { easy: "too easy", right: "just right", hard: "too hard" } as const;
+
+/** How recent parts felt, per skill, newest rating wins. For the writer. */
+export function recentFeel(
+  records: Array<{ quest: Quest; progress: { ratings?: Record<string, "easy" | "right" | "hard"> } }>,
+  skillName: (id: string) => string | undefined,
+  today: Day,
+): string[] {
+  const since = addDays(today, -14);
+  const bySkill = new Map<string, string>();
+  for (const r of [...records].sort((a, b) => a.quest.createdAt - b.quest.createdAt)) {
+    if (r.quest.date < since) continue;
+    for (const part of r.quest.parts) {
+      const rating = r.progress.ratings?.[part.id];
+      if (!rating) continue;
+      const ids = part.kind === "learn" ? part.skillIds : part.skillIds ?? part.problems.map((p) => p.skillId);
+      const kind = part.kind === "assignment" ? "homework" : part.kind === "lesson" ? "lesson" : part.kind;
+      for (const id of new Set(ids)) {
+        const n = skillName(id);
+        if (n) bySkill.set(id, `${n}: ${FEEL[rating]} (${kind}, ${r.quest.date})`);
+      }
+    }
+  }
+  return [...bySkill.values()];
+}
+
+/** Homework tasks in `quest` that an earlier, unfinished quest already had. */
+export function carriedOver(
+  records: Array<{ quest: Quest; progress: { handedIn: string[] } }>,
+  quest: Quest,
+): Array<{ label: string; from: Day }> {
+  const out: Array<{ label: string; from: Day }> = [];
+  for (const part of quest.parts) {
+    if (part.kind !== "assignment") continue;
+    for (const p of part.problems) {
+      const prev = records.find(
+        (r) =>
+          r.quest.date < quest.date &&
+          r.quest.parts.some((x) => x.kind === "assignment" && !r.progress.handedIn.includes(x.id) && x.problems.some((q) => q.assignmentTaskId === p.assignmentTaskId)),
+      );
+      if (prev) out.push({ label: p.label ?? "", from: prev.quest.date });
+    }
+  }
+  return out;
+}

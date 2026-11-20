@@ -204,3 +204,60 @@ describe("points and the mistake review", () => {
     expect(newReviewChat(q, m).messages[0].text).toContain("Task 4.2a");
   });
 });
+
+describe("round 4", () => {
+  it("resolves a mistake only on a passed check problem, once", async () => {
+    const { applyChecks, checkResults, questMistakes } = await import("../src/quests/review");
+    const q = await writeQuest(plan(), sampleWriter(SAMPLE_SKILLS));
+    const hw = q.parts.find((p) => p.kind === "assignment") as ProblemPart;
+    const progress = {
+      ...emptyProgress(q.id),
+      work: Object.fromEntries(hw.problems.map((p, i) => [p.id, { answerText: "x", files: [], hintsShown: 0, sawSimilar: false, activeSeconds: 1, startedAt: 1, attemptId: `att${i}`, verdict: "not_understood" as const, points: 0, feedback: "f" }])),
+    };
+    const skills = new Map(SAMPLE_SKILLS.map((s) => [s.id, s]));
+    const m = questMistakes(q, progress, skills, sem.assignments, `${TUE}T09:00`);
+    const review = (attemptId: string) => ({ attemptId, kind: "real_error" as const, status: "open" as const, slipAnswer: null, slipQuestion: null, chatId: null, updatedAt: 0 });
+    const chat = {
+      id: "c", title: "", createdAt: 0, updatedAt: 0, notes: [],
+      messages: [
+        { id: "1", role: "assistant" as const, text: `Not quite. [[check:failed:${hw.problems[0].id}]]`, createdAt: 1 },
+        { id: "2", role: "assistant" as const, text: `Right! [[check:passed:${hw.problems[0].id}]]`, createdAt: 2 },
+        { id: "3", role: "assistant" as const, text: `Not yet [[check:failed:${hw.problems[1].id}]]`, createdAt: 3 },
+      ],
+    };
+    const res = checkResults(chat);
+    const out = applyChecks(m, res, [review("att0"), review("att1")], q.id, TUE, 5);
+    expect(out.attempts.map((a) => [a.skillId, a.part, a.verdict])).toEqual([["sk_ratio-test", "review", "solved"]]);
+    expect(out.reviews.map((r) => [r.attemptId, r.status])).toEqual([["att0", "resolved"]]);
+    // already resolved: nothing new
+    expect(applyChecks(m, res, [{ ...review("att0"), status: "resolved" }], q.id, TUE, 6).attempts).toHaveLength(0);
+  });
+
+  it("hides app markers from what the student sees", async () => {
+    const { stripMarkers } = await import("../src/lib/markdown");
+    expect(stripMarkers("Correct. [[check:passed:p3]]")).toBe("Correct.");
+  });
+
+  it("lessons come with a key rule, and lesson prompts ask for one", async () => {
+    const { lessonTurns } = await import("../src/quests/write");
+    const q = await writeQuest(plan(), sampleWriter(SAMPLE_SKILLS));
+    const lesson = q.parts.find((p) => p.kind === "lesson") as ProblemPart;
+    expect(lesson.keyRule).toBeTruthy();
+    const ctx = { course: sem.courses[0], skills: new Map(SAMPLE_SKILLS.map((s) => [s.id, s])), known: [], feel: ["Ratio test: too hard (lesson, 2026-11-02)"] };
+    const t = lessonTurns(q, lesson, ctx)[0].content;
+    expect(t).toContain("=== KEY RULE ===");
+    expect(t).toContain("Ratio test: too hard");
+  });
+
+  it("collects how parts felt and what was carried over", async () => {
+    const { recentFeel, carriedOver } = await import("../src/quests/plan");
+    const q1 = plan();
+    const lesson = q1.parts.find((p) => p.kind === "lesson")!;
+    const r1 = { quest: q1, progress: { ...emptyProgress(q1.id), ratings: { [lesson.id]: "hard" as const } } };
+    const feel = recentFeel([r1], (id) => SAMPLE_SKILLS.find((s) => s.id === id)?.name, TUE);
+    expect(feel[0]).toContain("too hard");
+    const wed = "2026-11-04";
+    const q2 = plan({ today: wed, nowLocal: `${wed}T08:00` });
+    expect(carriedOver([r1], q2).map((c) => c.label)).toContain("4.2a");
+  });
+});

@@ -14,12 +14,13 @@ import { openMasteryStore, type MasteryData, type MasteryStore } from "../platfo
 import { openQuestStore, type QuestStore } from "../platform/questStore";
 import { QUEST_CONFIG, partMinutes } from "./config";
 import { allHandedIn, answerUnlocked, emptyProgress, emptyWork, handIn, isFinished, ungraded } from "./handin";
-import { doneTasks, formatDue, planQuest, recentBlockers, type PlanResult } from "./plan";
+import { carriedOver, doneTasks, formatDue, planQuest, recentBlockers, recentFeel, type PlanResult } from "./plan";
 import { ProblemCard, clock } from "./ProblemCard";
 import { sampleGradingAsk, sampleSemester, sampleWriter } from "./seed";
-import type { AnswerFile, ProblemPart, ProblemWork, Quest, QuestPart, QuestProgress, QuestRecord, Semester } from "./types";
+import type { AnswerFile, ProblemPart, ProblemWork, Quest, QuestPart, QuestProgress, QuestRecord, Rating, Semester } from "./types";
 import { claudeWriter, writeQuest, type WriteStatus } from "./write";
-import { newReviewChat, questMistakes, reviewRules } from "./review";
+import { compressImage, dataUrlToBlob } from "./images";
+import { applyChecks, checkResults, isResolved, newReviewChat, questMistakes, reviewRules } from "./review";
 
 // The quest page: builds today's quest on the first open of the day (the
 // in-page fallback from the design), then lets the student work through it
@@ -137,7 +138,12 @@ export function QuestPage() {
       try {
         const { states } = replay(mastery.skills, mastery.attempts, mastery.reviews);
         const knownIds = [...states.values()].filter((s) => s.stage === "mastered" || s.stage === "retained").map((s) => s.skillId);
-        const writer = data.live ? claudeWriter(semester, res.quest, knownIds, askClaude) : sampleWriter(semester.skills);
+        const feel = recentFeel(records, (id) => semester.skills.find((s) => s.id === id)?.name, today);
+        const writer = data.live ? claudeWriter(semester, res.quest, knownIds, askClaude, undefined, feel) : sampleWriter(semester.skills);
+        const carried = carriedOver(records, res.quest);
+        if (carried.length) {
+          res.quest.notes.unshift(`Carried over from ${WEEKDAY(carried[0].from)}, when the quest wasn't finished: ${carried.map((c) => c.label).join(", ")}.`);
+        }
         const quest = await writeQuest(res.quest, writer, (s) =>
           setBuilding((b) => (b ? { ...b, status: { ...b.status, [s.partId]: s } } : b)),
         );
@@ -190,6 +196,9 @@ export function QuestPage() {
                 {review.mistakes.length} {review.mistakes.length === 1 ? "mistake" : "mistakes"} to understand
               </span>
             </span>
+            <span className="ov-status">
+              {review.mistakes.filter((m) => isResolved(m, data.mastery.reviews)).length} of {review.mistakes.length} understood
+            </span>
             <svg className="ov-chev" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
@@ -208,6 +217,23 @@ export function QuestPage() {
                 save={async (chat) => {
                   setData((d) => (d ? { ...d, reviewChats: { ...d.reviewChats, [review.record.quest.id]: chat } } : d));
                   await data.qs.saveReviewChat(review.record.quest.id, chat);
+                  // A passed check question resolves the mistake and counts for the skill.
+                  const res = applyChecks(review.mistakes, checkResults(chat), data.mastery.reviews, review.record.quest.id, toDay(), Date.now());
+                  if (!res.attempts.length && !res.reviews.length) return;
+                  await data.ms.appendAttempts(res.attempts);
+                  for (const r of res.reviews) await data.ms.putReview(r);
+                  setData((d) =>
+                    d
+                      ? {
+                          ...d,
+                          mastery: {
+                            ...d.mastery,
+                            attempts: [...d.mastery.attempts, ...res.attempts.filter((a) => !d.mastery.attempts.some((x) => x.id === a.id))],
+                            reviews: d.mastery.reviews.map((r) => res.reviews.find((u) => u.attemptId === r.attemptId) ?? r),
+                          },
+                        }
+                      : d,
+                  );
                 }}
                 onSaveError={() => {}}
               />
@@ -439,6 +465,7 @@ function QuestView({ record, data, scroller, onRecord, onMastery }: ViewProps) {
       if (part.kind === "learn") m.set(part.id, { text: part.body, part, label: where });
       else {
         if (part.body) m.set(part.id, { text: part.body, part, label: `${where}, the explanation and worked example` });
+        if (part.keyRule) m.set(`${part.id}-keyrule`, { text: part.keyRule, part, label: `${where}, the key rule` });
         part.problems.forEach((p) => {
           const name = p.label ? `task ${p.label}` : "a problem";
           m.set(`${p.id}-prompt`, { text: p.prompt, part, label: `${where}, ${name}` });
@@ -511,6 +538,34 @@ ${b?.text ?? ""}
     if (blob) images.current[id] = [...(images.current[id] ?? []), blob];
     const w = progressRef.current.work[id] ?? emptyWork();
     setWork(id, { files: [...w.files, file] });
+    if (blob && file.kind === "image") {
+      // Keep a compressed copy with the quest, so the photo can still be graded after a reload.
+      void compressImage(blob).then(async (url) => {
+        if (!url) return;
+        await qs.saveImage(file.id, url);
+        const cur = progressRef.current.work[id] ?? emptyWork();
+        setWork(id, { files: cur.files.map((f) => (f.id === file.id ? { ...f, stored: true } : f)) });
+      }).catch(() => {});
+    }
+  };
+
+  /** Photos for grading: the ones in memory, or the stored copies after a reload. */
+  const imagesFor = async (problemIds: string[]) => {
+    const out: Record<string, Blob[]> = {};
+    for (const pid of problemIds) {
+      if (images.current[pid]?.length) {
+        out[pid] = images.current[pid];
+        continue;
+      }
+      const stored = (progressRef.current.work[pid]?.files ?? []).filter((f) => f.kind === "image" && f.stored);
+      const blobs: Blob[] = [];
+      for (const f of stored) {
+        const url = await qs.loadImage(f.id).catch(() => null);
+        if (url) blobs.push(dataUrlToBlob(url));
+      }
+      if (blobs.length) out[pid] = blobs;
+    }
+    return out;
   };
 
   // ---- hand in = save; grading runs once for everything ----
@@ -531,7 +586,8 @@ ${b?.text ?? ""}
     setGrading(true);
     setErrors((e) => ({ ...e, grade: "" }));
     try {
-      const res = await handIn({ quest, problems: todo, work: progressRef.current.work, images: images.current, semester, today: toDay(), nowLocal: nowLocal(), ask });
+      const imgs = await imagesFor(todo.map((t) => t.problem.id));
+      const res = await handIn({ quest, problems: todo, work: progressRef.current.work, images: imgs, semester, today: toDay(), nowLocal: nowLocal(), ask });
       await ms.appendAttempts(res.attempts);
       for (const r of res.reviews) await ms.putReview(r);
       onMastery({ ...mastery, attempts: [...mastery.attempts, ...res.attempts], reviews: [...mastery.reviews, ...res.reviews] });
@@ -566,16 +622,52 @@ ${b?.text ?? ""}
   const waiting = ungraded(quest, progress).length;
   const everythingIn = allHandedIn(quest, progress);
 
+  /** Active minutes on a part's problems (reading isn't timed). */
+  const tookMin = (part: QuestPart) =>
+    part.kind === "learn" ? 0 : Math.round(part.problems.reduce((s, p) => s + (progress.work[p.id]?.activeSeconds ?? 0), 0) / 60);
+  const timeText = (part: QuestPart) => {
+    const took = tookMin(part);
+    const planned = partMinutes(part);
+    return took > 0 ? ` · ${took} of ${planned} min` : ` · ${planned} min planned`;
+  };
   const status = (part: QuestPart): { mark: string; cls: string; text: string } => {
-    if (!progress.handedIn.includes(part.id)) return { mark: "", cls: "todo", text: `${partMinutes(part)} min` };
+    if (!progress.handedIn.includes(part.id)) {
+      const took = tookMin(part);
+      return { mark: "", cls: "todo", text: took > 0 ? `${took} of ${partMinutes(part)} min` : `${partMinutes(part)} min` };
+    }
     if (part.kind === "learn") return { mark: "✓", cls: "done", text: "Read" };
     const ws = part.problems.map((p) => progress.work[p.id]);
-    if (ws.some((w) => !w?.verdict)) return { mark: "✓", cls: "done", text: "Handed in" };
+    if (ws.some((w) => !w?.verdict)) return { mark: "✓", cls: "done", text: `Handed in${timeText(part)}` };
     const pts = part.problems.reduce((s, p) => s + (progress.work[p.id]?.points ?? 0), 0);
     const max = part.problems.reduce((s, p) => s + p.maxPoints, 0);
     const solved = ws.filter((w) => w?.verdict === "solved").length;
-    return { mark: "✓", cls: solved === ws.length ? "graded" : "graded mixed", text: `Graded · ${pts}/${max}` };
+    return { mark: "✓", cls: solved === ws.length ? "graded" : "graded mixed", text: `${pts}/${max}${timeText(part)}` };
   };
+
+  const rate = (partId: string, r: Rating) => {
+    commit((p) => {
+      const ratings = { ...(p.ratings ?? {}) };
+      if (ratings[partId] === r) delete ratings[partId];
+      else ratings[partId] = r;
+      return { ...p, ratings };
+    });
+  };
+  const rater = (part: QuestPart) => (
+    <div className="rater" role="group" aria-label="How did this part feel?">
+      <span>How did this feel?</span>
+      {(
+        [
+          ["easy", "Too easy"],
+          ["right", "Just right"],
+          ["hard", "Too hard"],
+        ] as const
+      ).map(([r, label]) => (
+        <button key={r} type="button" className={"rate-btn" + (progress.ratings?.[part.id] === r ? " is-on" : "")} aria-pressed={progress.ratings?.[part.id] === r} onClick={() => rate(part.id, r)}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
 
   let problemN = 0;
   const body = (part: QuestPart) => {
@@ -584,6 +676,7 @@ ${b?.text ?? ""}
       return (
         <div className="part-body">
           <div className="learn-text">{md(part.id, part.body)}</div>
+          {rater(part)}
           <div className="part-actions">
             {isIn ? (
               <span className="quest-muted">Marked as read.</span>
@@ -598,6 +691,7 @@ ${b?.text ?? ""}
     }
     const a = part.kind === "assignment" ? semester.assignments.find((x) => x.id === part.assignmentId) : undefined;
     const graded = part.problems.every((p) => progress.work[p.id]?.verdict);
+    const myLine = progress.keyLines?.[part.id] ?? "";
     const empty = part.problems.filter((p) => {
       const w = progress.work[p.id];
       return !w || (!w.answerText.trim() && !w.files.length);
@@ -638,6 +732,30 @@ ${b?.text ?? ""}
             />
           );
         })}
+        {part.kind === "lesson" && part.keyRule && (
+          <div className="keyrule">
+            <label htmlFor={`${part.id}-key`}>In one line: what's the key rule here?</label>
+            <input
+              id={`${part.id}-key`}
+              type="text"
+              value={myLine}
+              disabled={isIn}
+              placeholder="Say it in your own words"
+              onChange={(e) => {
+                const v = e.target.value;
+                setProgress((p) => ({ ...p, keyLines: { ...(p.keyLines ?? {}), [part.id]: v } }));
+                saveSoon();
+              }}
+            />
+            {(isIn || myLine.trim().length > 8) && (
+              <details className="keyrule-compare">
+                <summary>Compare with the key rule</summary>
+                {md(`${part.id}-keyrule`, part.keyRule)}
+              </details>
+            )}
+          </div>
+        )}
+        {rater(part)}
         <div className="part-actions">
           {isIn ? (
             !graded && (

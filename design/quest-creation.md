@@ -129,13 +129,13 @@ Because grading now happens once, the gate no longer stops the quest mid-way. A 
 | --- | --- |
 | Shape and length | Whatever fits the budget; for the sample's first day that's learn, practice (gate), learn, homework at about 59 min |
 | The gate | With one grading run per quest, a missed fundamental goes first in the next day's quest instead of pausing today's (the fix-it code is kept for the grading window) |
-| Check question after learn parts | Not added yet |
+| Check question after learn parts | Each lesson ends with "In one line: what's the key rule?"; the student writes it, then compares with Claude's one-liner (not graded) |
 | One course per quest | One quest per day, for the course with the most urgent homework |
 | Hints | 3 hints, then a solved similar problem (no streak credit for that problem) |
 | Reviews | Placed first as a warm-up, after urgent homework in priority |
 | Learn part time | 6 min plus 3 per skill, not scaled by the student's speed |
 | Points per problem for grading | 2 per practice problem, the sheet's own points for homework |
-| Photos of answers | Sent to grading, but only a small preview is saved; after a reload, only the typed text and file text can be graded |
+| Photos of answers | A compressed copy (JPEG, one database document each) is saved with the quest, so photos are graded after a reload too |
 
 ## Note: how grading should work (decided 2026-11-20, not built yet)
 
@@ -151,4 +151,17 @@ Because grading now happens once, the gate no longer stops the quest mid-way. A 
 - **Mistake review.** Once a quest is graded and something went wrong, a "Mistake review" chat appears at the top of the quest page. It goes through the mistakes one at a time in the first version's tutor style: the student explains their step first, gets a first-principles explanation when stuck, then one fresh check question. Open homework gets hints only. Select-to-reply works in it like everywhere else.
 - **Archive.** A graded quest, and any earlier day's quest, moves to "Done quests" below, collapsed, to keep the page clear.
 
-Not yet: marking review items as talked through when the review chat finishes, and feeding the review's check questions back into streaks.
+## Round 4 changes (2026-11-20)
+
+- **The mistake review closes the loop.** A mistake is resolved only when the student solves a fresh check problem completely on their own. An explanation, agreeing, or fixing the old answer with help is not enough; if the tutor gives a step of the check problem, a new one follows. Input errors never get here: a slip the student confirms as a typo keeps the streak at grading time. The tutor marks each judged check with a hidden `[[check:passed:ID]]` or `[[check:failed:ID]]`. Code then sets the review item to resolved and records one "review" attempt for the skill (counted once), so the streak can move again. The review card shows "N of M understood".
+- **Photos survive reloads**: see the table above.
+- **Key rule in one line** at the end of each lesson: see the table above.
+- **"Too easy / just right / too hard"** on every part. The most recent rating per skill (last 14 days) goes into the prompts that write the next quests: too hard means slower, smaller steps and an easier own problem; too easy means brisker and harder.
+- **Planned against actual time** on every row of the overview, from the problem timers ("9 of 12 min"). Reading time isn't timed.
+- **Carry-over**: homework from an unfinished earlier quest comes back automatically (tasks only count as done when handed in), and the new quest says so ("Carried over from Thursday: 4.2b").
+
+## Notes for other modules
+
+- **Grading run at 22:00 (scheduled routine, outside the page):** reads every quest with handed-in, ungraded parts and grades them with the same `handIn` code. The page's "Grade me early" stays as the manual trigger. The grading results should open as their own window, with the mistake review in it.
+- **Orchestrator:** let the student change hints per task, lesson length and the daily budget by talking; all live in `src/quests/config.ts`.
+- **Onboarding:** replaces the sample semester (`seed.ts`) with real courses, homework and dates; the quest code reads the same `Semester` record.

@@ -120,6 +120,8 @@ export type ProblemPart = {
   readMinutes?: number;
   /** Lessons only: the idea being taught. */
   skillIds?: string[];
+  /** Lessons only: the key rule in one line, revealed after the student writes theirs. */
+  keyRule?: string;
 };
 
 export type QuestPart = LearnPart | ProblemPart;
@@ -141,7 +143,15 @@ export type Quest = {
 // ---------- the student's work on a quest ----------
 
 /** A stored attachment: text is kept, images keep only a small preview. */
-export type AnswerFile = { id: string; name: string; kind: "image" | "pdf" | "text"; text?: string; thumb?: string };
+export type AnswerFile = {
+  id: string;
+  name: string;
+  kind: "image" | "pdf" | "text";
+  text?: string;
+  thumb?: string;
+  /** Images: a compressed copy is saved with the quest, so it can be graded after a reload. */
+  stored?: boolean;
+};
 
 export type ProblemWork = {
   answerText: string;
@@ -177,11 +187,17 @@ export type QuestProgress = {
   handedIn: string[];
   /** Side notes from select-to-reply anywhere in the quest. */
   notes?: Note[];
+  /** Lessons: the student's own one-line version of the key rule, by part id. */
+  keyLines?: Record<string, string>;
+  /** How each part felt, by part id. Fed into how the next quests are written. */
+  ratings?: Record<string, Rating>;
   fixIts: FixIt[];
   /** Gate parts the student moved past (after a fix-it, or by choice). */
   gatesCleared: string[];
   finishedAt: number | null;
   updatedAt: number;
 };
+
+export type Rating = "easy" | "right" | "hard";
 
 export type QuestRecord = { quest: Quest; progress: QuestProgress };
