@@ -1,0 +1,7 @@
+{
+  "version": "v1.1.2",
+  "notes": "A version label with \"Check for updates\" and \"What's new\". Clearer import progress, and a \"Try again\" button on replies that didn't come through.",
+  "dataVersion": 1,
+  "builtAt": "2026-11-20T23:31:30.678Z",
+  "commit": "57377664633f8baa99ee4fe598567101888dc9f6"
+}

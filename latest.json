@@ -1,7 +1,7 @@
 {
-  "version": "v1.1.1",
-  "notes": "Big imports stay responsive: zips are read one file at a time, PDFs are freed after reading, and leftovers are cleaned up. Claude can see earlier images and reads all your calendars, including subscribed ones and pasted iCal links. The setup chat box stays pinned to the bottom and long file names stay inside their bubbles.",
+  "version": "v1.1.2",
+  "notes": "A version label with \"Check for updates\" and \"What's new\". Clearer import progress, and a \"Try again\" button on replies that didn't come through.",
   "dataVersion": 1,
-  "builtAt": "2026-11-20T23:17:55.957Z",
-  "commit": "a5deddde547e21e015764c0335de210d5e37038d"
+  "builtAt": "2026-11-20T23:31:30.678Z",
+  "commit": "57377664633f8baa99ee4fe598567101888dc9f6"
 }
