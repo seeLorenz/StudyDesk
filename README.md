@@ -73,25 +73,23 @@ The full design, in plain English, is in [`design/`](design/README.md).
 
 - A paid Claude plan (Pro or higher).
 - **Claude Code on the web** turned on, at [claude.ai/code](https://claude.ai/code). This is what runs the nightly run and reads your course files in the background.
-- A GitHub account, to get your own copy of the code.
 - Optional: the **Google Calendar** connector in claude.ai, to import your timetable and exams.
 
 ### 1. Turn on Claude Code on the web
 
 1. Open [claude.ai/code](https://claude.ai/code).
-2. Finish its short first-time setup, including connecting GitHub. StudyDesk needs one cloud environment there; the default one is fine.
+2. Finish its short first-time setup. StudyDesk needs one cloud environment there; the default one is fine.
 
-### 2. Get your own StudyDesk
+### 2. Ask Claude to set up your StudyDesk
 
-There's no one-click install yet (it's planned, see [Updates](#updates)). For now, a Claude Code session builds StudyDesk and publishes it as an artifact that belongs to you.
+1. At [claude.ai/code](https://claude.ai/code), start a new session and paste:
 
-1. **Fork** this repository on GitHub.
-2. At [claude.ai/code](https://claude.ai/code), start a session on your fork.
-3. Paste this:
+   > Set up StudyDesk for me from github.com/seeLorenz/studydesk. Follow its INSTALL.md.
 
-   > Run `npm install` and `npm run build`. Then publish `artifact/index.html` as a new artifact, with `artifact/routine.mjs` published next to it as `routine.mjs`. Give it the capabilities `sample` (with images), `db`, `user`, `assets`, `downloads` and `mcp` (the `Google Calendar` server's `list_events` tool). Give me the link.
+2. Claude builds StudyDesk and gives you a link. Say yes if it asks for permission to run its steps.
+3. Open the link. That's your StudyDesk. Bookmark it, because it's where all your data lives.
 
-4. Open the link. That's your StudyDesk. Bookmark it, because it's where all your data lives.
+You don't need to know any code. Claude reads the technical steps from [`INSTALL.md`](INSTALL.md).
 
 ### 3. Set up your semester
 
@@ -107,7 +105,7 @@ The nightly run is set up on its own once cloud sessions are allowed and the sem
 ## Your data
 
 - Your data lives **inside your StudyDesk artifact**: profile, semesters, quests, answers, mastery, chats and uploaded files.
-- **Deleting the artifact deletes your data, for good.** Publishing the code again gives you a new, empty StudyDesk.
+- **Deleting the artifact deletes your data, for good.** If you delete it and set StudyDesk up again, you start with an empty desk. Only a backup brings your data back.
 - **Back it up.** "Start a new semester" (in the ⋯ menu) first offers **Export everything**: one zip with all your files and data. You can cancel after exporting. Reading a zip back in isn't built yet, but it's planned.
 
 <br>
@@ -118,7 +116,7 @@ Releases are git tags (`v1`, `v1.1`, …). Changes on `main` never reach anyone'
 
 **Planned, not built yet:** when a new release is out, StudyDesk will show "Update to v1.1" in Organize. Pressing it has your own Claude session publish the new version onto the same link, so your data stays, then checks and upgrades your data in code, with a way back if anything fails. The full plan is in [`design/updates.md`](design/updates.md).
 
-Until then, updating by hand works the same way: have a Claude Code session build the new version and publish it **to your existing StudyDesk link**, not as a new artifact. Your data stays with the link.
+Until then, you can update by asking Claude the same way as in setup: "Update my StudyDesk from github.com/seeLorenz/studydesk. Follow its INSTALL.md." Claude publishes the new version onto your existing link, so your data stays.
 
 <br>
 
