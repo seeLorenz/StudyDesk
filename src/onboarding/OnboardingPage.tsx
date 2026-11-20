@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Note } from "../chat/types";
 import { uid } from "../chat/types";
 import { InputBox } from "../chat/InputBox";
@@ -306,7 +306,8 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   };
 
   if (loadError) return <div className="quest-page"><p className="quest-error">Setup couldn't be loaded: {loadError}</p></div>;
-  if (!env || !draft) return <div className="quest-page"><p className="quest-muted">Loading…</p></div>;
+  // "Loading…" only fades in if loading is slow: a line that flashes and is replaced at once reads as lag.
+  if (!env || !draft) return <div className="quest-page" aria-busy="true"><p className="quest-muted late-in">Loading…</p></div>;
 
   const returning = env.current?.source === "onboarding" && env.current.id !== draft.id;
   const props: StepProps = { env, draft, profile, update, updateProfile, go, today, flush, md, onDone, setEnv, returning, draftRef, profileRef, handoff, recheckHandoff };
@@ -394,11 +395,13 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
           {freshError && <p className="quest-error">{freshError}</p>}
         </div>
       )}
-      {draft.status === "setting_up" && !returning && env.current?.source !== "onboarding" && draft.courses.length === 0 && <RestoreBackup />}
       <div className="setup-grid">
         <section className="setup-main">
           {draft.setupStep !== "running" && <HandoffCard {...props} />}
-          <SetupChat {...props} />
+          <SetupChat
+            {...props}
+            below={draft.status === "setting_up" && !returning && env.current?.source !== "onboarding" && draft.courses.length === 0 ? <RestoreBackup /> : null}
+          />
           {draft.setupStep === "running" && <Running {...props} />}
           {draft.setupStep === "done" && <Done {...props} />}
         </section>
@@ -496,7 +499,10 @@ function HandoffCard({ handoff, recheckHandoff, draft, update }: StepProps) {
 
 // ---------- the setup chat ----------
 
-function SetupChat({ env, draft, update, updateProfile, today, flush, md, returning, draftRef, profileRef, handoff }: StepProps) {
+// `below`: a quiet line under the input box ("Had StudyDesk before?"). It sits
+// there, not above the chat, so it never pushes the conversation around when
+// it appears or goes away.
+function SetupChat({ env, draft, update, updateProfile, today, flush, md, returning, draftRef, profileRef, handoff, below }: StepProps & { below?: ReactNode }) {
   const [busy, setBusy] = useState<string | null>(null);
   const ctl = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -667,6 +673,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
             onSend={(t, f) => void send(t, f)}
             onStop={() => ctl.current?.abort()}
           />
+          {below}
         </div>
       )}
     </div>

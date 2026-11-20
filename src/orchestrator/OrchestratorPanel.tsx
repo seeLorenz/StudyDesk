@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Logo } from "../shell/Logo";
 import { createPortal } from "react-dom";
 import type { Note } from "../chat/types";
 import { uid } from "../chat/types";
@@ -784,7 +785,7 @@ export function OrchestratorPanel(props: Props) {
     <aside className={"orch" + (dock ? " is-docked" : (open ? " is-open" : "") + (expanded ? " is-expanded" : ""))} aria-label="Organize" aria-hidden={!open}>
       <header className="orch-head">
         <span className="orch-title">
-          <span className="brand-mark" aria-hidden="true" />
+          <Logo />
           Organize
         </span>
         {!dock && (
@@ -817,7 +818,7 @@ export function OrchestratorPanel(props: Props) {
           </p>
         )}
         {env && !env.live && <p className="quest-banner">Preview mode: no Claude here. Try "day off {today}" to see a change card.</p>}
-        {!env && !error && <p className="quest-muted">Loading…</p>}
+        {!env && !error && <p className="quest-muted late-in">Loading…</p>}
         {env && <UpdateNotice md={md} />}
         {env && !ready && (
           <div className="orch-empty">
