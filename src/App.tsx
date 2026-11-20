@@ -57,6 +57,24 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [view, setView] = useState<View>("today");
+  // Focus mode: the sidebar shrinks to an icon strip. Remembered in this browser only.
+  const [focus, setFocus] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("studydesk.focus") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleFocus = () =>
+    setFocus((f) => {
+      try {
+        localStorage.setItem("studydesk.focus", f ? "0" : "1");
+      } catch {
+        /* not remembered */
+      }
+      setToolsOpen(false);
+      return !f;
+    });
   // The semester, for the sidebar line; null until loaded, "none" when there isn't one yet.
   const [semester, setSemester] = useState<Semester | null | "none">(null);
   // Organize (the Orchestrator): a full page, and a quick panel over every other screen.
@@ -184,23 +202,29 @@ export function App() {
   ) : null;
 
   return (
-    <div className={"app" + (menuOpen ? " menu-open" : "")}>
+    <div className={"app" + (menuOpen ? " menu-open" : "") + (focus ? " is-focus" : "")}>
       <aside className="side" aria-label="StudyDesk">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true" />
-          StudyDesk
+          <span className="nav-text">StudyDesk</span>
+          <button type="button" className="icon-btn focus-btn" onClick={toggleFocus} aria-pressed={focus} aria-label={focus ? "Show the full sidebar" : "Focus mode: shrink the sidebar"} title={focus ? "Show the full sidebar" : "Focus mode"}>
+            <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2.5 3h11v10h-11zM6 3v10" />
+              {focus ? <path d="M8.5 6.5L10 8l-1.5 1.5" /> : <path d="M10.5 6.5L9 8l1.5 1.5" />}
+            </svg>
+          </button>
         </div>
         {semesterLine(sem) && <p className="side-semester">{semesterLine(sem)}</p>}
 
         <nav className="side-nav" aria-label="Screens">
-          <button type="button" className={"nav-item" + (shown === "today" ? " is-current" : "")} aria-current={shown === "today" ? "page" : undefined} onClick={() => go("today")}>
+          <button type="button" className={"nav-item" + (shown === "today" ? " is-current" : "")} aria-current={shown === "today" ? "page" : undefined} title="Today" onClick={() => go("today")}>
             <Svg>{Icon.today}</Svg>
-            Today
+            <span className="nav-text">Today</span>
           </button>
           <div className="nav-split">
-            <button type="button" className={"nav-item" + (shown === "chat" ? " is-current" : "")} aria-current={shown === "chat" ? "page" : undefined} onClick={() => go("chat")}>
+            <button type="button" className={"nav-item" + (shown === "chat" ? " is-current" : "")} aria-current={shown === "chat" ? "page" : undefined} title="Ask" onClick={() => go("chat")}>
               <Svg>{Icon.ask}</Svg>
-              Ask
+              <span className="nav-text">Ask</span>
             </button>
             <button type="button" className="icon-btn nav-new" aria-label="New chat" title="New chat" onClick={() => open(newChat())}>
               <Svg>{Icon.plus}</Svg>
@@ -257,7 +281,7 @@ export function App() {
           title="Your semester, dates and files. Tell StudyDesk what changed (Ctrl/⌘ J)"
         >
           <Svg>{Icon.organize}</Svg>
-          Organize
+          <span className="nav-text">Organize</span>
           {badge}
           <kbd className="organize-kbd">Ctrl J</kbd>
         </button>

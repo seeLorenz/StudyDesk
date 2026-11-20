@@ -44,13 +44,19 @@ Learning things (mistake review, feedback on answers) stay on Today and never go
 
 The footer shows whether the nightly run is set up and at what time. The ⋯ menu holds "Start a new semester" and the testing tools (build a new quest for today, restart the sample semester), so they're out of the way of normal use.
 
+## Focus mode
+
+A button next to the StudyDesk name shrinks the sidebar to an icon strip (Today, Ask, new chat, Organize with its badge, ⋯). The badge stays visible, so nothing is missed. The choice is remembered in this browser. Phones don't have it (the sidebar is already a drawer there).
+
 ## Phones
 
 The sidebar becomes a drawer (menu button in the top bar, for recent chats) and a tab bar at the bottom holds Today, Ask and Organize, with the same badge. Organize stacks the chat above the data.
 
 ## Look
 
-- Inter for the interface, Newsreader for titles and quest text, one blue accent, the yellow highlighter for select-to-reply. Light and dark themes.
+- Inter for the interface, Newsreader for titles and quest text. Light and dark themes.
+- **Colour only where it means something** (look "A", picked 2026-11-20): plain neutral greys in dark mode (no blue tint); blue only for "where am I" (current screen, part labels, links); green ticks for done parts; red and amber for urgency (due within a day, within three days); a red number on Organize when StudyDesk needs you.
+- The select-to-reply highlight is strong: yellow in light mode, a bright amber in dark mode, so marked passages stand out.
 - Every page starts the same way: a small uppercase kicker, a serif title, one line of context.
 - Section labels are small uppercase grey; cards share one radius and border.
 - Text has room to breathe (see guidelines.md).

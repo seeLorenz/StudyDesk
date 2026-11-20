@@ -25,43 +25,43 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #111419;
-    --surface: #191d24;
-    --sunken: #20252e;
-    --ink: #e7eaf0;
-    --ink-2: #a1a9b7;
-    --ink-3: #737c8c;
-    --line: #2b313b;
-    --accent: #86a2ff;
-    --accent-ink: #0f1420;
-    --accent-soft: #232c45;
-    --hl: rgb(255 214 70 / 26%);
-    --hl-open: rgb(255 214 70 / 45%);
-    --hl-edge: #d9b23a;
-    --pop: #2f343d;
+    --paper: #1e1e1e;
+    --surface: #232323;
+    --sunken: #2b2b2b;
+    --ink: #ececec;
+    --ink-2: #a3a3a3;
+    --ink-3: #808080;
+    --line: #343434;
+    --accent: #8aa6ff;
+    --accent-ink: #141414;
+    --accent-soft: #2c3350;
+    --hl: rgb(233 183 90 / 42%);
+    --hl-open: rgb(233 183 90 / 62%);
+    --hl-edge: #e9b75a;
+    --pop: #333333;
     --pop-ink: #f3f4f6;
-    --danger: #ff8a80;
+    --danger: #ff8a75;
     --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 6px 18px rgb(0 0 0 / 30%);
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --paper: #111419;
-  --surface: #191d24;
-  --sunken: #20252e;
-  --ink: #e7eaf0;
-  --ink-2: #a1a9b7;
-  --ink-3: #737c8c;
-  --line: #2b313b;
-  --accent: #86a2ff;
-  --accent-ink: #0f1420;
-  --accent-soft: #232c45;
-  --hl: rgb(255 214 70 / 26%);
-  --hl-open: rgb(255 214 70 / 45%);
-  --hl-edge: #d9b23a;
-  --pop: #2f343d;
+  --paper: #1e1e1e;
+  --surface: #232323;
+  --sunken: #2b2b2b;
+  --ink: #ececec;
+  --ink-2: #a3a3a3;
+  --ink-3: #808080;
+  --line: #343434;
+  --accent: #8aa6ff;
+  --accent-ink: #141414;
+  --accent-soft: #2c3350;
+  --hl: rgb(233 183 90 / 42%);
+  --hl-open: rgb(233 183 90 / 62%);
+  --hl-edge: #e9b75a;
+  --pop: #333333;
   --pop-ink: #f3f4f6;
-  --danger: #ff8a80;
+  --danger: #ff8a75;
   --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 6px 18px rgb(0 0 0 / 30%);
   color-scheme: dark;
 }
@@ -1342,14 +1342,11 @@ sup.sd-ref {
   font-size: 14px;
   font-weight: 700;
 }
-.ov-mark.done {
-  border-color: var(--accent);
-  color: var(--accent);
-}
+.ov-mark.done,
 .ov-mark.graded {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink);
+  border-color: var(--ok);
+  background: var(--ok);
+  color: #fff;
 }
 .ov-mark.graded.mixed {
   border-color: var(--hl-edge);
@@ -2604,21 +2601,21 @@ sup.sd-ref {
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --ok: #5cc493;
+    --ok: #2f9e6a;
     --warn: #f0a467;
     --warn-soft: #3a2a1d;
-    --close: #ff8a75;
-    --organize: #e7eaf0;
-    --organize-ink: #111419;
+    --close: #e5533d;
+    --organize: #ececec;
+    --organize-ink: #141414;
   }
 }
 :root[data-theme="dark"] {
-  --ok: #5cc493;
+  --ok: #2f9e6a;
   --warn: #f0a467;
   --warn-soft: #3a2a1d;
-  --close: #ff8a75;
-  --organize: #e7eaf0;
-  --organize-ink: #111419;
+  --close: #e5533d;
+  --organize: #ececec;
+  --organize-ink: #141414;
 }
 
 .side {
@@ -3242,6 +3239,83 @@ sup.sd-ref {
 }
 @media (max-width: 760px) {
   .orch.is-docked .orch-head {
+    display: none;
+  }
+}
+
+/* ---------- focus mode: the sidebar as an icon strip ---------- */
+.focus-btn {
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+}
+.focus-btn svg {
+  width: 18px;
+  height: 18px;
+}
+@media (min-width: 761px) {
+  .app.is-focus {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+  .is-focus .side {
+    padding: 16px 8px 12px;
+    align-items: center;
+  }
+  .is-focus .brand {
+    flex-direction: column;
+    gap: 10px;
+    padding: 0 0 12px;
+  }
+  .is-focus .focus-btn {
+    margin: 0;
+  }
+  .is-focus .nav-text,
+  .is-focus .side-semester,
+  .is-focus .side-label,
+  .is-focus .chat-list,
+  .is-focus .organize-kbd,
+  .is-focus .side-run,
+  .is-focus .run-dot {
+    display: none;
+  }
+  .is-focus .side-nav,
+  .is-focus .nav-split {
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+  }
+  .is-focus .nav-item {
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+  .is-focus .nav-split .nav-item {
+    flex: none;
+  }
+  .is-focus .organize-btn {
+    margin-top: auto;
+    justify-content: center;
+    width: 44px;
+    padding: 0;
+  }
+  .is-focus .organize-btn .nav-badge,
+  .is-focus .organize-btn .nav-dot {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+  }
+  .is-focus .side-foot {
+    padding: 8px 0 0;
+  }
+  .is-focus .tools-menu {
+    left: 0;
+    right: auto;
+    width: 260px;
+  }
+}
+@media (max-width: 760px) {
+  .focus-btn {
     display: none;
   }
 }
