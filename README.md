@@ -122,6 +122,26 @@ Until then, updating by hand works the same way: have a Claude Code session buil
 
 <br>
 
+## Problems and ideas
+
+StudyDesk gets better with every student who uses it, so please tell us what you run into.
+
+- **Something broke or felt wrong?** [Report a problem](https://github.com/seeLorenz/studydesk/issues/new). Say what you did, what you expected, and what happened. A screenshot helps a lot.
+- **An idea to make it better?** [Share it](https://github.com/seeLorenz/studydesk/issues/new), even a small one. What would save you time?
+- **Want to see what's already known?** Look through the [open issues](https://github.com/seeLorenz/studydesk/issues) and add a 👍 or a comment to the ones you care about.
+
+Please leave out personal details (names, grades, school accounts). Everything posted there is public.
+
+<br>
+
+---
+
+# For developers
+
+Everything below is about the code. You don't need it to use StudyDesk.
+
+Contributions are welcome: bug fixes, new ideas, or picking up an open issue. Open an issue first for anything big, so we can agree on the design before you build it.
+
 ## Develop
 
 ```sh
@@ -151,6 +171,10 @@ npm run build      # writes artifact/index.html and artifact/routine.mjs
 
 ### Contributing
 
-Read [`design/guidelines.md`](design/guidelines.md) first. In short: Claude handles whatever varies by student, code handles the mechanics, every chat box accepts files and images, and modules are designed and built one at a time.
+1. Read [`design/guidelines.md`](design/guidelines.md) and the design file of the module you're touching.
+2. Fork the repo, make your change on a branch, and run `npm test`.
+3. Open a pull request that says what changed and why. If it changes how a module works, update its file in `design/` in the same pull request.
+
+The guidelines in short: Claude handles whatever varies by student, code handles the mechanics, every chat box accepts files and images, and modules are designed and built one at a time.
 
 This repository is public. Never commit personal data, secrets or real student information.
