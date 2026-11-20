@@ -12,6 +12,7 @@ import type { AssessmentResult, Attempt, CourseTarget } from "../mastery/types";
 import { buildSemester } from "../onboarding/setup";
 import type { CourseSetup, DraftCourse, Profile, SemesterDraft } from "../onboarding/types";
 import type { Assignment, KeyDate, Semester, TimetableEntry } from "../quests/types";
+import { QUEST_SETTING_LIMITS, questSettingsNow, type QuestSettings } from "../quests/config";
 import type { Change, Operation } from "./types";
 
 export type Desk = { draft: SemesterDraft; profile: Profile };
@@ -70,7 +71,7 @@ export function findCourse(draft: SemesterDraft, ref: unknown): DraftCourse | un
 }
 
 // ---------- reading and writing parts of the desk by key ----------
-// Keys: "courses", "timetable", "studyGoal", "facts", "daysOff", "assessments",
+// Keys: "courses", "timetable", "studyGoal", "facts", "daysOff", "assessments", "questSettings",
 // "profile", and "results.<courseId>.<keyDates|assignments|teachingLanguage>".
 
 function getPart(desk: Desk, key: string): unknown {
@@ -361,6 +362,29 @@ export function applyOps(
         touch("courses", desk.draft.courses.map((x) => (x.id === c.id ? { ...x, teachingLanguage: lang } : x)));
         if (result(c)) touch(`results.${c.id}.teachingLanguage`, lang);
         lines.push(`${c.name}, language of explanations: ${old} → ${lang}`);
+        break;
+      }
+      case "set_quest_settings": {
+        const cur = { ...(desk.draft.questSettings ?? {}) };
+        const now_ = questSettingsNow(cur);
+        const labels = { hints: "hints per task", lessonMinutes: "lesson reading minutes", newSkillsPerQuest: "new skills per quest" } as const;
+        const changed: string[] = [];
+        for (const k of Object.keys(QUEST_SETTING_LIMITS) as Array<keyof QuestSettings>) {
+          if (op[k] === undefined) continue;
+          const v = num(op[k]);
+          const [lo, hi] = QUEST_SETTING_LIMITS[k];
+          if (v === null || v < lo || v > hi || Math.round(v) !== v) {
+            errors.push(`set_quest_settings: ${k} must be a whole number from ${lo} to ${hi}.`);
+            continue;
+          }
+          if (now_[k] === v) continue;
+          changed.push(`${labels[k]} ${now_[k]} → ${v}`);
+          cur[k] = v;
+        }
+        if (changed.length) {
+          touch("questSettings", cur);
+          lines.push(`Quests: ${changed.join(", ")} (from the next quest)`);
+        }
         break;
       }
       case "add_fact": {

@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { applyOps, canUndo, isRealDay, syncSemester, undoChange, type Desk } from "../src/orchestrator/changes";
 import { advanceJobs, startJob } from "../src/orchestrator/jobs";
 import { checkinTriggers, speed } from "../src/orchestrator/signals";
-import { needsSummary, orchTurns } from "../src/orchestrator/agent";
+import { needsSummary, orchTurns, questStarted, todaysQuest } from "../src/orchestrator/agent";
+import { applyQuestSettings, QUEST_CONFIG } from "../src/quests/config";
 import { emptyState, type OrchMessage } from "../src/orchestrator/types";
 import type { CourseSetup, Profile, SemesterDraft } from "../src/onboarding/types";
 import type { QuestRecord } from "../src/quests/types";
@@ -237,5 +238,32 @@ describe("memory", () => {
     expect(all).not.toContain("m9\n");
     expect(all).toContain("m10");
     expect(turns[turns.length - 1].content).toContain("<desk>");
+  });
+});
+
+describe("quest settings and rebuilding", () => {
+  it("changes hints, lesson length and new skills per quest within limits, from the next quest", () => {
+    const r = applyOps(desk(), [{ op: "set_quest_settings", hints: 1, lessonMinutes: 8, newSkillsPerQuest: 9 }], { studentWords: "", now: 1 });
+    expect(r.errors[0]).toMatch(/newSkillsPerQuest/);
+    expect(r.change!.lines).toEqual(["Quests: hints per task 3 → 1, lesson reading minutes 4 → 8 (from the next quest)"]);
+    const sem = syncSemester(r.desk.draft, profile, null);
+    expect(sem.questSettings).toEqual({ hints: 1, lessonMinutes: 8 });
+    applyQuestSettings(sem.questSettings);
+    expect([QUEST_CONFIG.hints, QUEST_CONFIG.lesson.readMinutes, QUEST_CONFIG.maxNewSkills]).toEqual([1, 8, 2]);
+    applyQuestSettings(undefined);
+    expect([QUEST_CONFIG.hints, QUEST_CONFIG.lesson.readMinutes]).toEqual([3, 4]);
+    expect(canUndo(r.desk, r.change!)).toBe(true);
+  });
+
+  it("finds today's quest, skipping replaced ones, and tells whether it was started", () => {
+    const mk = (id: string, createdAt: number, replacedAt?: number): QuestRecord => ({
+      quest: { id, date: TODAY, courseId: "c1", budgetMinutes: 30, plannedMinutes: 30, reason: "", notes: [], createdAt, parts: [] },
+      progress: { questId: id, work: {}, handedIn: [], fixIts: [], gatesCleared: [], finishedAt: null, replacedAt, updatedAt: 0 },
+    });
+    const a = mk("a", 1);
+    const b = mk("b", 2, 5);
+    expect(todaysQuest([a, b], TODAY)?.quest.id).toBe("a");
+    expect(questStarted(a)).toBe(false);
+    expect(questStarted({ ...a, progress: { ...a.progress, work: { p: { answerText: "x", files: [], hintsShown: 0, sawSimilar: false, activeSeconds: 0, startedAt: null } } } })).toBe(true);
   });
 });

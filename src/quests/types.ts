@@ -8,6 +8,7 @@ import type { CourseTarget, Day, Skill } from "../mastery/types";
 import type { Note } from "../chat/types";
 import type { GradeRules } from "../mastery/grades";
 import type { CatalogEntry, Upload } from "../onboarding/types";
+import type { QuestSettings } from "./config";
 
 // ---------- course data (written by onboarding and the setup session) ----------
 
@@ -92,6 +93,8 @@ export type Semester = {
   placementQuestId?: string;
   /** Days without studying (no quest budget), set through the Orchestrator. */
   daysOff?: Day[];
+  /** The student's own hints, lesson length and new skills per quest, set through the Orchestrator. */
+  questSettings?: QuestSettings;
 };
 
 // ---------- the quest itself ----------
@@ -221,6 +224,8 @@ export type QuestProgress = {
   /** Gate parts the student moved past (after a fix-it, or by choice). */
   gatesCleared: string[];
   finishedAt: number | null;
+  /** Set when the student asked for a new quest for today before starting this one (through the Orchestrator). */
+  replacedAt?: number;
   updatedAt: number;
 };
 

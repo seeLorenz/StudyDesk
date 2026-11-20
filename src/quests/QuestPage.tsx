@@ -95,6 +95,16 @@ export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
     })().catch((e) => setLoadError(message(e)));
   }, []);
   useEffect(() => load(), [load]);
+  // "Rebuild today's quest" from the StudyDesk chat: reload, and the newest plan is written.
+  useEffect(() => {
+    const onReplaced = () => {
+      autoBuilt.current = false;
+      setPlanNotice(null);
+      load();
+    };
+    window.addEventListener("studydesk:quest-replaced", onReplaced);
+    return () => window.removeEventListener("studydesk:quest-replaced", onReplaced);
+  }, [load]);
   // A change through the Orchestrator (a new date, a day off) shows up here at once.
   useEffect(() => subscribe("semester", "quests", (semester) => setData((d) => (d && d.semester.id === semester.id ? { ...d, semester } : d))), []);
 
@@ -110,7 +120,7 @@ export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
   }, [data]);
 
   const current = useMemo(
-    () => data?.records.filter((r) => r.quest.date === today).sort((a, b) => b.quest.createdAt - a.quest.createdAt)[0] ?? null,
+    () => data?.records.filter((r) => r.quest.date === today && !r.progress.replacedAt).sort((a, b) => b.quest.createdAt - a.quest.createdAt)[0] ?? null,
     [data, today],
   );
   const currentDone = !!current && isFinished(current.quest, current.progress);
@@ -118,6 +128,7 @@ export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
   const archive = useMemo(
     () =>
       (data?.records ?? [])
+        .filter((r) => !r.progress.replacedAt)
         .filter((r) => r !== current || currentDone)
         .filter((r) => isFinished(r.quest, r.progress) || r.quest.date < today)
         .sort((a, b) => b.quest.createdAt - a.quest.createdAt),

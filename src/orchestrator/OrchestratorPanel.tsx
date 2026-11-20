@@ -19,7 +19,8 @@ import { openQuestStore, type QuestStore } from "../platform/questStore";
 import { compressImage } from "../quests/images";
 import type { QuestRecord, Semester } from "../quests/types";
 import type { Profile, SemesterDraft, Upload } from "../onboarding/types";
-import { ASK_TOOL, CALENDAR_TOOL, CHANGE_TOOL, checkinTurns, deskSnapshot, JOB_TOOL, jobTitle, localCheckin, LOOKUP_TOOL, needsSummary, orchTurns, summaryTurns } from "./agent";
+import { ASK_TOOL, CALENDAR_TOOL, CHANGE_TOOL, checkinTurns, deskSnapshot, JOB_TOOL, jobTitle, localCheckin, LOOKUP_TOOL, needsSummary, orchTurns, questStarted, REBUILD_TOOL, summaryTurns, todaysQuest } from "./agent";
+import { PASS_ON_EVENT, type PassOn } from "./passOn";
 import { applyOps, canUndo, findCourse, syncSemester, undoChange, type Desk } from "./changes";
 import { advanceJobs, startJob, type JobFile } from "./jobs";
 import { checkinTriggers } from "./signals";
@@ -271,6 +272,20 @@ export function OrchestratorPanel(props: Props) {
     [commitDesk, saveState],
   );
 
+  /** Marks today's unstarted quest as replaced; the quest page writes a new one from the current desk. */
+  const rebuildQuest = useCallback(async (): Promise<string> => {
+    if (!env) throw new Error("StudyDesk isn't loaded yet.");
+    recordsRef.current = await env.qs.loadRecords();
+    const q = todaysQuest(recordsRef.current, today);
+    if (!q) return "There's no quest for today yet: it will be written from the current desk when the student opens Today's quest.";
+    if (questStarted(q)) throw new Error("Today's quest is already started, so it isn't rewritten. Changes apply from the next quest.");
+    const replaced = { ...q, progress: { ...q.progress, replacedAt: Date.now(), updatedAt: Date.now() } };
+    await env.qs.saveRecord(replaced);
+    recordsRef.current = recordsRef.current.map((r) => (r === q ? replaced : r));
+    window.dispatchEvent(new CustomEvent("studydesk:quest-replaced"));
+    return "Today's quest is being written again from the current desk; it shows on Today's quest in a minute.";
+  }, [env, today]);
+
   const addCard = (messageId: string, card: ChatCard) =>
     saveMessages((ms) => ms.map((m) => (m.id === messageId ? { ...m, cards: [...(m.cards ?? []), card] } : m)));
 
@@ -424,6 +439,11 @@ export function OrchestratorPanel(props: Props) {
               },
             },
             {
+              ...REBUILD_TOOL,
+              inputSchema: REBUILD_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema,
+              execute: () => rebuildQuest(),
+            },
+            {
               ...CALENDAR_TOOL,
               inputSchema: CALENDAR_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema,
               execute: async (_input, cx) => {
@@ -549,14 +569,26 @@ export function OrchestratorPanel(props: Props) {
   // A remark passed on from elsewhere (the tutor, or "Ask StudyDesk" on a selection) arrives as an event.
   const sendRef = useRef(send);
   sendRef.current = send;
+  const passQueue = useRef<PassOn[]>([]);
+  const [queued, setQueued] = useState(0);
   useEffect(() => {
     const onPass = (e: Event) => {
-      const d = (e as CustomEvent<{ text: string }>).detail;
-      if (d?.text) void sendRef.current(d.text, [], { fromTutor: true });
+      const d = (e as CustomEvent<PassOn>).detail;
+      if (!d?.text) return;
+      passQueue.current.push(d);
+      setQueued((n) => n + 1);
     };
-    window.addEventListener("studydesk:pass-on", onPass);
-    return () => window.removeEventListener("studydesk:pass-on", onPass);
+    window.addEventListener(PASS_ON_EVENT, onPass);
+    return () => window.removeEventListener(PASS_ON_EVENT, onPass);
   }, []);
+  // Remarks are handled one at a time, once the chat is free; each shows on the badge.
+  useEffect(() => {
+    if (!ready || busy || !passQueue.current.length) return;
+    const p = passQueue.current.shift()!;
+    setQueued((n) => n - 1);
+    saveState((s) => ({ ...s, notifications: [...s.notifications, { key: `pass:${uid()}`, kind: "passed_on", day: today, at: Date.now(), courseId: null, facts: p.text, messageId: null, seenAt: open ? Date.now() : null }] }));
+    void sendRef.current(`${p.text}\n\n(said in ${p.where})`, [], { fromTutor: true });
+  }, [ready, busy, queued, saveState, today, open]);
 
   useEffect(() => {
     if (open) endRef.current?.scrollIntoView({ block: "end" });
@@ -570,6 +602,22 @@ export function OrchestratorPanel(props: Props) {
   const md = (id: string, text: string) => <AnnotatedMarkdown blockId={id} text={text} notes={notes.byBlock.get(id) ?? []} {...notes.handlers} />;
 
   const names = useMemo(() => new Map((draft?.courses ?? []).map((c) => [c.id, c.name])), [draft]);
+  // A change card offers to rebuild today's quest while it isn't started and is older than the change.
+  const [rebuilt, setRebuilt] = useState<Record<string, string>>({});
+  const todayQ = todaysQuest(recordsRef.current, today);
+  const rebuildOffer = (c: ChatCard) => {
+    if (c.kind !== "change") return undefined;
+    const ch = state.changes.find((x) => x.id === c.changeId);
+    if (rebuilt[c.changeId]) return { label: rebuilt[c.changeId], run: null };
+    if (!ch || ch.status !== "applied" || !todayQ || questStarted(todayQ) || todayQ.quest.createdAt > ch.at) return undefined;
+    return {
+      label: "Rebuild today's quest",
+      run: () =>
+        void rebuildQuest()
+          .then((t) => setRebuilt((r) => ({ ...r, [c.changeId]: t.startsWith("Today's quest is being") ? "Rebuilding today's quest" : t })))
+          .catch((e) => setError(message(e))),
+    };
+  };
   const deskNow = draft && profile ? { draft, profile } : null;
 
   return (
@@ -635,7 +683,7 @@ export function OrchestratorPanel(props: Props) {
                 {m.error && <p className="error-line">{m.error}</p>}
                 {deskNow &&
                   (m.cards ?? []).map((c, i) => (
-                    <Card key={i} card={c} state={state} desk={deskNow} names={names} md={md} onUndo={undo} onConfirm={answerConfirm} onOpenSetup={onOpenSetup} />
+                    <Card key={i} card={c} state={state} desk={deskNow} names={names} md={md} onUndo={undo} onConfirm={answerConfirm} onOpenSetup={onOpenSetup} rebuild={rebuildOffer(c)} />
                   ))}
               </div>
             ),
@@ -673,7 +721,9 @@ function Card({
   onUndo,
   onConfirm,
   onOpenSetup,
+  rebuild,
 }: {
+  rebuild?: { label: string; run: (() => void) | null };
   card: ChatCard;
   state: OrchState;
   desk: Desk;
@@ -691,6 +741,14 @@ function Card({
       <div className={"orch-card" + (c.status === "undone" ? " is-undone" : "")}>
         {md(`card-${c.id}`, c.lines.map((l) => `- ${l}`).join("\n"))}
         <div className="orch-card-foot">
+          {rebuild &&
+            (rebuild.run ? (
+              <button type="button" className="mini-btn" onClick={rebuild.run}>
+                {rebuild.label}
+              </button>
+            ) : (
+              <span className="quest-muted">{rebuild.label}</span>
+            ))}
           {c.status === "undone" ? (
             <span className="quest-muted">Undone</span>
           ) : undoable ? (

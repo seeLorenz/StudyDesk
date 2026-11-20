@@ -238,11 +238,11 @@ The code lives in `src/orchestrator/`, storage in `src/platform/orchestratorStor
 - **Learning questions** go to Ask: `open_ask` opens a new Ask chat with the question already sent.
 - **One version everywhere** (`src/platform/deskBus.ts`): the setup screen, the quest page and the panel publish every change they make, and the others take it over, so no screen saves an older copy on top.
 
+- **Rebuild today's quest** (`rebuild_quest`, and a button on change cards): while today's quest isn't started, it's marked replaced and the quest page writes a new one from the current desk. A started quest is never rewritten.
+- **Quest settings by talking** (`set_quest_settings`): hints per homework task (0 to 5), lesson reading minutes (2 to 15) and new skills per quest (0 to 4), stored per student and used from the next quest (`applyQuestSettings` in `src/quests/config.ts`).
+- **The tutor passes remarks on** (`src/orchestrator/passOn.ts`): every tutor call (Ask chats, side notes, the mistake review) has a `pass_to_studydesk` tool. The remark arrives in the StudyDesk chat word for word, marked "Passed on by the tutor", with where it was said; it's handled one at a time and shows on the badge.
+
 **Not in this version (next steps)**
 
-- The tutor can't pass remarks on by itself yet (`pass_to_orchestrator` belongs to the Ask module). The panel already listens for them (`studydesk:pass-on`).
-- "Rebuild today's quest" after a change isn't offered yet; changes apply from the next quest.
-- Quest settings (hints per task, lesson length) can't be changed by talking yet: they're still one fixed config.
 - The organization agent's own daily and deep runs are its own module; jobs today are started from the chat.
 - The live reading log stays on the setup screen ("Watch it live" on the job card).
-

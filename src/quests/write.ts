@@ -8,7 +8,7 @@
 
 import type { AskOptions, Turn } from "../platform/claude";
 import type { Skill } from "../mastery/types";
-import { QUEST_CONFIG } from "./config";
+import { applyQuestSettings, QUEST_CONFIG } from "./config";
 import type { Course, FixIt, LearnPart, ProblemPart, Quest, QuestProblem, Semester } from "./types";
 
 export type Ask = (turns: Turn[], opts?: AskOptions) => Promise<string>;
@@ -224,6 +224,7 @@ export type PartWriter = {
 };
 
 export function claudeWriter(semester: Semester, quest: Quest, knownSkillIds: string[], ask: Ask, signal?: AbortSignal, feel: string[] = []): PartWriter {
+  applyQuestSettings(semester.questSettings);
   const ctx = context(semester, quest, knownSkillIds, feel);
   const t = QUEST_CONFIG.tiers;
   return {

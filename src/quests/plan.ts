@@ -9,7 +9,7 @@ import { isRequired } from "../mastery/mastery";
 import { dueSkills, replay, type Exam } from "../mastery/replay";
 import { expectedMinutes, questBudget, slownessFactor } from "../mastery/timing";
 import type { Attempt, Day, ReviewItem, Skill, SkillState } from "../mastery/types";
-import { QUEST_CONFIG, partMinutes } from "./config";
+import { applyQuestSettings, QUEST_CONFIG, partMinutes } from "./config";
 import type { Assignment, AssignmentTask, ProblemPart, Quest, QuestProblem, Semester, TimetableEntry } from "./types";
 
 export type PlanInput = {
@@ -85,6 +85,7 @@ export function pickCourse(input: PlanInput): string {
 
 export function planQuest(input: PlanInput): PlanResult {
   const { semester, today, attempts, reviews } = input;
+  applyQuestSettings(semester.questSettings);
   const courseId = pickCourse(input);
   const course = semester.courses.find((c) => c.id === courseId)!;
   const target = semester.targets.find((t) => t.courseId === courseId);

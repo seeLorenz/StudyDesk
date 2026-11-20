@@ -8,6 +8,7 @@ import type { Profile, SemesterDraft } from "../onboarding/types";
 import type { Attempt, Day, ReviewItem } from "../mastery/types";
 import type { QuestRecord, Semester } from "../quests/types";
 import { addDays } from "../mastery/days";
+import { questSettingsNow } from "../quests/config";
 import type { Change, Job, Memory, OrchMessage, OrchState } from "./types";
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -68,7 +69,7 @@ export function deskSnapshot(i: SnapshotInput): string {
     .filter((k) => k.date >= today && k.date <= addDays(today, 60))
     .sort((a, b) => (a.date < b.date ? -1 : 1))
     .map((k) => `${k.date} ${draft.courses.find((c) => c.id === k.courseId)?.short ?? k.courseId}: ${k.title} (${k.kind})`);
-  const quest = i.records.find((r) => r.quest.date === today);
+  const quest = todaysQuest(i.records, today);
   return JSON.stringify(
     {
       today: `${today} (${DAY[new Date(`${today}T12:00`).getDay()]})`,
@@ -80,7 +81,8 @@ export function deskSnapshot(i: SnapshotInput): string {
       courses,
       examsNext60Days: exams,
       homeworkDueNext14Days: homework,
-      todaysQuest: quest ? { course: quest.quest.courseId, plannedMinutes: quest.quest.plannedMinutes, started: Object.keys(quest.progress.work).length > 0 || quest.progress.handedIn.length > 0 } : null,
+      todaysQuest: quest ? { course: quest.quest.courseId, plannedMinutes: quest.quest.plannedMinutes, started: questStarted(quest) } : null,
+      questSettings: questSettingsNow(draft.questSettings),
       speedLastQuests: sp.ratio === null ? "not measured yet" : `${sp.actual} min actual vs ${sp.planned} min planned over ${sp.quests} quests`,
       openToDo: setupTodo(draft).filter((t) => !t.done).map((t) => t.title),
       jobs: i.state.jobs.filter((j) => j.status === "running" || (j.finishedAt ?? 0) > Date.now() - 86_400_000).map((j) => ({ id: j.id, kind: j.kind, courses: j.courseIds, status: j.status, result: j.result })),
@@ -100,6 +102,7 @@ What you do:
 - Make small changes with the change tool, right away, in the same reply: dates, homework due dates, target grades, study goal, days off, weekly slots, a course's teaching language, profile, results from school, and facts to remember (what the student says about a course, word for word). The student sees a card with what changed and an Undo button, so don't ask "are you sure?" for small things and don't repeat the card's lines in your text.
 - Start a job with start_job for bigger work: new material (files the student drops: assign them to their course in the same call), a new course (add_course first, then start_job), or re-mapping a course when the student says something that changes what the course needs ("chapter 7 isn't in the exam", "the exam is oral now"); record that statement as a fact too. New files start a job automatically; re-reading everything a course already has asks the student first (the tool shows them a yes/no card).
 - Dropping a course always needs the student's yes: call change with drop_course, and the student gets a yes/no card.
+- After a change that affects today (todaysQuest exists and started is false), you may rebuild today's quest with rebuild_quest; the change card also offers it.
 - Learning questions ("how does the chain rule work?", explaining a problem) belong to the tutor: call open_ask with the question and say in one line that you opened it there. Don't teach here.
 - When the student is on a screen, "this" means what's on it (studentIsOn) or the quoted selection.
 
@@ -136,6 +139,7 @@ export const CHANGE_TOOL = {
 - {op:"set_day_off", date, reason?} / {op:"remove_day_off", date}
 - {op:"add_slot", weekday, start, end, kind:"lecture"|"exercise"|"fixed", title, course?} / {op:"remove_slot", weekday, start}
 - {op:"set_language", course, language}
+- {op:"set_quest_settings", hints?: 0-5 (per homework task), lessonMinutes?: 2-15 (reading part of a lesson), newSkillsPerQuest?: 0-4}
 - {op:"add_fact", course?, text} (word for word)
 - {op:"set_profile", school?, country?, program?, year?}
 - {op:"add_result", course, component, points, maxPoints, date, skills?: [skill ids]} (a real result from school; can't be undone)
@@ -281,3 +285,19 @@ export function jobTitle(j: Job, names: Map<string, string>): string {
 }
 
 export type { Change };
+
+/** Today's quest as the quest page shows it: the newest one of today that wasn't replaced. */
+export function todaysQuest(records: QuestRecord[], today: Day): QuestRecord | null {
+  return records.filter((r) => r.quest.date === today && !r.progress.replacedAt).sort((a, b) => b.quest.createdAt - a.quest.createdAt)[0] ?? null;
+}
+
+/** True once the student did anything on a quest: then it's never rewritten. */
+export function questStarted(r: QuestRecord): boolean {
+  return r.progress.handedIn.length > 0 || Object.values(r.progress.work).some((w) => w.activeSeconds > 0 || w.answerText.trim() !== "" || w.files.length > 0 || w.hintsShown > 0);
+}
+
+export const REBUILD_TOOL = {
+  name: "rebuild_quest",
+  description: "Writes today's quest again from the current desk (after a change that affects today: a nearer exam, homework due tomorrow, a different study goal). Only works while today's quest hasn't been started; a started quest is never rewritten.",
+  inputSchema: { type: "object", properties: {} },
+} as const;

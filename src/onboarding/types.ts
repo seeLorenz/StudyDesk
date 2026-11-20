@@ -9,6 +9,7 @@ import type { GradeRules } from "../mastery/grades";
 import type { AssessmentResult, Day, GradeScale, Skill } from "../mastery/types";
 import type { Note } from "../chat/types";
 import type { Assignment, KeyDate, TimetableEntry, Topic } from "../quests/types";
+import type { QuestSettings } from "../quests/config";
 
 export type Level = "school" | "university";
 
@@ -140,6 +141,8 @@ export type SemesterDraft = {
   daysOff?: Array<{ date: Day; reason: string }>;
   /** Real results from school, entered through the Orchestrator. */
   assessments?: AssessmentResult[];
+  /** Hints, lesson length, new skills per quest, set through the Orchestrator. */
+  questSettings?: QuestSettings;
   createdAt: number;
   updatedAt: number;
 };

@@ -5,6 +5,7 @@ import { MessageRow } from "./MessageRow";
 import { InputBox } from "./InputBox";
 import { SelectionReply } from "./SelectionReply";
 import { askClaude, errorCopy, type AskError } from "../platform/claude";
+import { tutorTools } from "../orchestrator/passOn";
 import { mainTurns, noteTurns, titleFrom } from "./prompts";
 import type { PendingAttachment } from "../lib/files";
 import type { Anchor } from "../lib/highlight";
@@ -98,7 +99,8 @@ export function ChatView({ initial, save, onSaveError, rules, placeholder, autoS
     const images = blobs(attachments);
     try {
       const turns = mainTurns(chatRef.current.messages.filter((m) => m.id !== reply.id), rules);
-      const answer = await askClaude(turns, { signal: ctl.signal, images, onText: (t) => patchMessage(reply.id, { text: t }) });
+      const tools = await tutorTools(rules ? "the mistake review" : `the Ask chat "${chatRef.current.title}"`);
+      const answer = await askClaude(turns, { signal: ctl.signal, images, tools, onText: (t) => patchMessage(reply.id, { text: t }) });
       patchMessage(reply.id, { text: answer });
     } catch (e) {
       const err = e as AskError;
@@ -120,7 +122,8 @@ export function ChatView({ initial, save, onSaveError, rules, placeholder, autoS
     setBusyNoteId(noteId);
     try {
       const turns = noteTurns(chatRef.current, note);
-      const answer = await askClaude(turns, { signal: ctl.signal, images, onText: (t) => setLastNoteTurn(noteId, { text: t }) });
+      const tools = await tutorTools("a side note in an Ask chat");
+      const answer = await askClaude(turns, { signal: ctl.signal, images, tools, onText: (t) => setLastNoteTurn(noteId, { text: t }) });
       setLastNoteTurn(noteId, { text: answer });
     } catch (e) {
       const err = e as AskError;
