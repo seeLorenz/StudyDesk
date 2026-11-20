@@ -126,8 +126,10 @@ Until then, updating by hand works the same way: have a Claude Code session buil
 
 StudyDesk gets better with every student who uses it, so please tell us what you run into.
 
-- **Something broke or felt wrong?** [Report a problem](https://github.com/seeLorenz/studydesk/issues/new). Say what you did, what you expected, and what happened. A screenshot helps a lot.
-- **An idea to make it better?** [Share it](https://github.com/seeLorenz/studydesk/issues/new), even a small one. What would save you time?
+You'll need a free GitHub account to post.
+
+- **Something broke or felt wrong?** [Report a problem](https://github.com/seeLorenz/studydesk/issues/new?template=bug.yml). A short form asks what you did and what happened. A screenshot helps a lot.
+- **An idea to make it better?** [Share it](https://github.com/seeLorenz/studydesk/issues/new?template=idea.yml), even a small one. What would save you time?
 - **Want to see what's already known?** Look through the [open issues](https://github.com/seeLorenz/studydesk/issues) and add a 👍 or a comment to the ones you care about.
 
 Please leave out personal details (names, grades, school accounts). Everything posted there is public.
@@ -178,3 +180,7 @@ npm run build      # writes artifact/index.html and artifact/routine.mjs
 The guidelines in short: Claude handles whatever varies by student, code handles the mechanics, every chat box accepts files and images, and modules are designed and built one at a time.
 
 This repository is public. Never commit personal data, secrets or real student information.
+
+## License
+
+StudyDesk is open source under the [MIT License](LICENSE).

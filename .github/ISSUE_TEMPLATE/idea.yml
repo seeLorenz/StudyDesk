@@ -1,0 +1,27 @@
+name: Suggest an idea
+description: Something that would make StudyDesk better or save you time.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Small ideas are welcome too. Everything you write here is **public**, so please leave out personal details.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's getting in your way?
+      description: The situation or annoyance behind the idea.
+      placeholder: "Every Sunday I still have to check my uni portal for new homework sheets…"
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like StudyDesk to do?
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Sketches, screenshots, or examples from other apps.
