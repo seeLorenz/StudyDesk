@@ -143,3 +143,12 @@ Because grading now happens once, the gate no longer stops the quest mid-way. A 
 - **It runs automatically at 22:00.** Until that routine exists, the "Grade me early" button in the overview starts it by hand.
 - **The button lives only in the quest overview**, nowhere else on the page.
 - **Grading opens as its own window or quest**: the results, slip questions, and fix-its for real mistakes happen there, separate from the day's quest. Today's version still shows results inside each part as a stand-in.
+
+## Round 3 changes (2026-11-20)
+
+- **Short cycles instead of big blocks.** The goal is learning, so a quest teaches one idea at a time: a short explanation and a worked example (about 4 minutes to read), then a short problem of the student's own right away ("Learn & try"). Then the next idea. The real homework comes last. Fundamentals are a quick check at the start; skills coming back today are a warm-up before that. A lesson's own problem gets half of the skill's expected time, because it's smaller than a full task.
+- **Finishing bonus only for real progress.** Up to 25 points, scaled by the share of the quest's problems solved. Nothing right means no bonus.
+- **Mistake review.** Once a quest is graded and something went wrong, a "Mistake review" chat appears at the top of the quest page. It goes through the mistakes one at a time in the first version's tutor style: the student explains their step first, gets a first-principles explanation when stuck, then one fresh check question. Open homework gets hints only. Select-to-reply works in it like everywhere else.
+- **Archive.** A graded quest, and any earlier day's quest, moves to "Done quests" below, collapsed, to keep the page clear.
+
+Not yet: marking review items as talked through when the review chat finishes, and feeding the review's check questions back into streaks.

@@ -119,6 +119,16 @@ export function sampleWriter(skills: Skill[]): PartWriter {
         body: `*Local preview: inside claude.ai, Claude writes this explanation from first principles.*\n\n### What is this about?\nThis part would explain **${part.skillIds.map(name).join(", ")}** step by step, with numbers first and the tricky step done slowly.\n\n$$\\sum_{n\\ge 0} q^n = \\frac{1}{1-q} \\quad (|q| < 1)$$\n\n### Checklist\n1. Write out the first few terms.\n2. Do the terms go to 0?\n3. Pick the test that fits.`,
       };
     },
+    async lesson(_q, part) {
+      await new Promise((r) => setTimeout(r, 300));
+      const id = part.skillIds![0];
+      const [prompt, answerKey] = BANK[id]?.[0] ?? [`A short problem on ${name(id)}.`, "Sample answer."];
+      return {
+        title: `How does ${name(id).toLowerCase()} work?`,
+        body: `*Local preview: inside claude.ai, Claude writes a short first-principles explanation here.*\n\n### What is this about?\nOne idea only: **${name(id)}**, with numbers first.\n\n### Worked example\n\nA solved example in the same shape as your problem below.`,
+        problems: [{ id: part.problems[0].id, prompt, answerKey }],
+      };
+    },
     async practice(_q, part) {
       await new Promise((r) => setTimeout(r, 300));
       return part.problems.map((p) => {

@@ -17,13 +17,17 @@ function plan(over: Partial<PlanInput> = {}): Quest {
 }
 
 describe("planQuest", () => {
-  it("builds the example shape for a new student with Sheet 4 due tomorrow", () => {
+  it("teaches in short cycles, one idea at a time, with the homework last", () => {
     const q = plan();
-    expect(q.parts.map((p) => p.kind)).toEqual(["learn", "practice", "learn", "assignment"]);
-    const gate = q.parts[1] as ProblemPart;
-    expect(gate.gate).toBe(true);
-    expect(gate.problems.map((p) => p.skillId)).toEqual(["sk_factorial-quotients", "sk_rational-limits", "sk_nth-root-limits"]);
-    const hw = q.parts[3] as ProblemPart;
+    expect(q.parts.map((p) => p.kind)).toEqual(["practice", "lesson", "lesson", "lesson", "assignment"]);
+    const check = q.parts[0] as ProblemPart;
+    expect(check.problems.map((p) => p.skillId)).toEqual(["sk_factorial-quotients", "sk_rational-limits", "sk_nth-root-limits"]);
+    expect(q.parts.slice(1, 4).map((p) => (p as ProblemPart).skillIds![0])).toEqual(["sk_series-def", "sk_ratio-test", "sk_root-test"]);
+    // each lesson has its own short problem right after the explanation
+    const ratio = q.parts[2] as ProblemPart;
+    expect(ratio.problems).toHaveLength(1);
+    expect(ratio.problems[0].expMinutes).toBe(7);
+    const hw = q.parts[4] as ProblemPart;
     expect(hw.problems.map((p) => p.label)).toEqual(["4.2a", "4.2b"]);
     // 210 goal − 90 lectures = 120 free; a new student gets half.
     expect(q.budgetMinutes).toBe(60);
@@ -100,7 +104,10 @@ describe("writing", () => {
     const q = await writeQuest(plan(), sampleWriter(SAMPLE_SKILLS));
     for (const p of q.parts) {
       if (p.kind === "learn") expect(p.body).not.toBe("");
-      else for (const pr of p.problems) expect(pr.prompt && pr.answerKey).toBeTruthy();
+      else {
+        if (p.kind === "lesson") expect(p.body).toContain("Worked example");
+        for (const pr of p.problems) expect(pr.prompt && pr.answerKey).toBeTruthy();
+      }
     }
   });
 
@@ -140,7 +147,7 @@ describe("hand-in and the gate", () => {
     expect(lockedParts(q, { ...progress, gatesCleared: [gate.id] }).has(hw.id)).toBe(false);
     expect(isFinished(q, progress)).toBe(false);
     const all = q.parts.map((p) => p.id);
-    expect(ungraded(q, { ...progress, handedIn: all }).map((x) => x.problem.label)).toEqual(["4.2a", "4.2b"]);
+    expect(ungraded(q, { ...progress, handedIn: all }).map((x) => x.problem.label ?? x.part.kind)).toEqual(["lesson", "lesson", "lesson", "4.2a", "4.2b"]);
     expect(isFinished(q, { ...progress, handedIn: all })).toBe(false);
     expect(doneTasks([{ quest: q, progress }]).size).toBe(0);
   });
@@ -166,5 +173,34 @@ describe("hand-in and the gate", () => {
     const q = plan();
     const rec = { quest: q, progress: { work: { p1: { verdict: "not_understood", fundamentalSkillId: "sk_rational-limits" } } } };
     expect(recentBlockers([rec], TUE)).toEqual(["sk_rational-limits"]);
+  });
+});
+
+describe("points and the mistake review", () => {
+  it("gives no finishing bonus when nothing was solved", async () => {
+    const { questBonus } = await import("../src/mastery/replay");
+    expect(questBonus(0, 7)).toBe(0);
+    expect(questBonus(7, 7)).toBe(25);
+    expect(questBonus(3, 6)).toBe(13);
+  });
+
+  it("lists not-understood problems and disputed slips, and opens with them", async () => {
+    const { questMistakes, newReviewChat, reviewRules } = await import("../src/quests/review");
+    const q = await writeQuest(plan(), sampleWriter(SAMPLE_SKILLS));
+    const check = q.parts[0] as ProblemPart;
+    const hw = q.parts.find((p) => p.kind === "assignment") as ProblemPart;
+    const w = (verdict: "solved" | "slip" | "not_understood", slipAnswer: "confirmed" | "disputed" | null = null) => ({
+      answerText: "x", files: [], hintsShown: 0, sawSimilar: false, activeSeconds: 1, startedAt: 1, attemptId: "a", verdict, points: 0, feedback: "f", slipAnswer,
+    });
+    const progress = {
+      ...emptyProgress(q.id),
+      work: { [check.problems[0].id]: w("solved"), [check.problems[1].id]: w("slip", "confirmed"), [check.problems[2].id]: w("slip", "disputed"), [hw.problems[0].id]: w("not_understood") },
+    };
+    const skills = new Map(SAMPLE_SKILLS.map((s) => [s.id, s]));
+    const m = questMistakes(q, progress, skills, sem.assignments, `${TUE}T09:00`);
+    expect(m.map((x) => x.problem.id)).toEqual([check.problems[2].id, hw.problems[0].id]);
+    expect(m[1].homeworkOpen).toBe(true);
+    expect(reviewRules(m, "Calculus 1", "English")).toContain("NEVER reveal it");
+    expect(newReviewChat(q, m).messages[0].text).toContain("Task 4.2a");
   });
 });

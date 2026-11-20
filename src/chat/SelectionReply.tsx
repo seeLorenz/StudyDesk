@@ -33,6 +33,9 @@ export function SelectionReply({ scope, disabled, onAsk }: Props) {
       const startBody = (range.startContainer.nodeType === 1 ? (range.startContainer as Element) : range.startContainer.parentElement)?.closest<HTMLElement>("[data-selectable]");
       const endBody = (range.endContainer.nodeType === 1 ? (range.endContainer as Element) : range.endContainer.parentElement)?.closest<HTMLElement>("[data-selectable]");
       if (!startBody || startBody !== endBody || !scope.current?.contains(startBody)) return setPending(null);
+      // A page can nest another selection area (e.g. a chat inside the quest page); each handles its own.
+      const owner = startBody.closest("[data-select-scope]");
+      if (owner && owner !== scope.current) return setPending(null);
       const inNote = (n: Node) => (n.nodeType === 1 ? (n as Element) : n.parentElement)?.closest(".note-host");
       if (inNote(range.startContainer) || inNote(range.endContainer)) return setPending(null);
       const found = anchorFromRange(startBody, range);

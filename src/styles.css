@@ -1327,7 +1327,7 @@ sup.sd-ref {
 .ov-row:hover {
   background: var(--paper);
 }
-.ov-part.is-open .ov-row {
+.ov-part.is-open > .ov-row {
   background: var(--paper);
   border-bottom: 1px solid var(--line);
 }
@@ -1390,7 +1390,7 @@ sup.sd-ref {
   color: var(--ink-3);
   transition: transform 0.15s;
 }
-.ov-part.is-open .ov-chev {
+.ov-part.is-open > .ov-row .ov-chev {
   transform: rotate(180deg);
 }
 .part-body {
@@ -1464,6 +1464,64 @@ sup.sd-ref {
   .ov-status {
     display: none;
   }
+}
+
+/* mistake review: a chat card at the top of the quest page */
+.review-card {
+  margin-bottom: 26px;
+  border: 1px solid var(--hl-edge);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.review-mark {
+  border-color: var(--hl-edge);
+  background: var(--hl);
+  color: var(--ink);
+}
+.review-row[aria-expanded="true"] {
+  border-bottom: 1px solid var(--line);
+}
+.review-row[aria-expanded="true"] .ov-chev {
+  transform: rotate(180deg);
+}
+.review-chat {
+  height: min(72vh, 680px);
+  display: flex;
+  flex-direction: column;
+}
+.review-chat .chat {
+  flex: 1;
+}
+.archive {
+  margin-top: 40px;
+}
+.archive-h {
+  font-family: var(--font-read);
+  font-weight: 500;
+  font-size: 22px;
+  margin: 0 0 12px;
+}
+.archive .ov-title {
+  font-size: 16px;
+}
+.archive-body {
+  padding: 8px 18px 20px;
+}
+.archive-body .quest-head h1 {
+  display: none;
+}
+
+.your-turn {
+  margin: 28px 0 12px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--line);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
 }
 
 /* ---------- narrow screens ---------- */

@@ -9,8 +9,8 @@ import { isRequired } from "../mastery/mastery";
 import { dueSkills, replay, type Exam } from "../mastery/replay";
 import { expectedMinutes, questBudget, slownessFactor } from "../mastery/timing";
 import type { Attempt, Day, ReviewItem, Skill, SkillState } from "../mastery/types";
-import { QUEST_CONFIG, learnMinutes } from "./config";
-import type { Assignment, AssignmentTask, LearnPart, ProblemPart, Quest, QuestProblem, Semester, TimetableEntry } from "./types";
+import { QUEST_CONFIG, partMinutes } from "./config";
+import type { Assignment, AssignmentTask, ProblemPart, Quest, QuestProblem, Semester, TimetableEntry } from "./types";
 
 export type PlanInput = {
   semester: Semester;
@@ -114,9 +114,11 @@ export function planQuest(input: PlanInput): PlanResult {
   const planned = new Set<string>();
   const leftOut: string[] = [];
 
+  const lessonMin = (s: Skill) => Math.max(1, Math.round(expMin(s) * QUEST_CONFIG.lesson.problemShare));
   const minutes = () => {
-    let m = learnMinutes(concepts.length) + learnMinutes(taskLearn.length) + learnMinutes(newIds.length);
-    for (const id of [...gate, ...reviewIds, ...newIds]) m += expMin(byId.get(id)!);
+    let m = 0;
+    for (const id of [...concepts, ...taskLearn, ...newIds]) m += QUEST_CONFIG.lesson.readMinutes + lessonMin(byId.get(id)!);
+    for (const id of [...gate, ...reviewIds]) m += expMin(byId.get(id)!);
     for (const t of tasks) m += expMin(byId.get(t.task.skillId)!);
     return m;
   };
@@ -233,13 +235,16 @@ export function planQuest(input: PlanInput): PlanResult {
     expMinutes: expMin(byId.get(id)!),
     maxPoints: QUEST_CONFIG.practiceMaxPoints,
   });
-  const learn = (ids: string[], title: string): LearnPart => ({
-    kind: "learn",
+  /** One idea: explanation, worked example, then a short problem of the student's own. */
+  const lesson = (id: string): ProblemPart => ({
+    kind: "lesson",
     id: `part${++partN}`,
-    title,
-    skillIds: ids,
-    estMinutes: learnMinutes(ids.length),
+    title: byId.get(id)!.name,
+    gate: false,
+    skillIds: [id],
+    readMinutes: QUEST_CONFIG.lesson.readMinutes,
     body: "",
+    problems: [{ ...practiceProblem(id), expMinutes: lessonMin(byId.get(id)!) }],
   });
   const practice = (ids: string[], title: string, isGate: boolean): ProblemPart => ({
     kind: "practice",
@@ -250,14 +255,10 @@ export function planQuest(input: PlanInput): PlanResult {
   });
 
   const parts: Quest["parts"] = [];
+  // Short cycles, one idea at a time, the real homework last.
   if (reviewIds.length) parts.push(practice(reviewIds, "Warm-up: skills coming back today", false));
-  if (concepts.length) parts.push(learn(concepts, names(concepts).join(", ")));
-  if (gate.length) parts.push(practice(gate, "The fundamentals the next steps need", true));
-  if (taskLearn.length) parts.push(learn(taskLearn, names(taskLearn).join(", ")));
-  if (newIds.length) {
-    parts.push(learn(newIds, names(newIds).join(", ")));
-    parts.push(practice(newIds, "Try it yourself", false));
-  }
+  if (gate.length) parts.push(practice(gate, "Quick check: the basics the next steps use", true));
+  for (const id of [...concepts, ...taskLearn, ...newIds]) parts.push(lesson(id));
   for (const a of assignments) {
     const mine = tasks.filter((t) => t.assignment.id === a.id);
     if (!mine.length) continue;
@@ -321,10 +322,7 @@ export function planQuest(input: PlanInput): PlanResult {
     }
   }
 
-  const plannedMinutes = parts.reduce(
-    (s, p) => s + (p.kind === "learn" ? p.estMinutes : p.problems.reduce((x, q) => x + q.expMinutes, 0)),
-    0,
-  );
+  const plannedMinutes = parts.reduce((s, p) => s + partMinutes(p), 0);
 
   return {
     kind: "quest",

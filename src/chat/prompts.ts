@@ -27,14 +27,14 @@ export function messageContent(m: Message): string {
 }
 
 /** Turns for the main chat: standing rules, then the conversation, newest last. Oldest turns drop first. */
-export function mainTurns(messages: Message[]): Turn[] {
+export function mainTurns(messages: Message[], rules: string = MAIN_RULES): Turn[] {
   const convo: Turn[] = messages
     .filter((m) => m.role === "user" || (m.text.trim() && !m.error))
     .map((m) => ({ role: m.role, content: messageContent(m) }));
   let size = convo.reduce((n, t) => n + t.content.length, 0);
   while (size > MAX_PROMPT_CHARS && convo.length > 1) size -= convo.shift()!.content.length;
-  while (convo.length && convo[0].role !== "user") convo.shift();
-  return [{ role: "user", content: MAIN_RULES }, ...convo];
+  // The rules are a user turn, so the conversation may open with StudyDesk (e.g. a review chat's first message).
+  return [{ role: "user", content: rules }, ...convo];
 }
 
 function transcript(chat: Chat, uptoMessageId: string, budget: number): string {

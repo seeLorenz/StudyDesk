@@ -13,6 +13,9 @@ type Props = {
   initial: Chat;
   save: (chat: Chat) => Promise<void>;
   onSaveError: (message: string) => void;
+  /** Standing instructions for Claude in this chat; defaults to the general study assistant. */
+  rules?: string;
+  placeholder?: string;
 };
 
 const STARTERS = [
@@ -21,7 +24,7 @@ const STARTERS = [
   "What caused the French Revolution? Keep it to the main causes",
 ];
 
-export function ChatView({ initial, save, onSaveError }: Props) {
+export function ChatView({ initial, save, onSaveError, rules, placeholder }: Props) {
   const [chat, setChat] = useState<Chat>(initial);
   const chatRef = useRef(chat);
   chatRef.current = chat;
@@ -82,7 +85,7 @@ export function ChatView({ initial, save, onSaveError }: Props) {
     mainCtl.current = ctl;
     const images = blobs(attachments);
     try {
-      const turns = mainTurns(chatRef.current.messages.filter((m) => m.id !== reply.id));
+      const turns = mainTurns(chatRef.current.messages.filter((m) => m.id !== reply.id), rules);
       const answer = await askClaude(turns, { signal: ctl.signal, images, onText: (t) => patchMessage(reply.id, { text: t }) });
       patchMessage(reply.id, { text: answer });
     } catch (e) {
@@ -205,6 +208,7 @@ export function ChatView({ initial, save, onSaveError }: Props) {
       <div
         className="scroll"
         ref={scrollRef}
+        data-select-scope=""
         onScroll={(e) => {
           const el = e.currentTarget;
           stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -247,7 +251,7 @@ export function ChatView({ initial, save, onSaveError }: Props) {
         <div className="composer">
           <InputBox
             id="composer-text"
-            placeholder="Ask anything, or paste a screenshot or notes"
+            placeholder={placeholder ?? "Ask anything, or paste a screenshot or notes"}
             busy={generatingId !== null}
             onSend={sendMain}
             onStop={() => mainCtl.current?.abort()}

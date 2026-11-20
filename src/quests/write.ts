@@ -68,11 +68,12 @@ const header = (ctx: Ctx) =>
 ${ctx.known.length ? `The student can already do: ${ctx.known.join(", ")}.` : "Assume the student knows only school basics unless a skill says otherwise."}`;
 
 /** What comes after a learn part, so the explanation prepares for it. */
-function upcoming(quest: Quest, part: LearnPart, ctx: Ctx): string {
-  const i = quest.parts.indexOf(part);
+function upcoming(quest: Quest, part: { skillIds?: string[] }, ctx: Ctx): string {
+  const skillIds = part.skillIds ?? [];
+  const i = quest.parts.findIndex((p) => p === part || (p as { id: string }).id === (part as { id?: string }).id);
   const later = quest.parts.slice(i + 1).filter((p): p is ProblemPart => p.kind !== "learn");
   const lines = later.flatMap((p) =>
-    p.problems.filter((q) => part.skillIds.includes(q.skillId)).map((q) => (q.prompt ? `- ${q.label ?? ""} ${q.prompt}`.trim() : `- a practice problem on ${ctx.skills.get(q.skillId)!.name}`)),
+    p.problems.filter((q) => skillIds.includes(q.skillId)).map((q) => (q.prompt ? `- ${q.label ?? ""} ${q.prompt}`.trim() : `- a practice problem on ${ctx.skills.get(q.skillId)!.name}`)),
   );
   return lines.length ? `Later in today's quest the student will solve:\n${lines.join("\n")}\nPrepare them for exactly these, without solving any of them.` : "";
 }
@@ -97,6 +98,41 @@ Reply in this exact format and nothing else:
 a short title in the form of a question the student would ask
 === BODY ===
 the explanation in Markdown`,
+    },
+  ];
+}
+
+export function lessonTurns(quest: Quest, part: ProblemPart, ctx: Ctx): Turn[] {
+  const id = part.skillIds![0];
+  const p = part.problems[0];
+  return [
+    {
+      role: "user",
+      content: `You write one short lesson of today's study quest. It teaches ONE idea in a quick cycle: a brief explanation, one worked example, then the student solves a problem on their own straight away. The student reads the explanation and example in about ${part.readMinutes ?? 4} minutes, so keep it tight: teach exactly this idea, nothing around it.
+
+${header(ctx)}
+
+The idea:
+${skillLine(ctx, id)}
+
+${upcoming(quest, part, ctx)}
+
+${STYLE}
+(Here the checklist at the end is 2 or 3 lines at most.)
+
+Then write the student's own problem (${p.id}): like the worked example but with different numbers, solvable in about ${p.expMinutes} min, with one clear final answer.
+
+Reply in this exact format and nothing else:
+=== TITLE ===
+a short title in the form of a question the student would ask
+=== EXPLANATION ===
+Markdown
+=== WORKED EXAMPLE ===
+Markdown: the problem, then the solution step by step
+=== ${p.id} PROMPT ===
+the student's problem, Markdown
+=== ${p.id} ANSWER ===
+worked solution with the final result`,
     },
   ];
 }
@@ -175,6 +211,7 @@ async function askSections(ask: Ask, turns: Turn[], keys: string[], what: string
 
 export type PartWriter = {
   learn(quest: Quest, part: LearnPart): Promise<Pick<LearnPart, "title" | "body">>;
+  lesson(quest: Quest, part: ProblemPart): Promise<{ title: string; body: string; problems: Array<Pick<QuestProblem, "id" | "prompt" | "answerKey">> }>;
   practice(quest: Quest, part: ProblemPart): Promise<Array<Pick<QuestProblem, "id" | "prompt" | "answerKey">>>;
   assignment(quest: Quest, part: ProblemPart): Promise<Array<Pick<QuestProblem, "id" | "answerKey" | "hints" | "similarSolved">>>;
 };
@@ -186,6 +223,22 @@ export function claudeWriter(semester: Semester, quest: Quest, knownSkillIds: st
     async learn(q, part) {
       const s = await askSections(ask, learnTurns(q, part, ctx), ["TITLE", "BODY"], `the explanation "${part.title}"`, t.learn, signal);
       return { title: s.get("TITLE")!.replace(/^#+\s*/, ""), body: s.get("BODY")! };
+    },
+    async lesson(q, part) {
+      const pid = part.problems[0].id.toUpperCase();
+      const s = await askSections(
+        ask,
+        lessonTurns(q, part, ctx),
+        ["TITLE", "EXPLANATION", "WORKED EXAMPLE", `${pid} PROMPT`, `${pid} ANSWER`],
+        `the lesson "${part.title}"`,
+        t.lesson,
+        signal,
+      );
+      return {
+        title: s.get("TITLE")!.replace(/^#+\s*/, ""),
+        body: `${s.get("EXPLANATION")!}\n\n### Worked example\n\n${s.get("WORKED EXAMPLE")!}`,
+        problems: [{ id: part.problems[0].id, prompt: s.get(`${pid} PROMPT`)!, answerKey: s.get(`${pid} ANSWER`)! }],
+      };
     },
     async practice(_q, part) {
       const keys = part.problems.flatMap((p) => [`${p.id.toUpperCase()} PROMPT`, `${p.id.toUpperCase()} ANSWER`]);
@@ -226,6 +279,11 @@ export async function writeQuest(plan: Quest, writer: PartWriter, onStatus?: (s:
     try {
       if (part.kind === "learn") {
         Object.assign(part, await writer.learn(plan, part));
+      } else if (part.kind === "lesson") {
+        const l = await writer.lesson(plan, part);
+        part.title = l.title;
+        part.body = l.body;
+        for (const f of l.problems) Object.assign(part.problems.find((p) => p.id === f.id)!, f);
       } else {
         const filled = part.kind === "practice" ? await writer.practice(plan, part) : await writer.assignment(plan, part);
         for (const f of filled) Object.assign(part.problems.find((p) => p.id === f.id)!, f);

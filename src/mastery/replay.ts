@@ -176,7 +176,18 @@ export function dueSkills(
   return out;
 }
 
-/** +25 for each day's quest the student finished. */
-export function questPoints(finished: Array<{ questId: string; day: Day }>): PointsEvent[] {
-  return finished.map((q) => ({ day: q.day, kind: "quest_finished", points: CONFIG.points.quest_finished, questId: q.questId }));
+/**
+ * The finishing bonus only rewards verified progress: up to 25, scaled by the
+ * share of the quest's problems that were solved (confirmed slips count).
+ * Nothing right means no bonus.
+ */
+export function questBonus(solved: number, total: number): number {
+  return total > 0 ? Math.round((CONFIG.points.quest_finished * solved) / total) : 0;
+}
+
+/** The finishing bonus for each quest the student finished. */
+export function questPoints(finished: Array<{ questId: string; day: Day; solved: number; total: number }>): PointsEvent[] {
+  return finished
+    .map((q) => ({ day: q.day, kind: "quest_finished" as const, points: questBonus(q.solved, q.total), questId: q.questId }))
+    .filter((e) => e.points > 0);
 }

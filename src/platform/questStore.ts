@@ -2,8 +2,10 @@
 // artifact it uses the artifact database, in each user's private area:
 //   data/users/<uid>/semester              the semester (sample data until onboarding exists)
 //   data/users/<uid>/quests/records/<id>   one quest plus the student's work on it
+//   data/users/<uid>/quests/reviews/<id>   the mistake-review chat for that quest
 // Elsewhere it falls back to this browser's localStorage.
 
+import type { Chat } from "../chat/types";
 import type { QuestRecord, Semester } from "../quests/types";
 
 export interface QuestStore {
@@ -12,6 +14,9 @@ export interface QuestStore {
   saveSemester(s: Semester): Promise<void>;
   loadRecords(): Promise<QuestRecord[]>;
   saveRecord(r: QuestRecord): Promise<void>;
+  /** Mistake-review chats, one per graded quest, keyed by quest id. */
+  loadReviewChats(): Promise<Record<string, Chat>>;
+  saveReviewChat(questId: string, chat: Chat): Promise<void>;
 }
 
 const plain = <T>(x: T) => JSON.parse(JSON.stringify(x)) as Record<string, unknown>;
@@ -29,6 +34,7 @@ export async function openQuestStore(): Promise<QuestStore> {
 function cloudQuestStore(db: DB, uid: string): QuestStore {
   const semester = db.doc(`data/users/${uid}/semester`);
   const records = db.doc(`data/users/${uid}/quests`).collection("records");
+  const reviews = db.doc(`data/users/${uid}/quests`).collection("reviews");
   // One write at a time per record; only the latest pending version is written.
   const pending = new Map<string, { running: boolean; next: QuestRecord | null; waiters: Array<(e?: unknown) => void> }>();
   async function drain(id: string) {
@@ -62,6 +68,14 @@ function cloudQuestStore(db: DB, uid: string): QuestStore {
     async loadRecords() {
       return (await records.get()).docs.filter((d) => d.exists).map((d) => d.data() as unknown as QuestRecord);
     },
+    async loadReviewChats() {
+      const out: Record<string, Chat> = {};
+      for (const d of (await reviews.get()).docs) if (d.exists) out[d.id] = d.data() as unknown as Chat;
+      return out;
+    },
+    async saveReviewChat(questId, chat) {
+      await reviews.doc(questId).set(plain(chat));
+    },
     saveRecord(r) {
       const id = r.quest.id;
       if (!pending.has(id)) pending.set(id, { running: false, next: null, waiters: [] });
@@ -76,7 +90,7 @@ function cloudQuestStore(db: DB, uid: string): QuestStore {
 
 function localQuestStore(): QuestStore {
   const KEY = "studydesk.quests.v1";
-  const mem: { semester: Semester | null; records: QuestRecord[] } = { semester: null, records: [] };
+  const mem: { semester: Semester | null; records: QuestRecord[]; reviews?: Record<string, Chat> } = { semester: null, records: [] };
   const read = (): typeof mem => {
     try {
       return { ...mem, ...JSON.parse(localStorage.getItem(KEY) || "{}") };
@@ -87,6 +101,7 @@ function localQuestStore(): QuestStore {
   const write = (d: typeof mem) => {
     mem.semester = d.semester;
     mem.records = d.records;
+    mem.reviews = d.reviews;
     try {
       localStorage.setItem(KEY, JSON.stringify(d));
     } catch {
@@ -103,6 +118,13 @@ function localQuestStore(): QuestStore {
     },
     async loadRecords() {
       return read().records;
+    },
+    async loadReviewChats() {
+      return read().reviews ?? {};
+    },
+    async saveReviewChat(questId, chat) {
+      const d = read();
+      write({ ...d, reviews: { ...(d.reviews ?? {}), [questId]: chat } });
     },
     async saveRecord(r) {
       const d = read();

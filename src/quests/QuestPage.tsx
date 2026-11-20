@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Note } from "../chat/types";
+import type { Chat, Note } from "../chat/types";
+import { ChatView } from "../chat/ChatView";
 import { SelectionReply } from "../chat/SelectionReply";
 import { passageNoteTurns } from "../chat/prompts";
 import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
@@ -7,24 +8,33 @@ import { useSideNotes } from "../notes/useSideNotes";
 import { CONFIG } from "../mastery/config";
 import { toDay } from "../mastery/days";
 import { answerSlip, GradingFailed } from "../mastery/grading";
-import { replay } from "../mastery/replay";
+import { questBonus, replay } from "../mastery/replay";
 import { askClaude, claudeAvailable, errorCopy, type AskError } from "../platform/claude";
 import { openMasteryStore, type MasteryData, type MasteryStore } from "../platform/masteryStore";
 import { openQuestStore, type QuestStore } from "../platform/questStore";
-import { QUEST_CONFIG } from "./config";
+import { QUEST_CONFIG, partMinutes } from "./config";
 import { allHandedIn, answerUnlocked, emptyProgress, emptyWork, handIn, isFinished, ungraded } from "./handin";
 import { doneTasks, formatDue, planQuest, recentBlockers, type PlanResult } from "./plan";
 import { ProblemCard, clock } from "./ProblemCard";
 import { sampleGradingAsk, sampleSemester, sampleWriter } from "./seed";
 import type { AnswerFile, ProblemPart, ProblemWork, Quest, QuestPart, QuestProgress, QuestRecord, Semester } from "./types";
 import { claudeWriter, writeQuest, type WriteStatus } from "./write";
+import { newReviewChat, questMistakes, reviewRules } from "./review";
 
 // The quest page: builds today's quest on the first open of the day (the
 // in-page fallback from the design), then lets the student work through it
 // part by part and hand each problem part in to the grading agent.
 // Rough on purpose: the overall app layout comes later.
 
-type Data = { qs: QuestStore; ms: MasteryStore; semester: Semester; records: QuestRecord[]; mastery: MasteryData; live: boolean };
+type Data = {
+  qs: QuestStore;
+  ms: MasteryStore;
+  semester: Semester;
+  records: QuestRecord[];
+  reviewChats: Record<string, Chat>;
+  mastery: MasteryData;
+  live: boolean;
+};
 
 function nowLocal(d = new Date()): string {
   return `${toDay(d)}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -69,8 +79,8 @@ export function QuestPage() {
           mastery.targets.push(t);
         }
       }
-      const records = await qs.loadRecords();
-      setData({ qs, ms, semester, records, mastery, live });
+      const [records, reviewChats] = await Promise.all([qs.loadRecords(), qs.loadReviewChats()]);
+      setData({ qs, ms, semester, records, reviewChats, mastery, live });
     })().catch((e) => setLoadError(message(e)));
   }, []);
 
@@ -78,6 +88,29 @@ export function QuestPage() {
     () => data?.records.filter((r) => r.quest.date === today).sort((a, b) => b.quest.createdAt - a.quest.createdAt)[0] ?? null,
     [data, today],
   );
+  const currentDone = !!current && isFinished(current.quest, current.progress);
+  /** Graded quests and earlier days' quests, newest first. */
+  const archive = useMemo(
+    () =>
+      (data?.records ?? [])
+        .filter((r) => r !== current || currentDone)
+        .filter((r) => isFinished(r.quest, r.progress) || r.quest.date < today)
+        .sort((a, b) => b.quest.createdAt - a.quest.createdAt),
+    [data, current, currentDone, today],
+  );
+  /** The newest graded quest with mistakes gets the review chat at the top. */
+  const review = useMemo(() => {
+    if (!data) return null;
+    for (const r of archive) {
+      if (!isFinished(r.quest, r.progress)) continue;
+      const skills = new Map(data.semester.skills.map((s) => [s.id, s]));
+      const mistakes = questMistakes(r.quest, r.progress, skills, data.semester.assignments, nowLocal());
+      return mistakes.length ? { record: r, mistakes } : null;
+    }
+    return null;
+  }, [archive, data]);
+  const [openArchived, setOpenArchived] = useState<string | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(true);
 
   const build = useCallback(
     async (budgetOverride?: number) => {
@@ -120,7 +153,7 @@ export function QuestPage() {
   );
 
   useEffect(() => {
-    if (data && !current && !building && !autoBuilt.current) {
+    if (data && !current && !building && !autoBuilt.current && !planNotice) {
       autoBuilt.current = true;
       void build();
     }
@@ -140,12 +173,50 @@ export function QuestPage() {
   if (!data) return <div className="quest-page"><p className="quest-muted">Loading today's quest…</p></div>;
 
   return (
-    <div className="quest-page" ref={scroller}>
+    <div className="quest-page" ref={scroller} data-select-scope="">
       {!data.live && (
         <p className="quest-banner">Preview mode: no Claude here, so quests use sample text and a stand-in grader (an empty answer is "not yet", an answer with the word "typo" is a slip).</p>
       )}
 
-      {current && !building ? (
+      {review && (
+        <section className="review-card">
+          <button type="button" className="ov-row review-row" aria-expanded={reviewOpen} onClick={() => setReviewOpen((o) => !o)}>
+            <span className="ov-mark review-mark" aria-hidden="true">
+              !
+            </span>
+            <span className="ov-main">
+              <span className="ov-kind">Mistake review · {WEEKDAY(review.record.quest.date)}</span>
+              <span className="ov-title">
+                {review.mistakes.length} {review.mistakes.length === 1 ? "mistake" : "mistakes"} to understand
+              </span>
+            </span>
+            <svg className="ov-chev" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          {reviewOpen && (
+            <div className="review-chat">
+              <ChatView
+                key={review.record.quest.id}
+                initial={data.reviewChats[review.record.quest.id] ?? newReviewChat(review.record.quest, review.mistakes)}
+                rules={reviewRules(
+                  review.mistakes,
+                  data.semester.courses.find((c) => c.id === review.record.quest.courseId)?.name ?? "",
+                  data.semester.courses.find((c) => c.id === review.record.quest.courseId)?.teachingLanguage ?? "English",
+                )}
+                placeholder="Answer here, or paste a photo of your working"
+                save={async (chat) => {
+                  setData((d) => (d ? { ...d, reviewChats: { ...d.reviewChats, [review.record.quest.id]: chat } } : d));
+                  await data.qs.saveReviewChat(review.record.quest.id, chat);
+                }}
+                onSaveError={() => {}}
+              />
+            </div>
+          )}
+        </section>
+      )}
+
+      {current && !currentDone && !building ? (
         <QuestView
           key={current.quest.id}
           record={current}
@@ -154,6 +225,11 @@ export function QuestPage() {
           onRecord={(r) => setData((d) => (d ? { ...d, records: d.records.map((x) => (x.quest.id === r.quest.id ? r : x)) } : d))}
           onMastery={(m) => setData((d) => (d ? { ...d, mastery: m } : d))}
         />
+      ) : current && currentDone && !building ? (
+        <section className="quest-empty">
+          <h2>Today's quest is done</h2>
+          <p className="quest-muted">It's in the archive below{review?.record === current ? ", and the mistake review above goes through what went wrong" : ""}. Tomorrow's quest builds on today's results.</p>
+        </section>
       ) : building ? (
         <section className="quest-building" aria-live="polite">
           <h2>Writing today's quest</h2>
@@ -163,7 +239,7 @@ export function QuestPage() {
               const st = building.status[p.id]?.state ?? "writing";
               return (
                 <li key={p.id} className={`b-${st}`}>
-                  Part {i + 1} · {p.kind === "learn" ? "Learn" : p.kind === "practice" ? "Practice" : "Assignment"}: {p.title}
+                  Part {i + 1} · {KIND[p.kind]}: {p.title}
                   <span>{st === "done" ? "ready" : st === "failed" ? "failed" : "writing…"}</span>
                 </li>
               );
@@ -197,6 +273,53 @@ export function QuestPage() {
         </section>
       ) : (
         <p className="quest-muted">Getting today's quest ready…</p>
+      )}
+
+      {archive.length > 0 && (
+        <section className="archive" aria-label="Done quests">
+          <h2 className="archive-h">Done quests</h2>
+          <div className="overview">
+            {archive.map((r) => {
+              const isOpen = openArchived === r.quest.id;
+              const course = data.semester.courses.find((c) => c.id === r.quest.courseId);
+              const probs = r.quest.parts.flatMap((p) => (p.kind === "learn" ? [] : p.problems));
+              const pts = probs.reduce((s, p) => s + (r.progress.work[p.id]?.points ?? 0), 0);
+              const max = probs.reduce((s, p) => s + p.maxPoints, 0);
+              const graded = isFinished(r.quest, r.progress);
+              return (
+                <div key={r.quest.id} className={"ov-part" + (isOpen ? " is-open" : "")}>
+                  <button type="button" className="ov-row is-done" aria-expanded={isOpen} onClick={() => setOpenArchived(isOpen ? null : r.quest.id)}>
+                    <span className={"ov-mark " + (graded ? "graded" : "done")} aria-hidden="true">
+                      {graded ? "✓" : ""}
+                    </span>
+                    <span className="ov-main">
+                      <span className="ov-kind">
+                        {WEEKDAY(r.quest.date)} {r.quest.date.slice(5).replace("-", "/")} · {course?.name}
+                      </span>
+                      <span className="ov-title">{r.quest.reason}</span>
+                    </span>
+                    <span className="ov-status">{graded ? `${pts}/${max}` : "Not finished"}</span>
+                    <svg className="ov-chev" viewBox="0 0 16 16" aria-hidden="true">
+                      <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                  {isOpen && (
+                    <div className="archive-body">
+                      <QuestView
+                        key={r.quest.id}
+                        record={r}
+                        data={data}
+                        scroller={scroller}
+                        onRecord={(x) => setData((d) => (d ? { ...d, records: d.records.map((y) => (y.quest.id === x.quest.id ? x : y)) } : d))}
+                        onMastery={(m) => setData((d) => (d ? { ...d, mastery: m } : d))}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
 
       <footer className="quest-testing">
@@ -237,7 +360,7 @@ type ViewProps = {
   onMastery: (m: MasteryData) => void;
 };
 
-const KIND = { learn: "Learn", practice: "Practice", assignment: "Assignment" } as const;
+const KIND = { learn: "Learn", lesson: "Learn & try", practice: "Practice", assignment: "Homework" } as const;
 
 const NOTE_RULES = `You are StudyDesk, a study assistant for high school and university students.
 The student is working through today's study quest and highlighted a passage in it to ask about.
@@ -250,9 +373,6 @@ Your answer appears in a small side note right under that passage. So:
 const HOMEWORK_RULE = `
 - This passage belongs to real homework the student hasn't handed in yet. Guide with a question or the principle behind it; never give the answer or a finished step.`;
 
-function partMinutes(p: QuestPart): number {
-  return p.kind === "learn" ? p.estMinutes : p.problems.reduce((s, q) => s + q.expMinutes, 0);
-}
 
 function QuestView({ record, data, scroller, onRecord, onMastery }: ViewProps) {
   const { quest } = record;
@@ -317,7 +437,8 @@ function QuestView({ record, data, scroller, onRecord, onMastery }: ViewProps) {
     quest.parts.forEach((part, i) => {
       const where = `Part ${i + 1} (${KIND[part.kind]}): ${part.title}`;
       if (part.kind === "learn") m.set(part.id, { text: part.body, part, label: where });
-      else
+      else {
+        if (part.body) m.set(part.id, { text: part.body, part, label: `${where}, the explanation and worked example` });
         part.problems.forEach((p) => {
           const name = p.label ? `task ${p.label}` : "a problem";
           m.set(`${p.id}-prompt`, { text: p.prompt, part, label: `${where}, ${name}` });
@@ -327,6 +448,7 @@ function QuestView({ record, data, scroller, onRecord, onMastery }: ViewProps) {
           const fb = progress.work[p.id]?.feedback;
           if (fb) m.set(`${p.id}-feedback`, { text: fb, part, label: `${where}, the grader's feedback on ${name}` });
         });
+      }
     });
     return m;
   }, [quest, progress.work]);
@@ -482,6 +604,12 @@ ${b?.text ?? ""}
     }).length;
     return (
       <div className="part-body">
+        {part.kind === "lesson" && part.body && (
+          <>
+            <div className="learn-text">{md(part.id, part.body)}</div>
+            <h3 className="your-turn">Your turn</h3>
+          </>
+        )}
         {part.kind === "assignment" && !isIn && (
           <p className="part-note">This is your real homework. Solve it the way you'd hand it in, then type your answer or add a photo. Hints guide you without giving the answer away.</p>
         )}
@@ -614,15 +742,25 @@ function Summary({ quest, progress, mastery, spentSeconds, semester }: { quest: 
   const attemptIds = new Set(Object.values(progress.work).map((w) => w.attemptId).filter(Boolean) as string[]);
   const { states, points } = replay(mastery.skills, mastery.attempts, mastery.reviews);
   const earned = points.filter((p) => p.attemptId && attemptIds.has(p.attemptId)).reduce((s, p) => s + p.points, 0);
-  const total = earned + CONFIG.points.quest_finished;
+  const probs = quest.parts.flatMap((p) => (p.kind === "learn" ? [] : p.problems));
+  const solved = probs.filter((p) => {
+    const w = progress.work[p.id];
+    return w?.verdict === "solved" || (w?.verdict === "slip" && w.slipAnswer === "confirmed");
+  }).length;
+  const bonus = questBonus(solved, probs.length);
+  const total = earned + bonus;
   const skillIds = [...new Set(quest.parts.flatMap((p) => (p.kind === "learn" ? [] : p.problems.map((q) => q.skillId))))];
   const pendingSlips = Object.values(progress.work).filter((w) => w.verdict === "slip" && !w.slipAnswer).length;
   return (
     <section className="summary">
       <h2>Quest finished</h2>
       <p className="summary-points">
-        +{total} points <span className="quest-muted">({earned} from problems, {CONFIG.points.quest_finished} for finishing)</span>
+        {total > 0 ? `+${total} points` : "No points this time"}{" "}
+        <span className="quest-muted">
+          ({solved} of {probs.length} problems solved: {earned} from problems, {bonus} of {CONFIG.points.quest_finished} finishing bonus)
+        </span>
       </p>
+      {solved === 0 && <p>Nothing was solved yet, so there's nothing to reward. The mistake review at the top goes through it with you.</p>}
       <p>
         Active time {clock(spentSeconds)} against a plan of about {quest.plannedMinutes} min. These times train your estimates, so tomorrow's quest fits better.
       </p>

@@ -100,8 +100,12 @@ export type LearnPart = {
   body: string;
 };
 
+/**
+ * A part with problems. A "lesson" teaches one idea in a short cycle: a brief
+ * explanation, a worked example, then the student's own turn right away.
+ */
 export type ProblemPart = {
-  kind: "practice" | "assignment";
+  kind: "practice" | "assignment" | "lesson";
   id: string;
   title: string;
   /** If a problem here isn't understood, later problem parts wait for a fix-it. */
@@ -110,6 +114,12 @@ export type ProblemPart = {
   /** For grading: real homework not yet handed in shows only the first wrong step. */
   handedInToSchool?: boolean;
   problems: QuestProblem[];
+  /** Lessons only: the explanation and worked example (Markdown). */
+  body?: string;
+  /** Lessons only: minutes to read the explanation and example. */
+  readMinutes?: number;
+  /** Lessons only: the idea being taught. */
+  skillIds?: string[];
 };
 
 export type QuestPart = LearnPart | ProblemPart;
