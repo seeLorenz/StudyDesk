@@ -2,7 +2,7 @@
 
 How StudyDesk takes in a student's course files (single files or whole course zips) and how the organization agent reads them: by navigating like a person would, not by reading everything. It replaces the "files are read at drop time and pasted into the reading" part of [onboarding.md](onboarding.md) and the file part of jobs in [orchestrator.md](orchestrator.md).
 
-Status: design proposed, waiting for Lorenz's OK. Nothing here is built yet.
+Status: design agreed with Lorenz (2026-11-20, see Decisions); being built.
 
 ## Why this changes
 
@@ -32,7 +32,7 @@ This part has one right answer, so it is code (guideline 3).
 | PDF with text, image, text or code file | Original kept in the file store; outline built |
 | Word, PowerPoint, Excel, OpenDocument | Text pulled out in the page (they are zips of text inside), one marker per slide or sheet, stored as text; outline built. The file store can't keep these originals, so the text version is what's kept |
 | PDF without text (a scan), handwritten notes | Original kept; marked "needs reading by the agent" (see section 3) |
-| Video and audio | Listed in the inventory by name, not stored (too big, and not readable). The agent knows they exist ("lecture recording, week 4") |
+| Video and audio | Listed in the inventory by name, not stored (too big for the file store). By default the agent works from the title ("lecture recording, week 4"). The student is asked once per drop whether that's fine (see "Videos" below) |
 | System junk (`__MACOSX`, `.DS_Store`, `Thumbs.db`, empty files) | Dropped silently |
 | Anything else | Listed in the inventory as "unknown format, not read"; the agent decides whether it matters |
 | A single file over the file store's limit (20 MB) | Text and outline kept, original not; said once in the summary |
@@ -69,7 +69,7 @@ The live log shows each step and why, so the student sees it reason rather than 
 
 **The catalog stays page-exact.** Every skill still points to a file and its pages or lines. Entries the agent built from an outline without opening the pages are marked as such, and quests open the real pages later anyway, so a slightly coarse entry costs nothing.
 
-**A soft limit.** Per course the agent aims for about 30 file opens on its first read. If it needs more, it says why in the log and carries on; the limit is there to make "read everything" a conscious choice, not a default.
+**No limit on opens, but every open has a reason.** There is no cap on how many files the agent may open: a hard number would be arbitrary and could make it stop before the map is right. Instead, every file it opens gets a log line saying why, and every file it skips gets one saying why not. "Read everything" stays possible when the course really needs it, but it has to be argued file by file.
 
 **Later reads use the same inventory.** New files for a course (a new sheet, a new zip) are added to the inventory and the agent is told what's new since its last read, so it opens the new files and only re-opens old ones when something points back to them.
 
@@ -98,6 +98,17 @@ Where judgment *is* needed (which of 300 files matter, whether two files are ver
 - **Bulk mechanical reading can go to Sonnet.** Inside a cloud session, the Opus agent may hand pure grunt work to a Sonnet helper: reading every page of a 200-page scan into text, or outlining a long slide deck with no bookmarks. That's transcription, not judgment, and it's where most of the reading cost is.
 - Sorting the inventory doesn't need its own model: a file list is small, and the agent reads it as its first step.
 
+## Videos
+
+Reading a video is very costly, and Claude can't hear the sound, so by default the agent uses the video's title and where it sits in the folders.
+
+When a drop holds videos, its summary card asks once, for all of them together (never one question per video):
+
+> We found 12 videos, such as "VO 04 Integralrechnung.mp4". Reading a video costs a lot of usage, so we normally go by the title. Is that fine, or should Claude look through them?
+> **Use the titles** (default) · **Look through them**
+
+"Look through them" means: while the file is still open in the page, the page takes a still picture about every 30 seconds (slides, the board) and keeps those pictures as the video's readable content. Claude reads the pictures, not the sound, and the card says so in one line. Because the page only has the video while it's dropped, choosing this later asks the student to drop the video again. A transcript or the lecture slides are always the better source, so the card also says: "If you have the slides or a transcript, drop those instead."
+
 ## Data
 
 | Record | Fields | Notes |
@@ -114,14 +125,11 @@ Where judgment *is* needed (which of 300 files matter, whether two files are ver
 - `src/onboarding/setup.ts`: the reading prompt gets the inventory and the navigation steps instead of the files' text; the page run gets the `outline` and `open` tools.
 - `src/platform/handoff.ts` and the job text: the session is told how to download its course's files and save text back. The job no longer has to fit the files into its instructions, so the 45,000-character limit and the "too big for a cloud session" fallback go away.
 
-## Open questions for Lorenz
+## Decisions (Lorenz, 2026-11-20)
 
-1. Is "no model in front of the hand-off decision" OK, with Sonnet used only for bulk transcription inside a cloud session?
-   →
-2. The soft limit of about 30 file opens per course on the first read: fine as a start?
-   →
-3. Videos: list them by name only (proposed), or should the agent ever look at them (much later, costly)?
-   →
+1. No model decides whether to hand off; code routes. Sonnet only for bulk transcription inside a cloud session; Opus keeps the navigation.
+2. No limit on file opens; every open and every skip has a reason in the log.
+3. Videos: ask the student once per drop, titles by default, "look through them" on request (stills, no sound).
 
 ## To check while building
 
