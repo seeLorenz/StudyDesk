@@ -34,7 +34,7 @@ export type HandoffState =
   /** The connector exists but the viewer hasn't allowed it yet: one click on "Connect" asks. */
   | { kind: "ask" }
   /** No Claude Code on the web (connector missing or no cloud environment yet). */
-  | { kind: "off"; reason: "no_connector" | "no_environment" | "no_tools" }
+  | { kind: "off"; reason: "no_connector" | "no_environment" | "no_tools"; detail?: string }
   | { kind: "declined" }
   | { kind: "unavailable"; detail: string };
 
@@ -85,7 +85,9 @@ export async function checkHandoff(saved: Partial<HandoffSetup> | undefined, con
   } catch (e) {
     return codeOf(e) === "server_not_connected" ? { kind: "off", reason: "no_connector" } : { kind: "unavailable", detail: String((e as Error)?.message ?? e) };
   }
-  if (tools.length && !["create_trigger", "fire_trigger", "list_events"].every((t) => tools.includes(t))) return { kind: "off", reason: "no_tools" };
+  const missing = tools.length ? HANDOFF_TOOLS.filter((t) => !tools.includes(t)) : [];
+  if (missing.some((t) => ["create_trigger", "fire_trigger", "list_events"].includes(t)))
+    return { kind: "off", reason: "no_tools", detail: `Missing for this page: ${missing.join(", ")}. Available: ${tools.join(", ") || "none"}.` };
   if (auth !== "connected" && !connect) return { kind: "ask" };
   try {
     const envs = await call<{ environments?: Array<{ environment_id: string; state?: string; kind?: string }> }>("list_environments", { limit: 20 });
@@ -106,7 +108,7 @@ export async function checkHandoff(saved: Partial<HandoffSetup> | undefined, con
     const code = codeOf(e);
     if (code === "not_granted") return { kind: "declined" };
     if (code === "server_not_connected" || code === "needs_reauth") return { kind: "off", reason: "no_connector" };
-    if (code === "blocked_by_policy") return { kind: "off", reason: "no_tools" };
+    if (code === "blocked_by_policy") return { kind: "off", reason: "no_tools", detail: `Blocked by a policy: ${String((e as { message?: string })?.message ?? code)}` };
     return { kind: "unavailable", detail: String((e as { message?: string })?.message ?? e) };
   }
 }

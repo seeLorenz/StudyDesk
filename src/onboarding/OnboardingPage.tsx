@@ -441,6 +441,7 @@ function HandoffCard({ handoff, recheckHandoff, draft, update }: StepProps) {
       <h3>{st.title}</h3>
       <p className="handoff-why">{HANDOFF_WHY}</p>
       <p className="handoff-steps">{st.body}</p>
+      {handoff.kind === "off" && handoff.detail && <p className="handoff-detail">{handoff.detail}</p>}
       <div className="handoff-actions">
         {st.action === "connect" && (
           <button type="button" className="mini-btn primary" disabled={checking} onClick={() => void check(true)}>
@@ -452,7 +453,7 @@ function HandoffCard({ handoff, recheckHandoff, draft, update }: StepProps) {
             Open claude.ai/code
           </a>
         )}
-        {key !== "ask" && key !== "no_tools" && (
+        {key !== "ask" && (
           <button type="button" className="mini-btn" disabled={checking} onClick={() => void check(true)}>
             {checking ? "Checking…" : "Check again"}
           </button>
