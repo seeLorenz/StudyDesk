@@ -2367,3 +2367,50 @@ sup.sd-ref {
   font-size: 13px;
   font-weight: 500;
 }
+.setup-current {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  font-size: 14px;
+}
+.setup-current > span {
+  flex: 1 1 260px;
+}
+.setup-fresh {
+  flex: 1 1 100%;
+}
+.setup-fresh p {
+  margin: 0 0 8px;
+}
+.setup-fresh ul {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  line-height: 1.6;
+}
+.setup-fresh-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.mini-btn.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: transparent;
+}
+.mini-btn.danger.is-armed {
+  background: var(--danger);
+  color: #fff;
+}
+.handoff-detail {
+  font-size: 12px;
+  color: var(--ink-3);
+  margin: -4px 0 12px;
+  word-break: break-word;
+}

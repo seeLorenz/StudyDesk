@@ -1,50 +1,56 @@
 // Hand-off: long, agentic work goes to Claude sessions in the cloud.
 //
 // The page starts Claude Code cloud sessions through the student's own
-// "Claude Code Remote" connector (the artifact `mcp` capability). One saved
-// task ("StudyDesk agent") is created once per student; each job fires it with
-// the job's full instructions, which starts a fresh session. Sessions can
-// search the web, work while the page is closed, are tagged "StudyDesk", and
-// are archived once their answer is read, so they stay out of the student's
-// normal Claude chat list. The page follows a session's progress and reads
-// its final answer back from the session's events.
+// "Claude Code Remote" connector (the artifact `mcp` capability). Pages may
+// only list environments, create a saved task and fire it; they can't read,
+// tag or archive sessions. So the session reports back by itself: the page
+// writes a job document into the student's own data (data/users/<uid>/job-<id>),
+// fires the "StudyDesk agent" task with the job's instructions, and the
+// session writes its progress and final answer into that document with its
+// ArtifactData tool. The page watches the document and deletes it once read.
+// Sessions a task starts don't show up in the student's regular session list.
 //
 // Everything here is plumbing (one right answer); what a job does is up to
 // the prompt that the caller writes.
 
 export const HANDOFF_SERVER = "Claude Code Remote";
-export const HANDOFF_TOOLS = [
-  "list_environments",
-  "create_trigger",
-  "get_trigger",
-  "fire_trigger",
-  "get_session",
-  "list_events",
-  "set_session_tags",
-  "archive_session",
-] as const;
-export const HANDOFF_TAG = "StudyDesk";
-/** fire_trigger takes at most 64 KiB of text; leave room for the envelope. */
-export const MAX_JOB_BYTES = 60_000;
+/** All a page gets, and all hand-off needs. */
+export const HANDOFF_TOOLS = ["list_environments", "create_trigger", "fire_trigger"] as const;
+/** fire_trigger takes at most 64 KiB of text; leave room for the envelope and the reporting rules. */
+export const MAX_JOB_BYTES = 56_000;
+/** A job nobody picked up, or that went quiet, counts as failed after these. */
+export const START_TIMEOUT_MS = 15 * 60_000;
+export const QUIET_TIMEOUT_MS = 40 * 60_000;
 
-export type HandoffSetup = { environmentId: string; triggerId: string };
+export type HandoffSetup = { environmentId: string; triggerId: string; artifactUrl?: string };
 
 export type HandoffState =
   | { kind: "ready"; setup: HandoffSetup }
   /** The connector exists but the viewer hasn't allowed it yet: one click on "Connect" asks. */
   | { kind: "ask" }
   /** No Claude Code on the web (connector missing or no cloud environment yet). */
-  | { kind: "off"; reason: "no_connector" | "no_environment" | "no_tools" }
+  | { kind: "off"; reason: "no_connector" | "no_environment" | "no_tools"; detail?: string }
   | { kind: "declined" }
   | { kind: "unavailable"; detail: string };
 
+/** What a session writes into its job document. */
+export type JobDoc = {
+  status: "queued" | "working" | "done" | "failed";
+  title?: string;
+  createdAt?: number;
+  log?: string[];
+  answer?: string;
+  error?: string;
+  artifactUrl?: string;
+  updatedAt?: number | string;
+};
+
 export type JobProgress = {
-  status: "working" | "done" | "failed";
-  /** New lines for the live log since `after`. */
+  status: "waiting" | "working" | "done" | "failed";
   log: string[];
-  /** The session's final answer, once it has one. */
   answer: string | null;
-  lastEventId: string | null;
+  error: string | null;
+  artifactUrl: string | null;
 };
 
 type Mcp = typeof Claude.mcp;
@@ -65,6 +71,7 @@ async function call<T = unknown>(tool: string, input: Record<string, unknown>): 
 }
 
 const codeOf = (e: unknown) => String((e as { code?: unknown })?.code ?? "");
+const messageOf = (e: unknown) => String((e as { message?: unknown })?.message ?? e);
 
 /**
  * Where hand-off stands for this viewer. With `connect` false it never asks
@@ -83,35 +90,30 @@ export async function checkHandoff(saved: Partial<HandoffSetup> | undefined, con
     tools = s.tools.map((t) => t.name);
     auth = s.authStatus;
   } catch (e) {
-    return codeOf(e) === "server_not_connected" ? { kind: "off", reason: "no_connector" } : { kind: "unavailable", detail: String((e as Error)?.message ?? e) };
+    return codeOf(e) === "server_not_connected" ? { kind: "off", reason: "no_connector" } : { kind: "unavailable", detail: messageOf(e) };
   }
-  if (tools.length && !["create_trigger", "fire_trigger", "list_events"].every((t) => tools.includes(t))) return { kind: "off", reason: "no_tools" };
+  const missing = tools.length ? HANDOFF_TOOLS.filter((t) => !tools.includes(t)) : [];
+  if (missing.length) return { kind: "off", reason: "no_tools", detail: `Missing for this page: ${missing.join(", ")}. Available: ${tools.join(", ") || "none"}.` };
   if (auth !== "connected" && !connect) return { kind: "ask" };
   try {
     const envs = await call<{ environments?: Array<{ environment_id: string; state?: string; kind?: string }> }>("list_environments", { limit: 20 });
     const active = (envs.environments ?? []).filter((e) => !e.state || e.state === "active");
     const env = active.find((e) => e.environment_id === saved?.environmentId) ?? active.find((e) => e.kind === "anthropic_cloud") ?? active[0];
     if (!env) return { kind: "off", reason: "no_environment" };
-    let triggerId = saved?.environmentId === env.environment_id ? saved?.triggerId : undefined;
-    if (triggerId) {
-      try {
-        await call("get_trigger", { trigger_id: triggerId });
-      } catch {
-        triggerId = undefined;
-      }
-    }
-    if (!triggerId) triggerId = await createAgentTask(env.environment_id);
-    return { kind: "ready", setup: { environmentId: env.environment_id, triggerId } };
+    const same = saved?.environmentId === env.environment_id;
+    const triggerId = (same && saved?.triggerId) || (await createAgentTask(env.environment_id));
+    return { kind: "ready", setup: { environmentId: env.environment_id, triggerId, ...(saved?.artifactUrl ? { artifactUrl: saved.artifactUrl } : {}) } };
   } catch (e) {
     const code = codeOf(e);
     if (code === "not_granted") return { kind: "declined" };
     if (code === "server_not_connected" || code === "needs_reauth") return { kind: "off", reason: "no_connector" };
-    if (code === "blocked_by_policy") return { kind: "off", reason: "no_tools" };
-    return { kind: "unavailable", detail: String((e as { message?: string })?.message ?? e) };
+    if (code === "blocked_by_policy") return { kind: "off", reason: "no_tools", detail: `Blocked by a policy: ${messageOf(e)}` };
+    return { kind: "unavailable", detail: messageOf(e) };
   }
 }
 
-const AGENT_PROMPT = `You are an agent of StudyDesk, a study app. StudyDesk started this session for one job; the job's full instructions follow as the next message. Work on your own: nobody reads this session while it runs, and you can't ask questions. Use web search when the job says so. Do not create files, branches or pull requests. Your last message must be exactly the reply the job asks for, and nothing else.`;
+/** The saved task's own prompt. It runs as the session's first turn; the job follows as the next message. */
+export const AGENT_PROMPT = `You are an agent of StudyDesk, a study app. StudyDesk starts this session for one job, and the job's full instructions arrive as the next message. Right now, reply only "Waiting for the job." and do nothing else. When the job arrives, work on your own: nobody reads this session, and you can't ask questions. Report exactly as the job says. Do not create files, branches or pull requests.`;
 
 async function createAgentTask(environmentId: string): Promise<string> {
   const r = await call<{ trigger?: { id?: string }; id?: string }>("create_trigger", {
@@ -132,18 +134,98 @@ function findId(value: unknown, prefix: string): string | null {
   return m ? m[0] : null;
 }
 
-/** Starts one job: a fresh cloud session with `instructions`. Resolves with the session id. */
-export async function startJob(setup: HandoffSetup, title: string, instructions: string): Promise<string> {
-  const text = clipBytes(`# ${title}\n\n${instructions}`, MAX_JOB_BYTES);
-  const fired = await call("fire_trigger", { trigger_id: setup.triggerId, text });
-  let sessionId = findId(fired, "session_");
-  for (let i = 0; !sessionId && i < 5; i++) {
-    await new Promise((r) => setTimeout(r, 2000));
-    sessionId = findId(await call("get_trigger", { trigger_id: setup.triggerId }), "session_");
+// ---------- jobs ----------
+
+export const jobDocId = (jobId: string) => `job-${jobId}`;
+
+/** The rules a session follows to report through the student's own StudyDesk data. Pure, tested. */
+export function jobInstructions(o: { jobId: string; title: string; body: string; artifactUrl?: string }): string {
+  const doc = jobDocId(o.jobId);
+  const where = o.artifactUrl
+    ? `Your StudyDesk is ${o.artifactUrl}.`
+    : `Find your StudyDesk first: Artifact action "list" (limit 50). For each artifact whose title contains "StudyDesk", try ArtifactData action "get" with collection "data/users/me" and doc_id "${doc}". The one where that document exists is yours; use its URL from then on.`;
+  return `# ${o.title}
+
+## How you report (do this exactly)
+StudyDesk can't read this session. You report by writing into the student's own StudyDesk data with the ArtifactData tool. If ArtifactData or Artifact isn't loaded, load it with ToolSearch (query "select:ArtifactData,Artifact").
+
+${where}
+Your job's document: collection "data/users/me", doc_id "${doc}". Change only that document, always with ArtifactData action "update". Every update needs "if_version": first "get" the document to learn its version; each update's result gives the next version. If an update is refused because the version changed, "get" it again and redo the update.
+
+1. Right away: update with {"status": "working", "artifactUrl": "<the StudyDesk URL>", "log": ["Started"]}.
+2. Every few minutes, after a step the student would like to see (a web search, a file read, a section drafted): update with the full "log" list so far, short plain lines, newest last, at most 20.
+3. When finished: update with {"status": "done", "answer": "<your complete reply, exactly in the format the job asks for>"}. That is the only place your answer counts.
+4. If you can't do the job: update with {"status": "failed", "error": "<one plain sentence why>"}.
+
+Don't write anywhere else in StudyDesk's data. Don't create files, branches or pull requests.
+
+## The job
+
+${o.body}`;
+}
+
+/** Where a job stands, from its document. `changedAt` is when the page last saw the document change. Pure, tested. */
+export function jobProgress(doc: JobDoc | null, job: { startedAt: number; changedAt: number }, now: number): JobProgress {
+  const base = { log: (doc?.log ?? []).filter((l) => typeof l === "string").slice(-20), answer: null, error: null, artifactUrl: doc?.artifactUrl && /^https:\/\/claude\.ai\//.test(doc.artifactUrl) ? doc.artifactUrl : null };
+  if (!doc) return { ...base, status: "failed", error: "The cloud session's report went missing." };
+  if (doc.status === "done") return typeof doc.answer === "string" && doc.answer.trim() ? { ...base, status: "done", answer: doc.answer } : { ...base, status: "failed", error: "The cloud session finished without an answer." };
+  if (doc.status === "failed") return { ...base, status: "failed", error: doc.error ? `The cloud session gave up: ${doc.error}` : "The cloud session gave up." };
+  if (doc.status === "queued" || !doc.status) {
+    if (now - job.startedAt > START_TIMEOUT_MS) return { ...base, status: "failed", error: "The cloud session never picked up the job." };
+    return { ...base, status: "waiting" };
   }
-  if (!sessionId) throw { code: "tool_error", message: "The cloud session started, but StudyDesk couldn't find it." };
-  await call("set_session_tags", { session_ids: [sessionId], add: [HANDOFF_TAG] }).catch(() => undefined);
-  return sessionId;
+  if (now - job.changedAt > QUIET_TIMEOUT_MS) return { ...base, status: "failed", error: "The cloud session stopped reporting." };
+  return { ...base, status: "working" };
+}
+
+type JobRef = { get(): Promise<{ exists: boolean; data(): unknown }>; set(d: unknown): Promise<unknown>; delete(): Promise<unknown> };
+
+async function jobRef(jobId: string): Promise<JobRef> {
+  const c = (window as Window & { claude?: Claude }).claude;
+  const [db, user] = c?.use ? await Promise.all([c.use("db").catch(() => null), c.use("user").catch(() => null)]) : [null, null];
+  const uid = user ? await (user as { id(): Promise<string> }).id().catch(() => null) : null;
+  if (!db || !uid) throw { code: "capability_disabled", message: "StudyDesk can't save here, so a cloud session couldn't report back." };
+  return (db as DB).doc(`data/users/${uid}/${jobDocId(jobId)}`) as unknown as JobRef;
+}
+
+const newJobId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+/**
+ * Starts one job: writes its document, then fires a fresh cloud session with
+ * the instructions. When the saved task is gone, makes a new one; the
+ * returned setup then differs and should be saved.
+ */
+export async function startJob(setup: HandoffSetup, title: string, body: string): Promise<{ jobId: string; sessionId: string | null; setup: HandoffSetup }> {
+  const jobId = newJobId();
+  const ref = await jobRef(jobId);
+  await ref.set({ status: "queued", title, createdAt: Date.now(), log: [] } satisfies JobDoc);
+  const text = clipBytes(jobInstructions({ jobId, title, body, artifactUrl: setup.artifactUrl }), 63_000);
+  let used = setup;
+  let fired: unknown;
+  try {
+    fired = await call("fire_trigger", { trigger_id: setup.triggerId, text });
+  } catch (e) {
+    if (!/not.?found|no such|unknown trigger|404|deleted/i.test(messageOf(e))) {
+      await ref.delete().catch(() => undefined);
+      throw e;
+    }
+    used = { ...setup, triggerId: await createAgentTask(setup.environmentId) };
+    fired = await call("fire_trigger", { trigger_id: used.triggerId, text });
+  }
+  // fire_trigger names the session "cse_…"; on claude.ai it is "session_…" with the same suffix.
+  const raw = (fired as { session_id?: string } | null)?.session_id ?? findId(fired, "(?:session|cse)_");
+  return { jobId, sessionId: raw ? raw.replace(/^cse_/, "session_") : null, setup: used };
+}
+
+/** Reads a job's document (null when it's gone). */
+export async function readJobDoc(jobId: string): Promise<JobDoc | null> {
+  const s = await (await jobRef(jobId)).get();
+  return s.exists ? (s.data() as JobDoc) : null;
+}
+
+/** Removes a job's document once its answer is saved, or the job is given up. */
+export async function removeJob(jobId: string): Promise<void> {
+  await (await jobRef(jobId)).delete().catch(() => undefined);
 }
 
 export function clipBytes(text: string, max: number): string {
@@ -161,111 +243,4 @@ export function clipBytes(text: string, max: number): string {
 
 export const byteLength = (text: string) => new TextEncoder().encode(text).length;
 
-/** Reads what a session did since `after` and whether it has finished. */
-export async function readJob(sessionId: string, after: string | null): Promise<JobProgress> {
-  const session = await call<{ status?: string; status_bucket?: string }>("get_session", { session_id: sessionId });
-  const events: unknown[] = [];
-  let cursor = after;
-  let last = after;
-  for (let page = 0; page < 10; page++) {
-    const res = await call<{ data?: unknown[]; last_id?: string; has_more?: boolean }>("list_events", {
-      session_id: sessionId,
-      kinds: ["assistant", "result"],
-      limit: 100,
-      ...(cursor ? { after_id: cursor } : {}),
-    });
-    events.push(...(res.data ?? []));
-    if (res.last_id) last = res.last_id;
-    // Without a cursor the newest page comes back; from then on, page forward.
-    if (!cursor || !res.has_more || !res.last_id) break;
-    cursor = res.last_id;
-  }
-  const { log } = summarizeEvents(events);
-  const bucket = session.status_bucket ?? "";
-  if (bucket === "working" || bucket === "") return { status: "working", log, answer: null, lastEventId: last };
-  if (bucket === "failed") return { status: "failed", log, answer: null, lastEventId: last };
-  // The session stopped: its answer is in the newest events.
-  const newest = await call<{ data?: unknown[] }>("list_events", { session_id: sessionId, kinds: ["assistant", "result"], limit: 100 });
-  const { answer } = summarizeEvents(newest.data ?? []);
-  return { status: answer ? "done" : "failed", log, answer, lastEventId: last };
-}
-
-/** Archives a finished session so it leaves the student's session list. */
-export async function archiveJob(sessionId: string): Promise<void> {
-  await call("archive_session", { session_id: sessionId }).catch(() => undefined);
-}
-
 export const sessionUrl = (sessionId: string) => `https://claude.ai/code/${sessionId}`;
-
-// ---------- reading events (pure, tested) ----------
-
-type Block = { type?: string; text?: string; name?: string; input?: Record<string, unknown> };
-
-function blocksOf(ev: unknown): { kind: "assistant" | "result" | null; blocks: Block[]; result?: string } {
-  const e = ev as Record<string, unknown>;
-  const data = (e?.data ?? e) as Record<string, unknown>;
-  if (data?.result && typeof (data.result as Record<string, unknown>)?.result === "string") return { kind: "result", blocks: [], result: (data.result as { result: string }).result };
-  if (typeof data?.result === "string") return { kind: "result", blocks: [], result: data.result };
-  const a = (data?.assistant ?? (data?.type === "assistant" ? data : null)) as Record<string, unknown> | null;
-  const content = (a?.message as { content?: unknown })?.content;
-  if (Array.isArray(content)) return { kind: "assistant", blocks: content as Block[] };
-  return { kind: null, blocks: [] };
-}
-
-const host = (url: unknown) => {
-  try {
-    return new URL(String(url)).host.replace(/^www\./, "");
-  } catch {
-    return String(url ?? "").slice(0, 60);
-  }
-};
-const shorten = (s: string, n = 140) => (s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s);
-
-/** One plain line per thing the agent did: searches, pages and files read, and its short notes. */
-export function describeTool(b: Block): string | null {
-  const i = b.input ?? {};
-  switch (b.name) {
-    case "WebSearch":
-      return `Searching the web: ${shorten(String(i.query ?? ""), 100)}`;
-    case "WebFetch":
-      return `Reading ${host(i.url)}`;
-    case "Read":
-      return `Reading ${String(i.file_path ?? "a file").split("/").pop()}`;
-    case "Bash":
-      return i.description ? shorten(String(i.description), 100) : "Running a command";
-    case "Grep":
-    case "Glob":
-      return "Searching the files";
-    case "TodoWrite":
-    case "TaskCreate":
-    case "TaskUpdate":
-      return null;
-    default:
-      return b.name ? `Using ${b.name}` : null;
-  }
-}
-
-export function summarizeEvents(events: unknown[]): { log: string[]; answer: string | null } {
-  const log: string[] = [];
-  let lastText: string | null = null;
-  let result: string | null = null;
-  for (const ev of events) {
-    const { kind, blocks, result: r } = blocksOf(ev);
-    if (kind === "result") {
-      if (r) result = r;
-      continue;
-    }
-    for (const b of blocks) {
-      if (b.type === "tool_use") {
-        const line = describeTool(b);
-        if (line && log[log.length - 1] !== line) log.push(line);
-      } else if (b.type === "text" && b.text?.trim()) {
-        lastText = b.text;
-        // The final answer is long and sectioned; short notes along the way go into the log.
-        const first = b.text.trim().split("\n")[0];
-        if (!/^===/.test(first) && b.text.length < 400) log.push(shorten(first));
-      }
-    }
-  }
-  return { log, answer: result ?? lastText };
-}

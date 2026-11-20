@@ -22,7 +22,7 @@ export type Profile = {
   year: string;
   updatedAt: number;
   /** The cloud environment and saved "StudyDesk agent" task used for hand-off. */
-  handoff?: { environmentId: string; triggerId: string };
+  handoff?: { environmentId: string; triggerId: string; artifactUrl?: string };
 };
 
 export type CourseSetupStatus = "waiting" | "reading" | "ready" | "needs_check" | "failed";
@@ -46,10 +46,14 @@ export type DraftCourse = {
 
 /** A setup run handed to a cloud session (src/platform/handoff.ts). */
 export type CloudJob = {
-  sessionId: string;
+  /** The job's document, data/users/<uid>/job-<jobId>, where the session reports. */
+  jobId: string;
+  /** For the "Open the session" link; null when claude.ai didn't name it. */
+  sessionId: string | null;
   startedAt: number;
-  /** The last session event already shown, so following it resumes after a reload. */
-  lastEventId: string | null;
+  /** When the page last saw the job's report change, and what it looked like then. */
+  changedAt: number;
+  seen: string;
   /** The F1, F2… keys the session's answer uses for files, mapped to upload ids. */
   fileKeys: Record<string, string>;
   readIds: string[];
