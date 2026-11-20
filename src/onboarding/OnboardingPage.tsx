@@ -8,6 +8,7 @@ import { passageNoteTurns } from "../chat/prompts";
 import type { PendingAttachment } from "../lib/files";
 import { describedVideos, describeVideo, keepDrop } from "../lib/keep";
 import { IntakeCard } from "../chat/IntakeCard";
+import { LeftoversNotice } from "../shell/LeftoversNotice";
 import { toDay } from "../mastery/days";
 import { replay } from "../mastery/replay";
 import type { Skill } from "../mastery/types";
@@ -518,15 +519,13 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
   const patchMsg = (id: string, p: Partial<SetupMessage>) => update((d) => ({ ...d, chat: (d.chat ?? []).map((m) => (m.id === id ? { ...m, ...p } : m)) }));
 
   /** Keeps each dropped file (zips opened): readable content and outline in the student's data, the original in the file store. */
-  const [keeping, setKeeping] = useState(false);
-  const keepFiles = async (files: PendingAttachment[]) => {
-    setKeeping(true);
-    try {
-      return await keepDrop(files, env.os, setBusy);
-    } finally {
-      setKeeping(false);
-    }
-  };
+  const keepFiles = (files: PendingAttachment[]) =>
+    keepDrop(files, env.os, setBusy, {
+      onZipKept: async (uploads, zip) => {
+        update((d) => ({ ...d, uploads: [...d.uploads, ...uploads], zips: [...(d.zips ?? []), zip] }));
+        await flush();
+      },
+    });
 
   const send = async (text: string, files: PendingAttachment[]) => {
     if (!open) return;
@@ -654,8 +653,11 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
       </div>
       {open && (
         <div className="setup-composer">
-          {busy && <p className="quest-muted setup-busy">{busy}</p>}
-          {keeping && <p className="setup-wait">This can take a few minutes, especially with many files. Keep this tab open until it's done; the files are read here in the page.</p>}
+          {!busy && <LeftoversNotice />}
+          {busy && <p className="quest-muted">{busy}</p>}
+          {busy && /^(Keeping|Opening)/.test(busy) && (
+            <p className="quest-muted keep-note">This takes a few minutes with a lot of files. Keep this window open until it's done; each finished zip is saved, so closing early only loses the one in progress.</p>
+          )}
           <InputBox
             id="setup-chat"
             keepAll
@@ -949,8 +951,8 @@ function Running({ env, draft, profile, update, updateProfile, go, today, flush,
       <h1>Setting up your semester</h1>
       <p>
         {cloud
-          ? "The organization agent (Claude Opus) now works on every course at once, each in its own cloud session: it starts from your file list, opens the syllabus first and follows it to what matters, looks the course up online, and turns it into topics, skills, dates, homework and grading rules. The sessions keep working if you close this page, and they don't show up in your regular Claude chats."
-          : "The organization agent (Claude Opus) works through your courses one at a time, right here in the page. It starts from each course's file list, opens the syllabus first and follows it to what matters, and turns that into topics, skills, dates, homework and grading rules. Without cloud sessions, courses without files are only an estimate and nothing is looked up online."}
+          ? "Setup usually takes a few minutes, longer with a lot of files. The organization agent (Claude Opus) now works on every course at once, each in its own cloud session: it starts from your file list, opens the syllabus first and follows it to what matters, looks the course up online, and turns it into topics, skills, dates, homework and grading rules. The sessions keep working if you close this page, and they don't show up in your regular Claude chats."
+          : "Setup usually takes a few minutes per course, longer with a lot of files, and this window has to stay open until it's done (if you close it, it carries on where it stopped next time). The organization agent (Claude Opus) works through your courses one at a time, right here in the page. It starts from each course's file list, opens the syllabus first and follows it to what matters, and turns that into topics, skills, dates, homework and grading rules. Without cloud sessions, courses without files are only an estimate and nothing is looked up online."}
       </p>
       <p className="setup-count">
         <strong>

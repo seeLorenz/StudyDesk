@@ -23,7 +23,7 @@ The first real install showed three problems:
 
 This part has one right answer, so it is code (guideline 3).
 
-**Zips.** Dropping a zip into any chat box opens it in the page (streamed, so a large zip doesn't freeze the page). Zips inside zips are opened too. The folder path inside the zip is kept with each file (`Übungen/Blatt 3.pdf`), because folder names carry meaning the agent uses.
+**Zips.** Dropping a zip into any chat box opens it in the page one file at a time: StudyDesk reads the zip's file list from its end, then unpacks, keeps and lets go of one file before the next, in a background worker, with a pause between files. However big the zips, the page holds about one file at a time (files over 80 MB are listed by name, not opened), so it stays responsive on laptops with little memory. Each zip is saved to the desk as soon as it's kept, so a closed or crashed window loses at most the zip in progress. Zips inside zips are opened too. The folder path inside the zip is kept with each file (`Übungen/Blatt 3.pdf`), because folder names carry meaning the agent uses.
 
 **What happens to each file:**
 
@@ -146,6 +146,9 @@ When a drop holds videos, its summary card says so once, for all of them togethe
 
 - **Room** (`keepDrop`): before storing, StudyDesk reads the file store's real limits and use from the platform. When a zip's originals won't all fit, the report says so first, PDFs are stored first (a scan can only be read from its original), the text of every file is kept anyway, and Claude is told to ask which courses matter most before more is added. Organize shows a meter ("File store: 120 MB of 1 GB used · 300 of 1000 files") and lists files per course with counts instead of every name.
 - **Deep sweeps** in the nightly run read by reason too: the session answering the sweep gets the inventory and opens files itself (it already has the student's data downloaded).
+
+- **Big imports** (after the first real import, 3 GB in 11 zips, froze and crashed the page): the first version unpacked each whole zip into memory and never let go of read PDFs. Now one file at a time (above), PDFs are freed after reading, and PDFs dropped loose in setup or Organize are read when the message is sent, one by one. Measured on 630 MB of zips (120 PDFs, 6 videos): the browser's memory rose by 88 MB instead of 1.9 GB, and the page never stalled. While files are kept, the chat says it takes a few minutes and that the window must stay open.
+- **Leftovers**: files stored by an import that didn't finish are referenced by nothing. Setup and Organize show "N files (X MB) are left over from an import that didn't finish" with **Remove them**; only originals older than 15 minutes that no upload record or backup uses count, and the references are checked again before removing.
 
 **Not in this version**
 

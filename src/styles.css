@@ -3666,8 +3666,16 @@ input::placeholder {
 .row-user .bubble-text + .bubble-files {
   margin-top: 8px;
 }
-.setup-wait {
+.leftovers {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.leftovers p {
   margin: 0 0 8px;
-  font-size: 13px;
-  color: var(--ink-2);
+  font-size: 14px;
+}
+.keep-note {
+  margin-top: 4px;
 }
