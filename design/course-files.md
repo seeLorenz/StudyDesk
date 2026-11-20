@@ -2,7 +2,7 @@
 
 How StudyDesk takes in a student's course files (single files or whole course zips) and how the organization agent reads them: by navigating like a person would, not by reading everything. It replaces the "files are read at drop time and pasted into the reading" part of [onboarding.md](onboarding.md) and the file part of jobs in [orchestrator.md](orchestrator.md).
 
-Status: design agreed with Lorenz (2026-11-20, see Decisions); being built.
+Status: design agreed with Lorenz (2026-11-20, see Decisions); first version built (see the end of this file).
 
 ## Why this changes
 
@@ -135,3 +135,17 @@ When a drop holds videos, its summary card says so once, for all of them togethe
 
 - Whether a cloud session can download the page's stored files (the Artifact tool's asset read) for a student's own StudyDesk. If not, the page saves each file's text where the session can read it (the student's data), and scans still need photos.
 - The file store's real per-artifact limits (count and bytes) on a student's plan, to size the room check.
+
+## First version (built)
+
+- **Taking in** (`src/lib/intake.ts`, `src/lib/office.ts`, `src/lib/keep.ts`): the setup chat and Organize accept any file (`InputBox keepAll`). Zips are streamed open with their folder paths, nested zips too (3 levels), junk left out, videos listed without being unpacked. Word, PowerPoint, Excel and OpenDocument text is pulled out with slide and sheet markers (in every chat box, not only these two). PDFs keep their text, page count and bookmarks; a PDF without text is kept as a scan for the agent. Each file gets an outline. Other chat boxes refuse a zip with "Drop course zips in Organize".
+- **Report**: one card under the student's message, one line per zip ("Mathe.zip: 84 files, 61 PDFs, 9 Office files, 12 videos") and the video question. "I'll describe them" opens a box per video; the description is kept as the video's `studentNote`, which the agent reads.
+- **Claude in the chat** sees the start of loose files (their outline when there are more than 8), and an inventory per zip. It assigns a whole zip with its zip id; the snapshot lists a course's zips as one line each.
+- **Page run**: the setup prompt holds the inventory (with outlines while they add up to under 20,000 characters) and the navigation steps; Claude reads through `outline` and `open` (`fileTools` in `src/onboarding/setup.ts`). Every call adds a line to the live log, which shows the newest 14 steps. Files new since a course was last read are marked NEW.
+- **Cloud run**: the job holds only the inventory with upload and asset ids. The session reads kept text and outlines from the student's data and originals from the file store, and may write back the text of scans it transcribed (the one extra write its instructions allow), handing long transcriptions to a Sonnet helper. The old 45,000-character limit and "has images" fallback are gone.
+
+**Not in this version**
+
+- No room check before storing: when the file store is full, originals that don't fit are skipped and said in the report (a scan that can't be kept is listed by name).
+- The nightly deep sweep (`src/routine/nightly.ts`) still sends the course's text in one reading; it should move to the inventory too.
+- Not yet tried in claude.ai: whether a session may read `data/users/me/files/uploads` and download assets, and the file store's real limits.
