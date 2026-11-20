@@ -10,8 +10,9 @@ Start with [guidelines.md](guidelines.md): the design rules that apply to the wh
 | [quest-creation.md](quest-creation.md) | What a daily quest looks like and how it's stored | First version built |
 | [onboarding.md](onboarding.md) | Start New Semester: what the student is asked, the setup session, the placement check | First version built |
 | [orchestrator.md](orchestrator.md) | The one agent the student talks to: questions, changes, jobs for the organization agent | First version built |
+| [scheduled-runs.md](scheduled-runs.md) | The nightly run: grading at 22:00, the organization agent's checks and sweeps, tomorrow's quest | First version built |
 
-Module still to come: the organization agent. Notes for them are collected at the end of the grading file.
+The organization agent's own work (setup reading, jobs, nightly checks and sweeps) is covered in onboarding.md, orchestrator.md and scheduled-runs.md.
 
 ## The big picture
 

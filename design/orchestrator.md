@@ -244,5 +244,5 @@ The code lives in `src/orchestrator/`, storage in `src/platform/orchestratorStor
 
 **Not in this version (next steps)**
 
-- The organization agent's own daily and deep runs are its own module; jobs today are started from the chat.
+- The organization agent's daily check and deep sweeps now run in the nightly run ([scheduled-runs.md](scheduled-runs.md)); their changes arrive as change cards in a "Last night's run" message.
 - The live reading log stays on the setup screen ("Watch it live" on the job card).

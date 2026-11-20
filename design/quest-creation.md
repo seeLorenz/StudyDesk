@@ -115,7 +115,7 @@ The quest module is in `src/quests/` and the quest page is reachable from **Toda
    5. if there's no homework at all, the next one or two new skills, those on the nearest exam first.
    A group is only added if it fits (10% over budget is allowed rather than splitting a task from what it needs). Urgent homework always gets at least one task. Anything left out is named, with a warning if the sheet is due tomorrow.
 2. **Claude writes it** (`write.ts`). One call per part, in parallel: learn parts get the StudyDesk explanation style and what comes later in the quest; practice parts get one fresh problem and worked answer per skill; homework gets three hints, a worked answer and a solved similar problem. Replies use plain `=== SECTION ===` blocks instead of JSON (math breaks JSON), are checked, and retried once.
-3. **The page** builds the quest on the first open of the day (the in-page fallback; the scheduled routine comes later).
+3. **The nightly run** writes the next day's quest at 22:00 ([scheduled-runs.md](scheduled-runs.md)); the page builds it on the first open of the day only if none is there.
 
 **Working through it (layout, round 2).** The quest page is an overview with one row per part. Clicking a row expands the part; the student works through it and presses **Hand in** (or **Done reading** for a learn part). Hand-in only saves: the part collapses and its row gets a check mark. Graded parts show their points on the row. The only grading button is in the overview, at the bottom ("Grade me early", or "Submit for grading" once everything is in). Each problem has its own answer box (type, paste, drop or attach photos and files) and its own timer, which runs for one problem at a time and pauses after 2 minutes in the background. Select-to-reply works on every piece of quest text (explanations, problems, hints, feedback, worked answers); notes are saved with the quest. On open homework, a note guides without giving the answer.
 
@@ -137,10 +137,10 @@ Because grading now happens once, the gate no longer stops the quest mid-way. A 
 | Points per problem for grading | 2 per practice problem, the sheet's own points for homework |
 | Photos of answers | A compressed copy (JPEG, one database document each) is saved with the quest, so photos are graded after a reload too |
 
-## Note: how grading should work (decided 2026-11-20, not built yet)
+## Note: how grading should work (decided 2026-11-20; the 22:00 run is built, see scheduled-runs.md)
 
 - **Grading runs once per quest**, not per part. Handing in a part only saves it.
-- **It runs automatically at 22:00.** Until that routine exists, the "Grade me early" button in the overview starts it by hand.
+- **It runs automatically at 22:00** (the nightly run). The "Grade me early" button in the overview starts it by hand.
 - **The button lives only in the quest overview**, nowhere else on the page.
 - **Grading opens as its own window or quest**: the results, slip questions, and fix-its for real mistakes happen there, separate from the day's quest. Today's version still shows results inside each part as a stand-in.
 
@@ -163,6 +163,6 @@ Because grading now happens once, the gate no longer stops the quest mid-way. A 
 
 ## Notes for other modules
 
-- **Grading run at 22:00 (scheduled routine, outside the page):** reads every quest with handed-in, ungraded parts and grades them with the same `handIn` code. The page's "Grade me early" stays as the manual trigger. The grading results should open as their own window, with the mistake review in it.
+- **Grading run at 22:00:** built as part of the nightly run ([scheduled-runs.md](scheduled-runs.md)), with the same `handIn` code. Still open: the grading results opening as their own window, with the mistake review in it.
 - **Orchestrator:** let the student change hints per task, lesson length and the daily budget by talking; all live in `src/quests/config.ts`.
 - **Onboarding (built, see onboarding.md):** replaces the sample semester (`seed.ts`) with real courses, homework and dates; the quest code reads the same `Semester` record. The sample stays available from the welcome screen for looking around.

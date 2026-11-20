@@ -12,6 +12,9 @@ import { readCalendar, weeklyPattern, type CalendarError } from "../platform/cal
 import { askClaude, canSendImages, canUseTools, claudeAvailable, errorCopy, type AskError } from "../platform/claude";
 import { publish, subscribe } from "../platform/deskBus";
 import { checkHandoff } from "../platform/handoff";
+import { openRoutineStore } from "../platform/routineStore";
+import { createSchedule, scheduleFits, studentTimeZone } from "../platform/schedule";
+import { applyShallow, applySweep, outboxOrder } from "../routine/apply";
 import { openMasteryStore, type MasteryData, type MasteryStore } from "../platform/masteryStore";
 import { openOnboardingStore, type OnboardingStore } from "../platform/onboardingStore";
 import { openOrchestratorStore, type OrchestratorStore } from "../platform/orchestratorStore";
@@ -85,6 +88,7 @@ export function OrchestratorPanel(props: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cloud, setCloud] = useState<"on" | "off" | "unknown">("unknown");
+  const [nightly, setNightly] = useState<"on" | "off" | "failed">("off");
   const today = toDay();
 
   // Everything the tools read lives in refs, so a reply sees the newest version.
@@ -135,6 +139,24 @@ export function OrchestratorPanel(props: Props) {
       if (live) {
         const h = await checkHandoff(p?.handoff, false).catch(() => null);
         setCloud(h?.kind === "ready" ? "on" : h && h.kind !== "unavailable" ? "off" : "unknown");
+        // The nightly run (grading at 22:00, the courses' check, tomorrow's quest): one scheduled task, made once.
+        const tz = studentTimeZone();
+        if (h?.kind === "ready" && p && dd?.status === "active") {
+          if (scheduleFits(p.schedule, tz)) setNightly("on");
+          else {
+            try {
+              const schedule = await createSchedule({ ...h.setup, ...(p.handoff?.environmentId === h.setup.environmentId ? p.handoff : {}) }, tz);
+              const np = { ...(profileRef.current ?? p), schedule };
+              await os.saveProfile(np);
+              profileRef.current = np;
+              setProfile(np);
+              publish("profile", np, "orch");
+              setNightly("on");
+            } catch {
+              setNightly("failed");
+            }
+          }
+        } else if (p?.schedule && scheduleFits(p.schedule, tz)) setNightly("on");
       }
     })().catch((err) => setError(`StudyDesk's chat couldn't be loaded: ${message(err)}`));
   }, [loadData]);
@@ -509,11 +531,42 @@ export function OrchestratorPanel(props: Props) {
     }
   };
 
+  // ---------- the nightly run's results: the organization agent's findings, and a word about the night ----------
+  const applyNight = useCallback(async () => {
+    if (!env || !draftRef.current || !profileRef.current) return;
+    const rs = await openRoutineStore();
+    const boxes = outboxOrder((await rs.loadOutbox()).filter((b) => b.kind !== "grading"));
+    const changes: Change[] = [];
+    if (boxes.length) {
+      const now = Date.now();
+      let desk: Desk = { draft: draftRef.current, profile: profileRef.current };
+      for (const b of boxes) {
+        if (b.kind === "org-sweep") desk = applySweep(desk, b, now);
+        else if (b.kind === "org-shallow") {
+          const r = applyShallow(desk, b, now);
+          desk = r.desk;
+          if (r.change) changes.push(r.change);
+        }
+      }
+      if (desk.draft !== draftRef.current) await commitDesk(desk);
+      if (changes.length) saveState((s) => ({ ...s, changes: [...s.changes, ...changes] }));
+      for (const b of boxes) await rs.deleteOutbox(b.id).catch(() => undefined);
+    }
+    const night = [...((await rs.loadRoutine())?.nights ?? [])].reverse().find((n) => n.status === "done");
+    const key = night ? `night:${night.day}` : "";
+    if (!night || stateRef.current.notifications.some((n) => n.key === key)) return;
+    const text = `**Last night's run (${night.day}, 22:00)**\n\n${night.lines.map((l) => `- ${l}`).join("\n")}`;
+    const msg: OrchMessage = { id: uid(), role: "assistant", text, createdAt: Date.now(), checkin: true, cards: changes.map((c) => ({ kind: "change" as const, changeId: c.id })) };
+    saveMessages((ms) => [...ms, msg]);
+    saveState((s) => ({ ...s, notifications: [...s.notifications, { key, kind: "night", day: today, at: Date.now(), courseId: null, facts: night.lines.join(" "), messageId: msg.id, seenAt: open ? Date.now() : null }] }));
+  }, [env, commitDesk, saveState, saveMessages, today, open]);
+
   // ---------- check-ins: code finds a reason, Claude writes one message ----------
   const runCheckins = useCallback(async () => {
     if (!env || !ready || checking.current || busy) return;
     checking.current = true;
     try {
+      await applyNight().catch(() => undefined);
       await loadData(env);
       const semester = semesterRef.current;
       if (!semester || semester.id !== draftRef.current!.id) return;
@@ -539,7 +592,7 @@ export function OrchestratorPanel(props: Props) {
     } finally {
       checking.current = false;
     }
-  }, [env, ready, busy, loadData, today, snapshot, saveMessages, saveState, open]);
+  }, [env, ready, busy, loadData, today, snapshot, saveMessages, saveState, open, applyNight]);
 
   useEffect(() => {
     if (!ready) return;

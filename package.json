@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build && node scripts/make-artifact.mjs",
+    "build": "tsc --noEmit && vite build && node scripts/make-artifact.mjs && vite build -c vite.routine.config.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:routine": "vite build -c vite.routine.config.ts"
   },
   "dependencies": {
     "dompurify": "3.1.6",

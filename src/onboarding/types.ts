@@ -10,6 +10,7 @@ import type { AssessmentResult, Day, GradeScale, Skill } from "../mastery/types"
 import type { Note } from "../chat/types";
 import type { Assignment, KeyDate, TimetableEntry, Topic } from "../quests/types";
 import type { QuestSettings } from "../quests/config";
+import type { ScheduleInfo } from "../routine/nightly";
 
 export type Level = "school" | "university";
 
@@ -24,6 +25,8 @@ export type Profile = {
   updatedAt: number;
   /** The cloud environment and saved "StudyDesk agent" task used for hand-off. */
   handoff?: { environmentId: string; triggerId: string; artifactUrl?: string };
+  /** The nightly run's scheduled task (src/platform/schedule.ts). */
+  schedule?: ScheduleInfo;
 };
 
 export type CourseSetupStatus = "waiting" | "reading" | "ready" | "needs_check" | "failed";
