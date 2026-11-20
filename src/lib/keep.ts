@@ -161,7 +161,29 @@ export type KeepOptions = {
    * are then not in the returned `uploads` and `zips` (they're saved already).
    */
   onZipKept?: (uploads: Upload[], zip: ZipRecord) => Promise<void> | void;
+  /** Called at every step with where each part of the drop stands, for a progress display. */
+  onProgress?: (p: KeepProgress) => void;
 };
+
+/** One part of a drop: the loose files together, or one zip. */
+export type KeepItem = {
+  name: string;
+  state: "waiting" | "working" | "done" | "failed";
+  /** Files kept so far, and how many there are (about, for a zip). */
+  done: number;
+  total: number;
+  /** Files in it that couldn't be kept completely. */
+  problems: number;
+  note?: string;
+};
+export type KeepProgress = { items: KeepItem[] };
+
+/** How far a whole drop is, 0 to 1: every part counts the same. Pure. */
+export function keepFraction(p: KeepProgress): number {
+  if (!p.items.length) return 0;
+  const one = (i: KeepItem) => (i.state === "done" || i.state === "failed" ? 1 : i.state === "waiting" || !i.total ? 0 : Math.min(i.done / i.total, 0.99));
+  return p.items.reduce((n, i) => n + one(i), 0) / p.items.length;
+}
 
 let keeping = 0;
 /** True while a drop is being kept in this page (leftover clean-up waits for it). */
@@ -198,9 +220,23 @@ async function keepDropNow(files: PendingAttachment[], store: KeepStore, onBusy:
       return { name: f.name, path: f.name, cls, size: f.file?.size ?? 0, blob: cls === "video" || cls === "other" ? null : blob, zip: null };
     });
 
+  // Where each part stands, for the progress display: the loose files as one part, then each zip.
+  const items: KeepItem[] = [
+    ...(loose.length ? [{ name: loose.length === 1 ? loose[0].name : `${loose.length} files`, state: "waiting" as const, done: 0, total: loose.length, problems: 0 }] : []),
+    ...zipFiles.map((z) => ({ name: z.name, state: "waiting" as const, done: 0, total: 0, problems: 0 })),
+  ];
+  const show = (i: number, p: Partial<KeepItem>) => {
+    items[i] = { ...items[i], ...p };
+    opts.onProgress?.({ items: items.map((x) => ({ ...x })) });
+  };
+  const looseAt = 0;
+  const zipAt = loose.length ? 1 : 0;
+
   // Loose files, as before: Claude sees the start of each (or its outline when there are many).
   for (const [k, f] of loose.entries()) {
     onBusy(`Keeping ${f.name} (${k + 1} of ${loose.length})…`);
+    show(looseAt, { state: "working", done: k });
+    const failedBefore = failed.length;
     try {
       const one = await keepOne(f, null, store, now, room);
       uploads.push(one.upload);
@@ -220,8 +256,10 @@ async function keepDropNow(files: PendingAttachment[], store: KeepStore, onBusy:
     } catch (e) {
       failed.push(`${f.name}: ${e instanceof Error ? e.message : "couldn't be read"}`);
     }
+    show(looseAt, { done: k + 1, problems: items[looseAt].problems + (failed.length - failedBefore) });
     await breathe();
   }
+  if (loose.length) show(looseAt, { state: "done" });
   if (loose.length > 1) {
     const kept = uploads.filter((u) => !u.zipId);
     if (kept.length) lines.push(`${plural(kept.length, "file")} kept: ${describeCounts(kept)}.`);
@@ -233,11 +271,13 @@ async function keepDropNow(files: PendingAttachment[], store: KeepStore, onBusy:
   for (const [zi, zf] of zipFiles.entries()) {
     const which = zipFiles.length > 1 ? ` (zip ${zi + 1} of ${zipFiles.length})` : "";
     onBusy(`Opening ${zf.name}${which}…`);
+    show(zipAt + zi, { state: "working" });
     let entries: ZipEntry[];
     try {
       entries = await zipEntries(zf);
     } catch (e) {
       failed.push(`${zf.name}: ${e instanceof Error ? e.message : "couldn't be opened"}`);
+      show(zipAt + zi, { state: "failed", note: "couldn't be opened" });
       continue;
     }
     const z: ZipRecord = { id: `zip_${uid()}`, fileName: zf.name, courseId: null, addedAt: now, files: 0 };
@@ -247,9 +287,12 @@ async function keepDropNow(files: PendingAttachment[], store: KeepStore, onBusy:
     if (room && need > room.bytes) lines.push(`${zf.name} needs about ${fmtMB(need)} for its original files, but your StudyDesk's file store has ${fmtMB(Math.max(0, room.bytes))} left. StudyDesk keeps the text of every file, and the originals that fit.`);
     const mine: Upload[] = [];
     const found = { name: zf.name, files: 0, skippedJunk: 0 };
+    const failedBefore = failed.length;
+    show(zipAt + zi, { total: listedFiles.length });
     try {
       for await (const f of walkZip(zf, zf.name, found)) {
         onBusy(`Keeping ${zf.name}${which}: ${mine.length + 1} of about ${listedFiles.length} files…`);
+        show(zipAt + zi, { done: mine.length, problems: failed.length - failedBefore });
         try {
           const blob = f.read ? await f.read() : null;
           const one = await keepOne({ ...f, blob }, z.id, store, now, room);
@@ -265,6 +308,7 @@ async function keepDropNow(files: PendingAttachment[], store: KeepStore, onBusy:
       failed.push(`${zf.name}: ${e instanceof Error ? e.message : "couldn't be opened completely"}`);
     }
     z.files = mine.length;
+    show(zipAt + zi, { state: "done", done: mine.length, total: Math.max(mine.length, items[zipAt + zi].total), problems: failed.length - failedBefore });
     previews.push(zipInventory(z, mine));
     lines.push(`${zf.name}: ${plural(mine.length, "file")}${mine.length ? `, ${describeCounts(mine)}` : ""}.`);
     handedOver.push(...(opts.onZipKept ? mine : []));

@@ -3679,3 +3679,112 @@ input::placeholder {
 .keep-note {
   margin-top: 4px;
 }
+
+/* ---------- reading dropped files: progress ---------- */
+.import {
+  margin: 0 0 8px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 13px;
+}
+.import-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--ink-2);
+}
+.import-head strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.import-bar {
+  height: 6px;
+  border-radius: 99px;
+  background: var(--sunken);
+  overflow: hidden;
+}
+.import-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.import-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+.import-list li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-3);
+}
+.import-list li.is-working,
+.import-list li.is-done {
+  color: var(--ink-2);
+}
+.import-list li.is-working .import-name {
+  color: var(--ink);
+  font-weight: 500;
+}
+.import-icon {
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+.import-list li.is-done .import-icon {
+  color: #3fae6a;
+}
+.import-list li.is-failed,
+.import-list li.is-failed .import-icon {
+  color: var(--danger);
+}
+.import-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.import-count {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.import-spin {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  animation: import-spin 0.8s linear infinite;
+}
+@keyframes import-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .import-spin {
+    animation: none;
+  }
+}
+
+/* A reply that didn't come through, with "Try again". */
+.send-failed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.send-failed .mini-btn {
+  color: var(--ink);
+}
