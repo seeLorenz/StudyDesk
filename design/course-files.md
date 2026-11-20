@@ -15,7 +15,7 @@ The first real install showed three problems:
 ## The idea in short
 
 - **Take everything in, refuse nothing.** Zips are unpacked in the page. Each file ends up as one of: *readable now*, *kept for the agent* (a scan, an unusual format), or *skipped, with the reason* (a lecture video, system junk). The student sees one short summary per zip, never a wall of red cards.
-- **Keep originals, make an inventory, read nothing yet.** At drop time the page only stores the files and builds a small **inventory**: path, type, size, page count, and an **outline** per file (its bookmarks, or the first line of each page or slide). That's cheap, mechanical work.
+- **Keep originals, make an inventory, send nothing yet.** At drop time the page stores the files and their text and builds a small **inventory**: path, type, size, page count, and an **outline** per file (its bookmarks, or the first line of each page or slide). That's cheap, mechanical work.
 - **The agent navigates.** The organization agent gets the inventory, not the text. It decides what to open first, opens only the pages it needs, follows what the files point to, and stops when it can write the course map with confidence. Its live log shows its reasoning ("Opening Syllabus.pdf: should list topics, grading and dates").
 - **Blocks route, they don't stop.** Anything the page can't do goes to the agent automatically. If the agent can't do it either, the student gets one plain ask with the one action that unblocks it.
 
@@ -32,7 +32,7 @@ This part has one right answer, so it is code (guideline 3).
 | PDF with text, image, text or code file | Original kept in the file store; outline built |
 | Word, PowerPoint, Excel, OpenDocument | Text pulled out in the page (they are zips of text inside), one marker per slide or sheet, stored as text; outline built. The file store can't keep these originals, so the text version is what's kept |
 | PDF without text (a scan), handwritten notes | Original kept; marked "needs reading by the agent" (see section 3) |
-| Video and audio | Listed in the inventory by name, not stored (too big for the file store). By default the agent works from the title ("lecture recording, week 4"). The student is asked once per drop whether that's fine (see "Videos" below) |
+| Video and audio | Listed in the inventory by name, not stored (too big for the file store, and Claude can't watch or hear them). The agent goes by the title, or by the student's description (see "Videos" below) |
 | System junk (`__MACOSX`, `.DS_Store`, `Thumbs.db`, empty files) | Dropped silently |
 | Anything else | Listed in the inventory as "unknown format, not read"; the agent decides whether it matters |
 | A single file over the file store's limit (20 MB) | Text and outline kept, original not; said once in the summary |
@@ -100,14 +100,14 @@ Where judgment *is* needed (which of 300 files matter, whether two files are ver
 
 ## Videos
 
-Reading a video is very costly, and Claude can't hear the sound, so by default the agent uses the video's title and where it sits in the folders.
+Claude can't watch or listen to videos, so by default the agent uses the video's title and where it sits in the folders.
 
-When a drop holds videos, its summary card asks once, for all of them together (never one question per video):
+When a drop holds videos, its summary card says so once, for all of them together (never one question per video):
 
-> We found 12 videos, such as "VO 04 Integralrechnung.mp4". Reading a video costs a lot of usage, so we normally go by the title. Is that fine, or should Claude look through them?
-> **Use the titles** (default) · **Look through them**
+> We found 12 videos, such as "VO 04 Integralrechnung.mp4". Claude can't watch or listen to videos, so it goes by the title unless you describe what happens in them.
+> **Use the titles** (default) · **I'll describe them**
 
-"Look through them" means: while the file is still open in the page, the page takes a still picture about every 30 seconds (slides, the board) and keeps those pictures as the video's readable content. Claude reads the pictures, not the sound, and the card says so in one line. Because the page only has the video while it's dropped, choosing this later asks the student to drop the video again. A transcript or the lecture slides are always the better source, so the card also says: "If you have the slides or a transcript, drop those instead."
+"I'll describe them" opens one short box per video. What the student writes becomes that video's readable text, and the agent reads it like any other file. A video left empty keeps going by its title. The card also says: "If you have the slides or a transcript, drop those instead."
 
 ## Data
 
@@ -116,7 +116,7 @@ When a drop holds videos, its summary card asks once, for all of them together (
 | Upload (existing, extended) | add `path` (folder inside the zip), `zipId`, `state` (readable, for agent, skipped), `skipReason`, `sizeBytes` | `pages` already exists |
 | Zip | `id`, `fileName`, `courseId` or unsorted, `addedAt`, counts per state | One per dropped zip; lets the Orchestrator assign or move all its files at once |
 | Outline | `uploadId`, lines (`p. 3: 2.1 Grenzwerte`), capped at a few KB per file | Built at drop time; what the agent navigates by |
-| Readable text (existing) | unchanged | No longer made for every file at drop time: made the first time a file is opened, then kept, so later opens are cheap |
+| Readable text (existing) | unchanged, plus `outline` | Still made by page code at drop time (cheap; it's how the outline is built), but never sent to Claude whole: the agent opens pages from it |
 
 ## What changes in the existing code
 
@@ -129,7 +129,7 @@ When a drop holds videos, its summary card asks once, for all of them together (
 
 1. No model decides whether to hand off; code routes. Sonnet only for bulk transcription inside a cloud session; Opus keeps the navigation.
 2. No limit on file opens; every open and every skip has a reason in the log.
-3. Videos: ask the student once per drop, titles by default, "look through them" on request (stills, no sound).
+3. Videos: Claude can't watch or hear them. The card says so once per drop; titles by default, or the student describes each video and that text is read instead.
 
 ## To check while building
 
