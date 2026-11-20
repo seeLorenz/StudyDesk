@@ -27,7 +27,7 @@ import { gradeSteps } from "./scales";
 import { setupTodo, staleCourses, type TodoItem } from "./todo";
 import { buildSemester, CLOUD_CHARS, localSetup, parseSetup, runCourseSetup, setupTurns, type FileForSetup, type SetupInput, liveProgress, type LiveProgress } from "./setup";
 import { buildBackup, freshStart, saveBackup } from "../platform/backup";
-import { archiveJob, byteLength, checkHandoff, MAX_JOB_BYTES, readJob, sessionUrl, startJob, type HandoffSetup, type HandoffState } from "../platform/handoff";
+import { byteLength, checkHandoff, jobProgress, MAX_JOB_BYTES, readJobDoc, removeJob, sessionUrl, startJob, type HandoffSetup, type HandoffState } from "../platform/handoff";
 import type { CloudJob, CourseSetup, DraftCourse, Profile, SemesterDraft, SetupMessage, SetupStep, Upload } from "./types";
 
 // Start New Semester: one chat with the Orchestrator, with the semester sheet
@@ -409,7 +409,7 @@ function Actions({ children }: { children?: React.ReactNode }) {
 // ---------- hand-off: Claude Code on the web ----------
 
 const HANDOFF_WHY =
-  "Setting up a semester means reading many files and looking courses up online. StudyDesk hands that to Claude sessions in the cloud (Claude Code on the web). They can search the web, keep working when this page is closed, and stay out of your normal Claude chat list: they're tagged StudyDesk and archived when they finish. Without them, StudyDesk reads your files here in the page and can only guess courses you have no files for.";
+  "Setting up a semester means reading many files and looking courses up online. StudyDesk hands that to Claude sessions in the cloud (Claude Code on the web). They can search the web, keep working when this page is closed, and stay out of your regular Claude chat list. Each one reports its results straight back into your StudyDesk. Without them, StudyDesk reads your files here in the page and can only guess courses you have no files for.";
 
 function HandoffCard({ handoff, recheckHandoff, draft, update }: StepProps) {
   const [checking, setChecking] = useState(false);
@@ -655,7 +655,7 @@ function addDaysLocal(day: string, n: number): string {
 
 type FeedEntry = { prep: string[]; live: LiveProgress | null; model?: string; log?: string[] };
 
-function Running({ env, draft, profile, update, go, today, flush, md, draftRef: pageDraftRef, handoff }: StepProps) {
+function Running({ env, draft, profile, update, updateProfile, go, today, flush, md, draftRef: pageDraftRef, profileRef, handoff }: StepProps) {
   const running = useRef(false);
   const [finishError, setFinishError] = useState<string | null>(null);
   // The live feed: what the org agent is doing right now, per course. Not saved.
@@ -748,33 +748,52 @@ function Running({ env, draft, profile, update, go, today, flush, md, draftRef: 
 
   /** Hands one course to a cloud session. False when it has to be read in the page instead. */
   const startCloud = useCallback(
-    async (c: DraftCourse, setup: HandoffSetup): Promise<boolean> => {
+    async (c: DraftCourse, cloudSetup: HandoffSetup): Promise<boolean> => {
       const { input, files, prep } = await prepare(c, draftRef.current, false);
       if (files.some((f) => f.image)) return false; // images only go through the page
       const built = setupTurns(input, { web: true, maxChars: CLOUD_CHARS });
       if (built.clipped.length || byteLength(built.turns[0].content) > MAX_JOB_BYTES) return false; // too long: the page reads more at once
       setCourse(c.id, { setupStatus: "reading", setupError: undefined });
-      const sessionId = await startJob(setup, `Set up the course "${c.name}"`, built.turns[0].content);
-      const job: CloudJob = { sessionId, startedAt: Date.now(), lastEventId: null, fileKeys: Object.fromEntries(built.fileKeys), readIds: files.map((f) => f.upload.id) };
+      // The saved setup may know more than the check did (a new task, the page's own address).
+      const saved = profileRef.current.handoff;
+      const setup = saved && saved.environmentId === cloudSetup.environmentId ? { ...cloudSetup, ...saved } : cloudSetup;
+      const started = await startJob(setup, `Set up the course "${c.name}"`, built.turns[0].content);
+      if (started.setup.triggerId !== setup.triggerId) updateProfile((p) => ({ ...p, handoff: started.setup }));
+      const now = Date.now();
+      const job: CloudJob = { jobId: started.jobId, sessionId: started.sessionId, startedAt: now, changedAt: now, seen: "", fileKeys: Object.fromEntries(built.fileKeys), readIds: files.map((f) => f.upload.id) };
       setCourse(c.id, { job });
       setFeed((f) => ({ ...f, [c.id]: { prep: [...prep, "Handed to a cloud session: it reads your files and looks the course up online"], live: null, log: [] } }));
       await flush();
       return true;
     },
-    [prepare, setCourse, flush],
+    [prepare, setCourse, flush, profileRef, updateProfile],
   );
 
-  /** Follows one cloud session; saves its result when it has finished. */
+  /** Follows one cloud session through its report; saves its result when it has finished. */
   const pollCloud = useCallback(
     async (c: DraftCourse) => {
       const job = c.job!;
-      const p = await readJob(job.sessionId, job.lastEventId);
-      if (p.log.length) setFeed((f) => ({ ...f, [c.id]: { prep: f[c.id]?.prep ?? ["Working in a cloud session"], live: null, log: [...(f[c.id]?.log ?? []), ...p.log].slice(-12) } }));
-      if (p.lastEventId !== job.lastEventId) setCourse(c.id, { job: { ...job, lastEventId: p.lastEventId } });
-      if (p.status === "working") return;
-      void archiveJob(job.sessionId);
+      if (!job.jobId) {
+        // Started by an older StudyDesk that can't follow it: start it again.
+        setCourse(c.id, { job: undefined, setupStatus: "waiting" });
+        return;
+      }
+      const doc = await readJobDoc(job.jobId);
+      const now = Date.now();
+      const sig = `${doc?.status}|${doc?.log?.length ?? 0}|${doc?.log?.[doc.log.length - 1] ?? ""}`;
+      const changed = sig !== job.seen;
+      const p = jobProgress(doc, { startedAt: job.startedAt, changedAt: changed ? now : job.changedAt }, now);
+      setFeed((f) => ({ ...f, [c.id]: { prep: f[c.id]?.prep ?? ["Handed to a cloud session"], live: null, log: p.status === "waiting" ? ["Waiting for the cloud session to start…"] : p.log } }));
+      if (p.artifactUrl && profileRef.current.handoff && profileRef.current.handoff.artifactUrl !== p.artifactUrl) {
+        const url = p.artifactUrl;
+        updateProfile((x) => (x.handoff ? { ...x, handoff: { ...x.handoff, artifactUrl: url } } : x));
+      }
+      if (p.status === "waiting" || p.status === "working") {
+        if (changed) setCourse(c.id, { job: { ...job, seen: sig, changedAt: now } });
+        return;
+      }
       try {
-        if (p.status !== "done" || !p.answer) throw new Error("The cloud session stopped without an answer.");
+        if (p.status !== "done" || !p.answer) throw new Error(p.error ?? "The cloud session stopped without an answer.");
         const d = draftRef.current;
         const input: SetupInput = { profile, draft: d, course: c, facts: d.facts.filter((f) => f.courseId === c.id), files: [], today, priorFundamentals: prior };
         const result = parseSetup(p.answer, input, new Map(Object.entries(job.fileKeys)));
@@ -783,9 +802,10 @@ function Running({ env, draft, profile, update, go, today, flush, md, draftRef: 
         // The page reads it instead.
         setCourse(c.id, { job: undefined, cloudFailed: `${message(e)} Reading it here instead.`, setupStatus: "waiting" });
       }
+      void removeJob(job.jobId);
       await flush();
     },
-    [profile, today, prior, saveResult, setCourse, flush],
+    [profile, today, prior, saveResult, setCourse, flush, profileRef, updateProfile],
   );
 
   const runAll = useCallback(async () => {
@@ -895,7 +915,7 @@ function Running({ env, draft, profile, update, go, today, flush, md, draftRef: 
       <h1>Setting up your semester</h1>
       <p>
         {cloud
-          ? "The organization agent (Claude Opus) now works on every course at once, each in its own cloud session: it reads your files page by page, looks the course up online, and turns it into topics, skills, dates, homework and grading rules. The sessions keep working if you close this page, and they're archived when they finish."
+          ? "The organization agent (Claude Opus) now works on every course at once, each in its own cloud session: it reads your files page by page, looks the course up online, and turns it into topics, skills, dates, homework and grading rules. The sessions keep working if you close this page, and they don't show up in your regular Claude chats."
           : "The organization agent (Claude Opus) works through your courses one at a time, right here in the page. It reads each file page by page and turns it into topics, skills, dates, homework and grading rules. Without cloud sessions, courses without files are only an estimate and nothing is looked up online."}
       </p>
       <p className="setup-count">
@@ -910,7 +930,7 @@ function Running({ env, draft, profile, update, go, today, flush, md, draftRef: 
         <div key={c.id} className="setup-now">
           <h3>
             <span className="setup-spin" aria-hidden="true" /> {c.name}
-            {c.job && (
+            {c.job?.sessionId && (
               <a className="setup-session-link" href={sessionUrl(c.job.sessionId)} target="_blank" rel="noreferrer">
                 Open the session
               </a>

@@ -1,22 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { byteLength, clipBytes, summarizeEvents } from "../src/platform/handoff";
+import { byteLength, clipBytes, jobInstructions, jobProgress, QUIET_TIMEOUT_MS, START_TIMEOUT_MS } from "../src/platform/handoff";
 
-const assistant = (content: unknown[]) => ({ id: "e", data: { assistant: { message: { content } } } });
-
-describe("hand-off events", () => {
-  it("turns tool calls and short notes into log lines, and finds the answer", () => {
-    const { log, answer } = summarizeEvents([
-      assistant([{ type: "text", text: "Looking up the course first." }]),
-      assistant([{ type: "tool_use", name: "WebSearch", input: { query: "TU Graz Mathematik A EEE" } }]),
-      assistant([{ type: "tool_use", name: "WebFetch", input: { url: "https://www.tugraz.at/x" } }]),
-      assistant([{ type: "tool_use", name: "TodoWrite", input: {} }]),
-      assistant([{ type: "text", text: "=== SUMMARY ===\nDone.\n=== SKILLS ===\ns1 | t1 | A" }]),
-    ]);
-    expect(log).toEqual(["Looking up the course first.", "Searching the web: TU Graz Mathematik A EEE", "Reading tugraz.at"]);
-    expect(answer).toContain("=== SUMMARY ===");
+describe("hand-off jobs", () => {
+  it("tells the session where to report, and finds the StudyDesk when its address isn't known", () => {
+    const t = jobInstructions({ jobId: "abc", title: "Set up the course", body: "=== SUMMARY ===" });
+    expect(t).toContain('doc_id "job-abc"');
+    expect(t).toContain('collection "data/users/me"');
+    expect(t).toContain('Artifact action "list"');
+    expect(t.endsWith("=== SUMMARY ===")).toBe(true);
+    const known = jobInstructions({ jobId: "abc", title: "x", body: "y", artifactUrl: "https://claude.ai/artifact/X" });
+    expect(known).toContain("Your StudyDesk is https://claude.ai/artifact/X.");
+    expect(known).not.toContain('action "list"');
   });
-  it("prefers the result event's text", () => {
-    expect(summarizeEvents([assistant([{ type: "text", text: "x" }]), { data: { result: { result: "final" } } }]).answer).toBe("final");
+  it("reads a report: waiting, working, done, failed", () => {
+    const job = { startedAt: 0, changedAt: 0 };
+    expect(jobProgress({ status: "queued" }, job, 1000).status).toBe("waiting");
+    expect(jobProgress({ status: "queued" }, job, START_TIMEOUT_MS + 1).status).toBe("failed");
+    const w = jobProgress({ status: "working", log: ["Started", "Searching"], artifactUrl: "https://claude.ai/artifact/X" }, job, 1000);
+    expect(w).toMatchObject({ status: "working", log: ["Started", "Searching"], artifactUrl: "https://claude.ai/artifact/X" });
+    expect(jobProgress({ status: "working" }, job, QUIET_TIMEOUT_MS + 1).status).toBe("failed");
+    expect(jobProgress({ status: "done", answer: "=== SUMMARY ===" }, job, 1000)).toMatchObject({ status: "done", answer: "=== SUMMARY ===" });
+    expect(jobProgress({ status: "done" }, job, 1000).status).toBe("failed");
+    expect(jobProgress({ status: "failed", error: "No access" }, job, 1000).error).toContain("No access");
+    expect(jobProgress(null, job, 1000).status).toBe("failed");
+  });
+  it("only trusts claude.ai addresses from a report", () => {
+    expect(jobProgress({ status: "working", artifactUrl: "https://evil.example/x" }, { startedAt: 0, changedAt: 0 }, 1).artifactUrl).toBeNull();
   });
   it("keeps job text under the byte limit, counting umlauts as two bytes", () => {
     const t = clipBytes("ä".repeat(1000), 500);
