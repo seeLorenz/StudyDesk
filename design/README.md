@@ -15,6 +15,8 @@ Start with [guidelines.md](guidelines.md): the design rules that apply to the wh
 | [scheduled-runs.md](scheduled-runs.md) | The nightly run: grading at 22:00, the organization agent's checks and sweeps, tomorrow's quest | First version built |
 | [updates.md](updates.md) | New versions without losing data: releases as tags, the Update button, backup, data upgrades, going back, import | Design drafted |
 
+Ideas that aren't designed yet are collected in [ideas.md](ideas.md).
+
 The organization agent's own work (setup reading, jobs, nightly checks and sweeps) is covered in onboarding.md, orchestrator.md and scheduled-runs.md.
 
 ## The big picture
