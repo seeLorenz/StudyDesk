@@ -12,6 +12,7 @@ Start with [guidelines.md](guidelines.md): the design rules that apply to the wh
 | [orchestrator.md](orchestrator.md) | The one agent the student talks to: questions, changes, jobs for the organization agent | First version built |
 | [app-layout.md](app-layout.md) | How the screens fit together: Today, Ask, Organize, phone layout, notifications | First version built |
 | [scheduled-runs.md](scheduled-runs.md) | The nightly run: grading at 22:00, the organization agent's checks and sweeps, tomorrow's quest | First version built |
+| [updates.md](updates.md) | New versions without losing data: releases as tags, the Update button, backup, data upgrades, going back, import | Design drafted |
 
 The organization agent's own work (setup reading, jobs, nightly checks and sweeps) is covered in onboarding.md, orchestrator.md and scheduled-runs.md.
 
