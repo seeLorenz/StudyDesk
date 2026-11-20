@@ -9,6 +9,7 @@ Start with [guidelines.md](guidelines.md): the design rules that apply to the wh
 | [grading-and-mastery.md](grading-and-mastery.md) | How answers are judged, how mastery is measured, reviews, timing, points | Spec drafted |
 | [quest-creation.md](quest-creation.md) | What a daily quest looks like and how it's stored | First version built |
 | [onboarding.md](onboarding.md) | Start New Semester: what the student is asked, the setup session, the placement check | First version built |
+| [course-files.md](course-files.md) | Taking in course files and zips, and how the organization agent reads them by reason | First version built |
 | [orchestrator.md](orchestrator.md) | The one agent the student talks to: questions, changes, jobs for the organization agent | First version built |
 | [app-layout.md](app-layout.md) | How the screens fit together: Today, Ask, Organize, phone layout, notifications | First version built |
 | [scheduled-runs.md](scheduled-runs.md) | The nightly run: grading at 22:00, the organization agent's checks and sweeps, tomorrow's quest | First version built |

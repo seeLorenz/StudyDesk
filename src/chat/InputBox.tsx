@@ -19,6 +19,8 @@ type Props = {
   /** "dark" for the floating Reply popover. */
   tone?: "default" | "dark";
   sendLabel?: string;
+  /** Accept zips, videos and any other file as they are (boxes that keep course files). */
+  keepAll?: boolean;
 };
 
 export function InputBox({
@@ -33,6 +35,7 @@ export function InputBox({
   compact,
   tone = "default",
   sendLabel = "Send",
+  keepAll = false,
 }: Props) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<PendingAttachment[]>([]);
@@ -45,7 +48,7 @@ export function InputBox({
     for (const file of list) {
       const placeholderFile: PendingAttachment = { id: Math.random().toString(36).slice(2), name: file.name || "pasted file", kind: "text", status: "reading" };
       setFiles((f) => [...f, placeholderFile]);
-      readAttachment(file).then((a) => setFiles((f) => f.map((x) => (x.id === placeholderFile.id ? a : x))));
+      readAttachment(file, { keepAll }).then((a) => setFiles((f) => f.map((x) => (x.id === placeholderFile.id ? a : x))));
     }
   };
 
@@ -119,7 +122,7 @@ export function InputBox({
         </div>
       )}
       <div className="inputbox-row">
-        <button type="button" className="icon-btn" onClick={() => pickRef.current?.click()} aria-label="Attach files" title="Attach images, PDFs or text files">
+        <button type="button" className="icon-btn" onClick={() => pickRef.current?.click()} aria-label="Attach files" title={keepAll ? "Attach files or course zips" : "Attach images, PDFs, Office or text files"}>
           <svg viewBox="0 0 20 20" aria-hidden="true">
             <path d="M14.5 9.5l-5.3 5.3a3.2 3.2 0 01-4.5-4.5l6-6a2.1 2.1 0 013 3l-6 6a1 1 0 01-1.5-1.5l5.3-5.3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
@@ -130,7 +133,7 @@ export function InputBox({
           type="file"
           multiple
           hidden
-          accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/*,.md,.csv,.json,.tex,.py,.js,.ts,.java,.c,.cpp"
+          accept={keepAll ? undefined : "image/png,image/jpeg,image/webp,image/gif,application/pdf,text/*,.md,.csv,.json,.tex,.py,.js,.ts,.java,.c,.cpp,.docx,.pptx,.xlsx,.odt,.odp,.ods"}
           onChange={(e) => {
             addFiles(Array.from(e.target.files ?? []));
             e.target.value = "";

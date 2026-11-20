@@ -132,7 +132,9 @@ function formatCall(c: PendingCall, dir: string): string {
     "",
     `Answer this as StudyDesk's Claude. The conversation below is exactly what StudyDesk sends; reply as the assistant's next turn.`,
     `Write ONLY that reply, in exactly the format the conversation asks for, into the file ${join(dir, "answers", `${c.id}.md`)}. No preamble, no comments about this file.`,
-    c.web ? "You may search the web and fetch pages for this one." : "Answer from the conversation alone; no web needed.",
+    c.web
+      ? "You may search the web and fetch pages for this one, and open the student's files as the conversation explains (the data you downloaded has each file's kept text under files/uploads)."
+      : "Answer from the conversation alone; no web needed.",
   ];
   if (c.images.length) parts.push(`The student's photos for this call, in order (open each with Read): ${c.images.map((_, i) => join(dir, "calls", `${c.id}-${i + 1}.jpg`)).join(", ")}. "image N" in the text means the N-th of these.`);
   c.turns.forEach((t, i) => {
@@ -304,7 +306,7 @@ async function main(): Promise<void> {
   if (existsSync(ansDir)) for (const f of readdirSync(ansDir)) if (f.endsWith(".md")) answers.set(f.slice(0, -3), readFileSync(join(ansDir, f), "utf8").trim());
 
   const images = new Map(collection<{ dataUrl?: string }>(all, "quests/images").filter((x) => x.data.dataUrl).map((x) => [x.id, x.data.dataUrl!]));
-  const uploads = new Map(collection<{ text?: string; image?: string }>(all, "files/uploads").map((x) => [x.id, x.data]));
+  const uploads = new Map(collection<{ text?: string; image?: string; outline?: string }>(all, "files/uploads").map((x) => [x.id, x.data]));
   const mastery: MasteryData = {
     skills: collection<MasteryData["skills"][number]>(all, "mastery/skills").map((x) => x.data),
     targets: collection<MasteryData["targets"][number]>(all, "mastery/targets").map((x) => x.data),

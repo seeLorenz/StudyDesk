@@ -15,6 +15,7 @@ import type { Turn } from "../platform/claude";
 import type { Assignment, AssignmentTask, KeyDate, Semester, Topic } from "../quests/types";
 import type { Ask } from "../quests/write";
 import { parseSections } from "../quests/write";
+import { selectPart } from "../lib/intake";
 import type { CatalogEntry, CourseSetup, DraftCourse, Profile, SemesterDraft, StudentFact, Upload } from "./types";
 
 /** At most this much file text goes into one course's run. */
@@ -22,7 +23,7 @@ export const MAX_COURSE_CHARS = 150_000;
 /** The done screen is a to-do list, so each course asks at most this many questions. */
 export const MAX_QUESTIONS = 3;
 
-export type FileForSetup = { upload: Upload; text: string | null; image: Blob | null };
+export type FileForSetup = { upload: Upload; text: string | null; image: Blob | null; outline?: string };
 
 export type SetupInput = {
   profile: Profile;
@@ -45,7 +46,54 @@ export type SetupTurnOptions = {
   web?: boolean;
   /** At most this much file text (default MAX_COURSE_CHARS). */
   maxChars?: number;
+  /**
+   * Read by reason (design/course-files.md): the run gets an inventory instead
+   * of the files' text and opens what it needs. "page": through the outline and
+   * open tools (fileTools). "cloud": the session reads the student's data itself.
+   */
+  navigate?: "page" | "cloud";
 };
+
+/** Outlines go into the inventory itself while they add up to less than this. */
+export const INLINE_OUTLINES = 20_000;
+
+/** One inventory line per file. Pure. */
+export function inventoryLine(key: string, f: FileForSetup, markNew = false): string {
+  const u = f.upload;
+  const what =
+    u.state === "agent"
+      ? `a scan, ${u.pages ?? "?"} pages, no text`
+      : u.type === "video"
+        ? "a video (Claude can't watch or listen)"
+        : u.state === "listed"
+          ? "a file StudyDesk can't open, name only"
+          : u.type === "image"
+            ? "an image"
+            : `${u.type === "office" ? "Office file" : u.type}${u.pages ? `, ${u.pages} ${u.type === "office" ? "slides/sheets" : "pages"}` : ""}`;
+  return `- ${key}: ${markNew && u.cataloguedAt === null ? "NEW " : ""}${u.path ?? u.fileName} (${what})${u.studentNote ? ` the student says: "${u.studentNote}"` : ""}`;
+}
+
+/** How the run navigates, shared by the page and cloud versions. */
+const NAVIGATE = `## How to read: by reason, like a careful student on the first day
+You get an inventory, not the files' text. Open only what you need, and say why.
+1. Read the inventory first. Folder and file names say a lot: say what you expect where.
+2. Open the course overview first: syllabus, module description, the organizational part of the first lecture.
+3. Follow what it points to: grading and exam rules, exercise sheets with a hand-in date still ahead, the chapters or parts the exam covers.
+4. For scripts and slide decks, the outline is usually enough to map skills to pages. Open pages only where the outline is unclear or a skill needs checking.
+5. Skip with a reason: older versions of the same file, duplicates, admin files, solutions you don't need. Videos: go by the title and what the student said about them.
+6. Stop when you can write every section with confidence. There's no limit on how many files you open, but every open needs a reason, and "read everything" must be argued file by file.
+Every file you open and every group you skip gets one line in the LOG ("Opening F3 Syllabus.pdf p. 1-4: should list grading and dates"; "Skipping F20-F31: 2024 versions of the same sheets"). Catalog entries you built from an outline without opening the pages end with "(outline)".`;
+
+/** The one extra write a setup session may make: the text it transcribed from a scan. */
+export const SCAN_WRITE_BACK = 'add a "text" field to the upload documents (collection "data/users/me/files/uploads") of scans you transcribed';
+
+/** How a cloud session reads the student's files itself (it has the ArtifactData and Artifact tools). */
+const CLOUD_FILES = `## Opening files
+Each line of the inventory ends with the file's upload id and, when the original is kept, its asset id. Read files from the student's StudyDesk:
+- Kept text and outline: ArtifactData action "get", collection "data/users/me/files/uploads", doc_id "<upload id>". Fields: "outline", "text" (pages marked "--- page N ---", slides "--- slide N ---"), "image" (a data URL).
+- The original (PDFs, images, scans): Artifact action "read" with your StudyDesk's url and path "<asset id>"; it saves the file locally, where you can open pages, search across files, or look at a scanned page.
+- Scans have only the original. Read the pages you need by looking at them. For a long scan you need whole, you may hand the transcription to a helper agent on the Sonnet model (Agent tool, model "sonnet") and check a few pages of its work. Save what you transcribed so later reads are cheap: ArtifactData "update" on that upload's document with {"text": "--- page 1 ---\\n…"}.
+- Never download or open every file just because you can.`;
 
 export function setupTurns(input: SetupInput, opts: SetupTurnOptions = {}): { turns: Turn[]; images: Blob[]; fileKeys: Map<string, string>; clipped: string[] } {
   const { profile, course, facts, files, today, draft } = input;
@@ -54,7 +102,32 @@ export function setupTurns(input: SetupInput, opts: SetupTurnOptions = {}): { tu
   const clipped: string[] = [];
   const images: Blob[] = [];
   let budget = opts.maxChars ?? MAX_COURSE_CHARS;
-  const fileBlocks = files.map((f, i) => {
+  const navigate = opts.navigate;
+  const outlineTotal = files.reduce((n, f) => n + (f.outline?.length ?? 0), 0);
+  // A course read before: point the agent at what's new.
+  const reread = files.some((f) => f.upload.cataloguedAt !== null) && files.some((f) => f.upload.cataloguedAt === null);
+  const fileBlocks = navigate
+    ? [
+        files
+          .map((f, i) => {
+            const key = `F${i + 1}`;
+            fileKeys.set(key, f.upload.id);
+            if (navigate === "page" && f.image) images.push(f.image);
+            const line =
+              inventoryLine(key, f, reread) +
+              (navigate === "page" && f.image ? ` Attached as image ${images.length}.` : "") +
+              (navigate === "cloud" ? ` [upload ${f.upload.id}${f.upload.assetId ? `, asset ${f.upload.assetId}` : ""}]` : "");
+            return outlineTotal <= INLINE_OUTLINES && f.outline && f.upload.type !== "image" ? `${line}\n  Outline:\n${f.outline.replace(/^/gm, "    ")}` : line;
+          })
+          .join("\n"),
+        outlineTotal > INLINE_OUTLINES ? "(Outlines aren't listed here: there are too many. Get a file's outline before opening it.)" : "",
+        reread ? "This course was read before. Files marked NEW arrived since: open those, and re-open older files only when something points back to them." : "",
+        navigate === "page"
+          ? `## Opening files\nUse the tools: outline(file) gives a file's outline; open(file, part, why) gives the text of pages "3-5" or "3,7-9", slides or sheets the same way, or lines "l. 40-80" of a text file. Ask for a few pages at a time. A scan has no text here: note it in the LOG and work from its name.`
+          : CLOUD_FILES,
+        NAVIGATE,
+      ].filter(Boolean)
+    : files.map((f, i) => {
     const key = `F${i + 1}`;
     fileKeys.set(key, f.upload.id);
     const head = `### ${key}: ${f.upload.fileName}${f.upload.studentNote ? ` (the student says: "${f.upload.studentNote}")` : ""}`;
@@ -69,7 +142,7 @@ export function setupTurns(input: SetupInput, opts: SetupTurnOptions = {}): { tu
     }
     budget -= text.length;
     return `${head}\nPages are marked "--- page N ---"; for text files, count lines.\n"""\n${text}\n"""`;
-  });
+      });
   const prior = input.priorFundamentals.length
     ? `\nFundamentals this student already mastered in earlier semesters (reuse these exact ids when a fundamental here is the same skill; don't list them again otherwise):\n${input.priorFundamentals.map((p) => `- ${p.id}: ${p.name}`).join("\n")}\n`
     : "";
@@ -119,7 +192,7 @@ Skills are the unit of mastery: one kind of problem the student must be able to 
 Reply with exactly these sections, in this order, and nothing else. Use "|" between fields. Leave a section empty if there's nothing for it.
 
 === LOG ===
-The student watches this section appear live, so write it first, as you work through the material: 3 to 12 short lines in English, one per thing you look at and what you take from it. Name the file and pages, e.g.:
+The student watches this section appear live, so write it first, as you work through the material: ${navigate ? "one short line in English per file you open or group you skip, with why" : "3 to 12 short lines in English, one per thing you look at and what you take from it"}. Name the file and pages, e.g.:
 - Reading F1 (Skript.pdf), p. 1-40: limits and sequences, 3 worked examples per section
 - F2 (Blatt 3.pdf): homework due 2026-11-27, 4 tasks on series
 - Grading rules: F3 p. 2 says the exam counts 100 %
@@ -310,15 +383,66 @@ export function parseSetup(reply: string, input: Pick<SetupInput, "course" | "pr
   };
 }
 
+/**
+ * The page run's tools for reading by reason: a file's outline, and the text
+ * of the pages or lines it asks for. Each call adds a line to the live log.
+ */
+export function fileTools(files: FileForSetup[], onLog: (line: string) => void): Claude.sample.SampleTool[] {
+  const byKey = new Map(files.map((f, i) => [`F${i + 1}`, f]));
+  const find = (k: unknown) => byKey.get(String(k ?? "").trim().toUpperCase().replace(/^([0-9])/, "F$1"));
+  const name = (k: string, f: FileForSetup) => `${k} (${f.upload.path ?? f.upload.fileName})`;
+  return [
+    {
+      name: "outline",
+      description: "A file's outline: its bookmarks, or the first line of each page or slide, or headings with line numbers. Cheap: use it before opening pages.",
+      inputSchema: { type: "object", properties: { file: { type: "string", description: "File key, e.g. F3" } }, required: ["file"] } as unknown as Claude.sample.SampleToolInputSchema,
+      execute: async (input) => {
+        const f = find(input.file);
+        if (!f) return `No file ${String(input.file)}. Files: ${[...byKey.keys()].join(", ")}.`;
+        onLog(`Looking at the outline of ${name(String(input.file).toUpperCase(), f)}`);
+        if (f.image) return "An image; it's attached to the first message.";
+        return f.outline || (f.text ? "No outline: open a few pages instead." : "Nothing readable is kept for this file (a scan, a video or an unknown format). Work from its name.");
+      },
+    },
+    {
+      name: "open",
+      description: 'Opens part of a file: pages "3-5" or "3,7-9" (slides and sheets the same way), lines "l. 40-80" of a text file, or "all" for a short file. Ask for a few pages at a time.',
+      inputSchema: {
+        type: "object",
+        properties: {
+          file: { type: "string", description: "File key, e.g. F3" },
+          part: { type: "string", description: 'e.g. "1-4", "l. 40-80" or "all"' },
+          why: { type: "string", description: "One short line the student sees: why you open this" },
+        },
+        required: ["file", "part", "why"],
+      } as unknown as Claude.sample.SampleToolInputSchema,
+      execute: async (input) => {
+        const key = String(input.file ?? "").toUpperCase();
+        const f = find(input.file);
+        if (!f) return `No file ${String(input.file)}. Files: ${[...byKey.keys()].join(", ")}.`;
+        const part = String(input.part ?? "all");
+        onLog(`Opening ${name(key, f)}${part && part !== "all" ? ` ${/^l/i.test(part) ? part : `p. ${part}`}` : ""}: ${String(input.why ?? "").trim() || "no reason given"}`);
+        if (f.image) return "An image; it's attached to the first message.";
+        if (!f.text) return f.upload.state === "agent" ? "A scan without text: it can't be read in the page. Note it in the LOG and work from its name." : "Nothing readable is kept for this file. Work from its name and what the student said.";
+        return selectPart(f.text, part).text;
+      },
+    },
+  ];
+}
+
 /** Runs one course. Retries once with the problem named if the reply can't be used. */
 export async function runCourseSetup(
   input: SetupInput,
   ask: Ask,
   signal?: AbortSignal,
   onText?: (text: string) => void,
+  /** Read by reason with the outline and open tools; each tool call adds a line here. */
+  onLog?: (line: string) => void,
 ): Promise<CourseSetup & { clipped: string[] }> {
-  const { turns, images, fileKeys, clipped } = setupTurns(input);
-  const reply = await ask(turns, { images, tier: "complex", signal, onText });
+  const navigate = onLog && input.files.length ? ("page" as const) : undefined;
+  const { turns, images, fileKeys, clipped } = setupTurns(input, { navigate });
+  const tools = navigate ? fileTools(input.files, onLog!) : undefined;
+  const reply = await ask(turns, { images, tier: "complex", signal, onText, tools });
   try {
     return { ...parseSetup(reply, input, fileKeys), clipped };
   } catch (e) {
@@ -328,7 +452,7 @@ export async function runCourseSetup(
       { role: "user", content: `That reply couldn't be used: ${(e as Error).message} Write the whole reply again in exactly the section format, with at least one line under SKILLS.` },
     ];
     onText?.("=== LOG ===\n- The first answer couldn't be used, so I'm writing it again");
-    const again = await ask(retry, { images, tier: "complex", signal, onText });
+    const again = await ask(retry, { images, tier: "complex", signal, onText, tools });
     return { ...parseSetup(again, input, fileKeys), clipped };
   }
 }

@@ -13,7 +13,16 @@ import type { Semester } from "../quests/types";
 import type { Profile, SemesterDraft } from "../onboarding/types";
 
 /** What StudyDesk can read from a file later: page-marked text, or a compressed image. */
-export type UploadContent = { text?: string; image?: string };
+export type UploadContent = {
+  text?: string;
+  image?: string;
+  /** What the agent navigates by (src/lib/intake.ts buildOutline). */
+  outline?: string;
+  /** A video's description, written by the student (Claude can't watch or listen). */
+  description?: string;
+};
+
+export type StorageUsage = { files: number; bytes: number; maxFiles: number; maxBytes: number };
 
 export interface OnboardingStore {
   mode: "cloud" | "local";
@@ -24,7 +33,9 @@ export interface OnboardingStore {
   saveUploadContent(id: string, c: UploadContent): Promise<void>;
   loadUploadContent(id: string): Promise<UploadContent | null>;
   /** Keeps the original file; resolves with its asset id, or null when this view can't store files. */
-  storeOriginal(file: Blob): Promise<string | null>;
+  storeOriginal(file: Blob, type?: string | null): Promise<string | null>;
+  /** How full the file store is, from the platform itself; null when this view can't tell. */
+  storageUsage(): Promise<StorageUsage | null>;
   archiveSemester(s: Semester): Promise<void>;
 }
 
@@ -108,12 +119,21 @@ function cloudStore(db: DB, uid: string, assets: Claude.Assets | null): Onboardi
       const s = await uploads.doc(id).get();
       return s.exists ? (s.data() as UploadContent) : null;
     },
-    async storeOriginal(file) {
+    async storeOriginal(file, type) {
       if (!assets) return null;
       try {
-        return (await assets.upload(file)).id;
+        return (await assets.upload(file, type ? { type } : undefined)).id;
       } catch {
         return null; // too large or an unsupported type: the readable copy is still kept
+      }
+    },
+    async storageUsage() {
+      if (!assets) return null;
+      try {
+        const u = (await assets.list()).usage;
+        return u && u.maxBytes > 0 ? { files: u.files, bytes: u.bytes, maxFiles: u.maxFiles, maxBytes: u.maxBytes } : null;
+      } catch {
+        return null;
       }
     },
     async archiveSemester(s) {
@@ -165,6 +185,9 @@ function localStore(): OnboardingStore {
       return read<UploadContent>(`upload.${id}`);
     },
     async storeOriginal() {
+      return null;
+    },
+    async storageUsage() {
       return null;
     },
     async archiveSemester(s) {

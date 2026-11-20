@@ -3480,6 +3480,55 @@ sup.sd-ref {
 }
 .update-card.is-over { outline: 2px dashed var(--accent); }
 
+/* What a drop turned into (src/chat/IntakeCard.tsx) */
+.intake-card {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 14px;
+  text-align: left;
+}
+.intake-line {
+  margin: 0 0 6px;
+}
+.intake-videos {
+  margin-top: 10px;
+}
+.intake-videos p {
+  margin: 0 0 8px;
+}
+.intake-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+.intake-describe {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 10px 0;
+}
+.intake-video {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.intake-video-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.intake-video textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background-color: var(--field);
+  border: 1px solid var(--field-line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
 /* ---------- polish: fields, loading, logo ---------- */
 /* Single-line fields and dropdowns everywhere share the chat boxes' look:
    a field colour a step off the page and a visible edge. */
@@ -3568,4 +3617,12 @@ input::placeholder {
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--field-line) transparent;
+}
+
+.storage-meter {
+  margin-top: 12px;
+}
+.storage-meter p {
+  margin: 6px 0 0;
+  font-size: 13px;
 }

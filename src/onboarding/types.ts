@@ -70,7 +70,8 @@ export type Upload = {
   id: string;
   courseId: string | null;
   fileName: string;
-  type: "pdf" | "image" | "text";
+  /** "office" files are kept as their text; "video" and "other" are listed by name only. */
+  type: "pdf" | "image" | "text" | "office" | "video" | "other";
   /** What the student said about it ("last year's exam"). */
   studentNote: string;
   addedAt: number;
@@ -79,6 +80,25 @@ export type Upload = {
   /** The original in the artifact's file store, when this view can store files. */
   assetId: string | null;
   pages: number | null;
+  /** Folder path inside the zip it came from ("Übungen/Blatt 3.pdf"). */
+  path?: string;
+  /** The zip it came from (ZipRecord id). */
+  zipId?: string;
+  /** readable: its text or image is kept. agent: only the original is kept (a scan): a cloud session reads it. listed: known by name only (video, unknown format). */
+  state?: "readable" | "agent" | "listed";
+  sizeBytes?: number;
+};
+
+/** One dropped zip: its files are uploads with this zipId, assigned to a course together. */
+export type ZipRecord = { id: string; fileName: string; courseId: string | null; addedAt: number; files: number };
+
+/** What the student sees under a message that dropped files: one line per zip or group, and the videos question. */
+export type IntakeReport = {
+  lines: string[];
+  /** Videos found; the student may describe them (Claude can't watch or listen). */
+  videos?: Array<{ uploadId: string; name: string }>;
+  /** "titles" (default) or "describe" once the student chose. */
+  videoChoice?: "titles" | "describe";
 };
 
 /** Something the student said, passed on word for word ("the exam is on 28 Jan"). */
@@ -91,7 +111,7 @@ export type CatalogEntry = { skillId: string; uploadId: string; where: string };
 export type SetupStep = "chat" | "running" | "done";
 
 /** One message of the setup chat. Files are kept as uploads; the message only names them. */
-export type SetupMessage = { id: string; role: "user" | "assistant"; text: string; files?: string[]; createdAt: number; error?: string };
+export type SetupMessage = { id: string; role: "user" | "assistant"; text: string; files?: string[]; intake?: IntakeReport; createdAt: number; error?: string };
 
 /** What the setup run found for one course. */
 export type CourseSetup = {
@@ -130,6 +150,8 @@ export type SemesterDraft = {
   /** Minutes per weekday, index 0 = Sunday. */
   studyGoal: number[];
   uploads: Upload[];
+  /** Dropped zips (their files are in uploads). */
+  zips?: ZipRecord[];
   facts: StudentFact[];
   results: Record<string, CourseSetup>;
   /** The setup chat with the Orchestrator. */

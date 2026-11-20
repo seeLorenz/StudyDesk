@@ -146,7 +146,7 @@ export function findId(value: unknown, prefix: string): string | null {
 export const jobDocId = (jobId: string) => `job-${jobId}`;
 
 /** The rules a session follows to report through the student's own StudyDesk data. Pure, tested. */
-export function jobInstructions(o: { jobId: string; title: string; body: string; artifactUrl?: string }): string {
+export function jobInstructions(o: { jobId: string; title: string; body: string; artifactUrl?: string; alsoWrite?: string }): string {
   const doc = jobDocId(o.jobId);
   const where = o.artifactUrl
     ? `Your StudyDesk is ${o.artifactUrl}.`
@@ -164,7 +164,7 @@ Your job's document: collection "data/users/me", doc_id "${doc}". Change only th
 3. When finished: update with {"status": "done", "answer": "<your complete reply, exactly in the format the job asks for>"}. That is the only place your answer counts.
 4. If you can't do the job: update with {"status": "failed", "error": "<one plain sentence why>"}.
 
-Don't write anywhere else in StudyDesk's data. Don't create files, branches or pull requests.
+${o.alsoWrite ? `Apart from that, you may only ${o.alsoWrite}. Don't write anywhere else in StudyDesk's data.` : "Don't write anywhere else in StudyDesk's data."} Don't create files, branches or pull requests.
 
 ## The job
 
@@ -202,11 +202,11 @@ const newJobId = () => `${Date.now().toString(36)}${Math.random().toString(36).s
  * the instructions. When the saved task is gone, makes a new one; the
  * returned setup then differs and should be saved.
  */
-export async function startJob(setup: HandoffSetup, title: string, body: string): Promise<{ jobId: string; sessionId: string | null; setup: HandoffSetup }> {
+export async function startJob(setup: HandoffSetup, title: string, body: string, alsoWrite?: string): Promise<{ jobId: string; sessionId: string | null; setup: HandoffSetup }> {
   const jobId = newJobId();
   const ref = await jobRef(jobId);
   await ref.set({ status: "queued", title, createdAt: Date.now(), log: [] } satisfies JobDoc);
-  const text = clipBytes(jobInstructions({ jobId, title, body, artifactUrl: setup.artifactUrl }), 63_000);
+  const text = clipBytes(jobInstructions({ jobId, title, body, artifactUrl: setup.artifactUrl, alsoWrite }), 63_000);
   let used = setup;
   let fired: unknown;
   try {

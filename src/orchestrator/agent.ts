@@ -1,6 +1,7 @@
 // The Orchestrator's conversation: what it sees each turn, its rules, its page
 // tools, and its memory summary. design/orchestrator.md.
 
+import { unsortedList } from "../lib/keep";
 import type { Turn } from "../platform/claude";
 import { courseSignals, ORCH_CONFIG, speed } from "./signals";
 import { setupTodo } from "../onboarding/todo";
@@ -89,7 +90,7 @@ export function deskSnapshot(i: SnapshotInput): string {
       openToDo: setupTodo(draft).filter((t) => !t.done).map((t) => t.title),
       jobs: i.state.jobs.filter((j) => j.status === "running" || (j.finishedAt ?? 0) > Date.now() - 86_400_000).map((j) => ({ id: j.id, kind: j.kind, courses: j.courseIds, status: j.status, result: j.result })),
       recentChanges: i.state.changes.slice(-6).map((c) => ({ id: c.id, lines: c.lines, status: c.status })),
-      unsortedFiles: draft.uploads.filter((u) => !u.courseId).map((u) => ({ uploadId: u.id, name: u.fileName })),
+      unsortedFiles: unsortedList(draft.uploads, draft.zips),
       cloudSessions: i.cloudSessions,
       nightlyRun: i.nightly ?? "not set up (needs cloud sessions)",
     },
@@ -170,7 +171,7 @@ export const JOB_TOOL = {
     properties: {
       kind: { enum: ["new_material", "new_course", "remap"] },
       courses: { type: "array", items: { type: "string" }, description: "Course ids or names." },
-      files: { type: "array", description: "Files the student dropped (uploadId from unsortedFiles), each assigned to its course.", items: { type: "object", properties: { uploadId: { type: "string" }, course: { type: "string" }, note: { type: "string", description: "What the file is, e.g. 'exercise sheet 5, due Thu'." } }, required: ["uploadId", "course"] } },
+      files: { type: "array", description: "Files the student dropped (uploadId from unsortedFiles), each assigned to its course. A zip id (zip_…) assigns all files of that zip.", items: { type: "object", properties: { uploadId: { type: "string" }, course: { type: "string" }, note: { type: "string", description: "What the file is, e.g. 'exercise sheet 5, due Thu'." } }, required: ["uploadId", "course"] } },
       studentWords: { type: "string", description: "What the student said, word for word: it's passed to the organization agent." },
       rereadAll: { type: "boolean", description: "True only to re-read every file the course already has (asks the student first)." },
     },
