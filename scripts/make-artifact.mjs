@@ -1,7 +1,7 @@
 // Turns dist/index.html (a full document) into artifact/index.html: page
 // content only, because the claude.ai artifact host wraps the page in its own
 // <!doctype html><html><head>…<body> skeleton at publish time.
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
 const html = readFileSync("dist/index.html", "utf8");
 // The inlined JS can itself contain strings like "</head>", so find the real
@@ -23,3 +23,5 @@ const rest = keepHead.replace(title, "");
 mkdirSync("artifact", { recursive: true });
 writeFileSync("artifact/index.html", `${title}\n${rest}\n${body.trim()}\n`);
 console.log("artifact/index.html", (Buffer.byteLength(readFileSync("artifact/index.html")) / 1024).toFixed(0) + " KB");
+// The capabilities StudyDesk declares when it's published (also what an update publishes with).
+copyFileSync("release/capabilities.json", "artifact/capabilities.json");

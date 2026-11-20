@@ -2,6 +2,7 @@
 // Today it uses the claude.ai artifact `sample` capability (runs on the
 // viewer's own Claude plan). Moving to an API key later means changing this
 // file only.
+import { host } from "./host";
 
 export type Turn = { role: "user" | "assistant"; content: string };
 
@@ -38,7 +39,7 @@ let samplePromise: Promise<SampleFn | null> | null = null;
 
 function getSample(): Promise<SampleFn | null> {
   if (!samplePromise) {
-    const c = (window as Window & { claude?: Claude }).claude;
+    const c = host();
     samplePromise = c?.use ? c.use("sample").catch(() => null) : Promise.resolve(null);
   }
   return samplePromise;

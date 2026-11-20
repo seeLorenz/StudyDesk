@@ -1,0 +1,70 @@
+# Builds every release tag (v1, v1.1, ...) into the `releases` branch, under
+# <tag>/: index.html, routine.mjs, capabilities.json, release.json. A student's
+# own Claude session publishes from there when they press "Update".
+# design/updates.md, "Releases". Release notes are the tag's message:
+#   git tag -a v1.1 -m "Grading now shows ..." && git push origin v1.1
+name: Build release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: releases-branch
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if ! echo "$TAG" | grep -Eq '^v[0-9]+(\.[0-9]+)*$'; then echo "Not a release tag: $TAG"; exit 1; fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          git tag -l --format='%(contents)' "$TAG" | sed '/^-----BEGIN PGP/,$d' > "$RUNNER_TEMP/notes.md"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_STUDYDESK_VERSION: ${{ env.TAG }}
+          VITE_STUDYDESK_REPO: ${{ github.repository }}
+
+      - name: Put the build on the releases branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin releases >/dev/null; then
+            git fetch origin releases
+            git worktree add "$RUNNER_TEMP/releases" origin/releases
+            git -C "$RUNNER_TEMP/releases" checkout -B releases
+          else
+            git worktree add --detach "$RUNNER_TEMP/releases"
+            git -C "$RUNNER_TEMP/releases" checkout --orphan releases
+            git -C "$RUNNER_TEMP/releases" rm -rf --quiet .
+            printf '# StudyDesk releases\n\nBuilt by .github/workflows/release.yml from each release tag. Each folder is one version, ready to publish as a claude.ai artifact; latest.json names the newest. Do not edit by hand.\n' > "$RUNNER_TEMP/releases/README.md"
+          fi
+          rm -rf "$RUNNER_TEMP/releases/$TAG"
+          mkdir -p "$RUNNER_TEMP/releases/$TAG"
+          cp artifact/index.html artifact/routine.mjs artifact/capabilities.json "$RUNNER_TEMP/releases/$TAG/"
+          node scripts/release-info.mjs "$TAG" "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/releases"
+          cd "$RUNNER_TEMP/releases"
+          git add -A
+          git commit -m "Release $TAG"
+          git push origin releases

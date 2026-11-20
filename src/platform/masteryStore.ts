@@ -6,6 +6,7 @@
 //
 // Attempts are append-only: there is no way to change or delete one here.
 
+import { host } from "./host";
 import type { Attempt, CourseTarget, ReviewItem, Skill } from "../mastery/types";
 
 export type MasteryData = {
@@ -28,7 +29,7 @@ export interface MasteryStore {
 const plain = <T>(x: T) => JSON.parse(JSON.stringify(x)) as Record<string, unknown>;
 
 export async function openMasteryStore(): Promise<MasteryStore> {
-  const c = (window as Window & { claude?: Claude }).claude;
+  const c = host();
   if (c?.use) {
     const [db, user] = await Promise.all([c.use("db").catch(() => null), c.use("user").catch(() => null)]);
     const uid = user ? await user.id().catch(() => null) : null;

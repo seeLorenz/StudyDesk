@@ -13,6 +13,8 @@
 // Everything here is plumbing (one right answer); what a job does is up to
 // the prompt that the caller writes.
 
+import { host } from "./host";
+
 export const HANDOFF_SERVER = "Claude Code Remote";
 /** All a page gets, and all hand-off needs. */
 export const HANDOFF_TOOLS = ["list_environments", "create_trigger", "fire_trigger"] as const;
@@ -57,7 +59,7 @@ type Mcp = typeof Claude.mcp;
 let mcpPromise: Promise<Mcp | null> | null = null;
 function getMcp(): Promise<Mcp | null> {
   if (!mcpPromise) {
-    const c = (window as Window & { claude?: Claude }).claude;
+    const c = host();
     mcpPromise = c?.use ? c.use("mcp").catch(() => null) : Promise.resolve(null);
   }
   return mcpPromise;
@@ -186,7 +188,7 @@ export function jobProgress(doc: JobDoc | null, job: { startedAt: number; change
 type JobRef = { get(): Promise<{ exists: boolean; data(): unknown }>; set(d: unknown): Promise<unknown>; delete(): Promise<unknown> };
 
 async function jobRef(jobId: string): Promise<JobRef> {
-  const c = (window as Window & { claude?: Claude }).claude;
+  const c = host();
   const [db, user] = c?.use ? await Promise.all([c.use("db").catch(() => null), c.use("user").catch(() => null)]) : [null, null];
   const uid = user ? await (user as { id(): Promise<string> }).id().catch(() => null) : null;
   if (!db || !uid) throw { code: "capability_disabled", message: "StudyDesk can't save here, so a cloud session couldn't report back." };

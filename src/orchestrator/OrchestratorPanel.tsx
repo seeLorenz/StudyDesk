@@ -24,11 +24,16 @@ import { openQuestStore, type QuestStore } from "../platform/questStore";
 import { compressImage } from "../quests/images";
 import type { QuestRecord, Semester } from "../quests/types";
 import type { Profile, SemesterDraft, Upload } from "../onboarding/types";
-import { NIGHTLY_TOOL, ASK_TOOL, CALENDAR_TOOL, CHANGE_TOOL, checkinTurns, deskSnapshot, JOB_TOOL, jobTitle, localCheckin, LOOKUP_TOOL, needsSummary, orchTurns, questStarted, REBUILD_TOOL, summaryTurns, todaysQuest } from "./agent";
+import { NIGHTLY_TOOL, UPDATE_TOOL, ASK_TOOL, CALENDAR_TOOL, CHANGE_TOOL, checkinTurns, deskSnapshot, JOB_TOOL, jobTitle, localCheckin, LOOKUP_TOOL, needsSummary, orchTurns, questStarted, REBUILD_TOOL, summaryTurns, todaysQuest } from "./agent";
 import { PASS_ON_EVENT, type PassOn } from "./passOn";
 import { applyOps, canUndo, findCourse, syncSemester, undoChange, type Desk } from "./changes";
 import { advanceJobs, startJob, type JobFile } from "./jobs";
 import { checkinTriggers } from "./signals";
+import { GoBackCard, UpdateNotice } from "../updates/UpdateCards";
+import { loadRelease, loadUpdates, markAnnounced, updateEnv } from "../platform/updateStore";
+import { goBackTarget, offer } from "../updates/plan";
+import { APP_VERSION } from "../updates/version";
+import { plainNote, whatsNewTurns } from "../updates/whatsNew";
 import { emptyState, type Change, type ChatCard, type Job, type Notification, type OrchMessage, type OrchState, type PendingConfirm } from "./types";
 
 // The StudyDesk chat: the Orchestrator, reachable from every screen as a side
@@ -511,6 +516,35 @@ export function OrchestratorPanel(props: Props) {
               },
             },
             {
+              ...UPDATE_TOOL,
+              inputSchema: UPDATE_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema,
+              execute: async (input) => {
+                const e = await updateEnv();
+                if (!e) return "Updates only work inside StudyDesk on claude.ai.";
+                const [doc, release] = await Promise.all([loadUpdates(e), loadRelease(e)]);
+                const next = offer(APP_VERSION, release, doc);
+                if (input.action === "update") {
+                  if (!next) return `No newer release than ${APP_VERSION} is known${release ? ` (newest: ${release.latest})` : ""}. The nightly run checks for new releases every night.`;
+                  addCard(reply.id, { kind: "update" });
+                  return `Shown: a card with ${next.latest}'s notes and the Update button. Nothing starts until the student presses it. Say so in one line; don't repeat the notes.`;
+                }
+                if (input.action === "go_back") {
+                  const to = goBackTarget(doc);
+                  if (!to || doc.lastUpdate?.kind !== "update" || doc.lastUpdate.to !== APP_VERSION) return "There's no earlier version to go back to from here.";
+                  addCard(reply.id, { kind: "goback" });
+                  return `Shown: a card to go back to ${to}, with the warning that everything done since the update is lost. It happens only if the student confirms on the card. Don't ask again in text.`;
+                }
+                return {
+                  installed: APP_VERSION,
+                  newestKnown: release?.latest ?? "not checked yet (the nightly run checks every night)",
+                  updateAvailable: next ? next.latest : false,
+                  notes: next?.notes ?? null,
+                  lastUpdate: doc.lastUpdate ? { kind: doc.lastUpdate.kind, from: doc.lastUpdate.from, to: doc.lastUpdate.to, on: new Date(doc.lastUpdate.at).toISOString().slice(0, 10) } : null,
+                  updateRunning: doc.pending ? `${doc.pending.kind} to ${doc.pending.to}` : null,
+                };
+              },
+            },
+            {
               ...REBUILD_TOOL,
               inputSchema: REBUILD_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema,
               execute: () => rebuildQuest(),
@@ -655,6 +689,27 @@ export function OrchestratorPanel(props: Props) {
     // runCheckins changes with busy/open; the timers only need the latest at fire time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
+  // After an update (or going back), a short note on what's new, once.
+  const announcing = useRef(false);
+  useEffect(() => {
+    if (!ready || !env || announcing.current) return;
+    announcing.current = true;
+    (async () => {
+      const e = await updateEnv();
+      const last = e ? (await loadUpdates(e)).lastUpdate : null;
+      if (!last || last.announced || last.to !== APP_VERSION) return;
+      let text = plainNote(last);
+      if (env.live && last.kind === "update" && last.notes?.trim()) {
+        const note = await askClaude(whatsNewTurns(last, stateRef.current.memory.text), {}).catch(() => "");
+        if (note.trim()) text = `**StudyDesk is updated to ${last.to}.** All your data came along.\n\n${note.trim()}`;
+      }
+      await markAnnounced();
+      saveMessages((ms) => [...ms, { id: uid(), role: "assistant", text, createdAt: Date.now(), checkin: true }]);
+    })().catch(() => {
+      announcing.current = false;
+    });
+  }, [ready, env, saveMessages]);
+
   // A finished job is worth a word right away.
   const doneJobs = state.jobs.filter((j) => j.status === "done" || j.status === "failed").length;
   useEffect(() => {
@@ -763,6 +818,7 @@ export function OrchestratorPanel(props: Props) {
         )}
         {env && !env.live && <p className="quest-banner">Preview mode: no Claude here. Try "day off {today}" to see a change card.</p>}
         {!env && !error && <p className="quest-muted">Loading…</p>}
+        {env && <UpdateNotice md={md} />}
         {env && !ready && (
           <div className="orch-empty">
             <p>Set up your semester first: then you can ask me anything about your courses, dates and progress here, and I'll keep everything up to date.</p>
@@ -843,6 +899,8 @@ function Card({
   onConfirm: (c: PendingConfirm, yes: boolean) => void;
   onOpenSetup: () => void;
 }) {
+  if (card.kind === "update") return <UpdateNotice md={md} always />;
+  if (card.kind === "goback") return <GoBackCard />;
   if (card.kind === "change") {
     const c = state.changes.find((x) => x.id === card.changeId);
     if (!c) return null;

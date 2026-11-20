@@ -3,6 +3,7 @@
 // development, or a view without database access) it falls back to this
 // browser's localStorage.
 
+import { host } from "./host";
 import type { Chat } from "../chat/types";
 
 export type StoreMode = "cloud" | "local";
@@ -26,7 +27,7 @@ function checkSize(chat: Chat) {
 }
 
 export async function openStore(): Promise<ChatStore> {
-  const c = (window as Window & { claude?: Claude }).claude;
+  const c = host();
   if (c?.use) {
     const [db, user] = await Promise.all([
       c.use("db").catch(() => null),

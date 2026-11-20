@@ -5,6 +5,7 @@
 // into the student's desk and deletes each document once it's in. Outside a
 // claude.ai artifact there is no nightly run, so this store is empty.
 
+import { host } from "./host";
 import type { OutboxDoc } from "../routine/apply";
 import type { RoutineDoc } from "../routine/nightly";
 
@@ -29,7 +30,7 @@ let shared: Promise<RoutineStore> | null = null;
 export function openRoutineStore(): Promise<RoutineStore> {
   if (!shared)
     shared = (async () => {
-      const c = (window as Window & { claude?: Claude }).claude;
+      const c = host();
       if (!c?.use) return none;
       const [db, user] = await Promise.all([c.use("db").catch(() => null), c.use("user").catch(() => null)]);
       const uid = user ? await user.id().catch(() => null) : null;

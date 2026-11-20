@@ -1,0 +1,13 @@
+{
+  "assets": {},
+  "db": {},
+  "downloads": {},
+  "mcp": {
+    "servers": [
+      { "server": "Google Calendar", "tools": ["list_events"] },
+      { "server": "Claude Code Remote", "tools": ["list_environments", "create_trigger", "fire_trigger"] }
+    ]
+  },
+  "sample": { "images": true },
+  "user": {}
+}

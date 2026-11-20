@@ -15,7 +15,11 @@ export type Screen = { name: string; detail?: string };
 export type ChatCard =
   | { kind: "change"; changeId: string }
   | { kind: "job"; jobId: string }
-  | { kind: "confirm"; confirmId: string };
+  | { kind: "confirm"; confirmId: string }
+  /** The "Update to vX" notice (design/updates.md). */
+  | { kind: "update" }
+  /** Going back to the version before the last update, with its warning. */
+  | { kind: "goback" };
 
 export type OrchMessage = {
   id: string;

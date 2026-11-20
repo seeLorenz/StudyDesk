@@ -6,6 +6,7 @@
 //   data/users/<uid>/quests/images/<id>    one answer photo
 // Elsewhere it falls back to this browser's localStorage.
 
+import { host } from "./host";
 import type { Chat } from "../chat/types";
 import type { QuestRecord, Semester } from "../quests/types";
 
@@ -26,7 +27,7 @@ export interface QuestStore {
 const plain = <T>(x: T) => JSON.parse(JSON.stringify(x)) as Record<string, unknown>;
 
 export async function openQuestStore(): Promise<QuestStore> {
-  const c = (window as Window & { claude?: Claude }).claude;
+  const c = host();
   if (c?.use) {
     const [db, user] = await Promise.all([c.use("db").catch(() => null), c.use("user").catch(() => null)]);
     const uid = user ? await user.id().catch(() => null) : null;
