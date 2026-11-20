@@ -1,0 +1,165 @@
+// Storage for quests and the semester they're built from. Inside a claude.ai
+// artifact it uses the artifact database, in each user's private area:
+//   data/users/<uid>/semester              the semester (sample data until onboarding exists)
+//   data/users/<uid>/quests/records/<id>   one quest plus the student's work on it
+//   data/users/<uid>/quests/reviews/<id>   the mistake-review chat for that quest
+//   data/users/<uid>/quests/images/<id>    one answer photo
+// Elsewhere it falls back to this browser's localStorage.
+
+import type { Chat } from "../chat/types";
+import type { QuestRecord, Semester } from "../quests/types";
+
+export interface QuestStore {
+  mode: "cloud" | "local";
+  loadSemester(): Promise<Semester | null>;
+  saveSemester(s: Semester): Promise<void>;
+  loadRecords(): Promise<QuestRecord[]>;
+  saveRecord(r: QuestRecord): Promise<void>;
+  /** Mistake-review chats, one per graded quest, keyed by quest id. */
+  loadReviewChats(): Promise<Record<string, Chat>>;
+  saveReviewChat(questId: string, chat: Chat): Promise<void>;
+  /** Answer photos, as compressed JPEG data URLs, one per document. */
+  saveImage(id: string, dataUrl: string): Promise<void>;
+  loadImage(id: string): Promise<string | null>;
+}
+
+const plain = <T>(x: T) => JSON.parse(JSON.stringify(x)) as Record<string, unknown>;
+
+export async function openQuestStore(): Promise<QuestStore> {
+  const c = (window as Window & { claude?: Claude }).claude;
+  if (c?.use) {
+    const [db, user] = await Promise.all([c.use("db").catch(() => null), c.use("user").catch(() => null)]);
+    const uid = user ? await user.id().catch(() => null) : null;
+    if (db && uid) return cloudQuestStore(db, uid);
+  }
+  return localQuestStore();
+}
+
+function cloudQuestStore(db: DB, uid: string): QuestStore {
+  const semester = db.doc(`data/users/${uid}/semester`);
+  const records = db.doc(`data/users/${uid}/quests`).collection("records");
+  const reviews = db.doc(`data/users/${uid}/quests`).collection("reviews");
+  const images = db.doc(`data/users/${uid}/quests`).collection("images");
+  // One write at a time per record; only the latest pending version is written.
+  const pending = new Map<string, { running: boolean; next: QuestRecord | null; waiters: Array<(e?: unknown) => void> }>();
+  async function drain(id: string) {
+    const q = pending.get(id)!;
+    if (q.running) return;
+    q.running = true;
+    while (q.next) {
+      const r = q.next;
+      const waiters = q.waiters;
+      q.next = null;
+      q.waiters = [];
+      let err: unknown;
+      try {
+        await records.doc(id).set(plain(r));
+      } catch (e) {
+        err = e;
+      }
+      waiters.forEach((w) => w(err));
+    }
+    q.running = false;
+  }
+  return {
+    mode: "cloud",
+    async loadSemester() {
+      const snap = await semester.get();
+      return snap.exists ? (snap.data() as unknown as Semester) : null;
+    },
+    async saveSemester(s) {
+      await semester.set(plain(s));
+    },
+    async loadRecords() {
+      return (await records.get()).docs.filter((d) => d.exists).map((d) => d.data() as unknown as QuestRecord);
+    },
+    async loadReviewChats() {
+      const out: Record<string, Chat> = {};
+      for (const d of (await reviews.get()).docs) if (d.exists) out[d.id] = d.data() as unknown as Chat;
+      return out;
+    },
+    async saveReviewChat(questId, chat) {
+      await reviews.doc(questId).set(plain(chat));
+    },
+    async saveImage(id, dataUrl) {
+      await images.doc(id).set({ dataUrl });
+    },
+    async loadImage(id) {
+      const snap = await images.doc(id).get();
+      return snap.exists ? ((snap.data() as { dataUrl?: string }).dataUrl ?? null) : null;
+    },
+    saveRecord(r) {
+      const id = r.quest.id;
+      if (!pending.has(id)) pending.set(id, { running: false, next: null, waiters: [] });
+      const q = pending.get(id)!;
+      q.next = r;
+      const done = new Promise<void>((resolve, reject) => q.waiters.push((e) => (e ? reject(e) : resolve())));
+      void drain(id);
+      return done;
+    },
+  };
+}
+
+function localQuestStore(): QuestStore {
+  const KEY = "studydesk.quests.v1";
+  const mem: { semester: Semester | null; records: QuestRecord[]; reviews?: Record<string, Chat>; images: Map<string, string> } = {
+    semester: null,
+    records: [],
+    images: new Map(),
+  };
+  const read = (): typeof mem => {
+    try {
+      return { ...mem, ...JSON.parse(localStorage.getItem(KEY) || "{}"), images: mem.images };
+    } catch {
+      return mem;
+    }
+  };
+  const write = (d: typeof mem) => {
+    const { images: _skip, ...rest } = d;
+    mem.semester = d.semester;
+    mem.records = d.records;
+    mem.reviews = d.reviews;
+    try {
+      localStorage.setItem(KEY, JSON.stringify(rest));
+    } catch {
+      /* storage unavailable: keep in memory */
+    }
+  };
+  return {
+    mode: "local",
+    async loadSemester() {
+      return read().semester;
+    },
+    async saveSemester(s) {
+      write({ ...read(), semester: s });
+    },
+    async loadRecords() {
+      return read().records;
+    },
+    async loadReviewChats() {
+      return read().reviews ?? {};
+    },
+    async saveReviewChat(questId, chat) {
+      const d = read();
+      write({ ...d, reviews: { ...(d.reviews ?? {}), [questId]: chat } });
+    },
+    async saveImage(id, dataUrl) {
+      try {
+        localStorage.setItem(`${KEY}.img.${id}`, dataUrl);
+      } catch {
+        mem.images.set(id, dataUrl);
+      }
+    },
+    async loadImage(id) {
+      try {
+        return localStorage.getItem(`${KEY}.img.${id}`) ?? mem.images.get(id) ?? null;
+      } catch {
+        return mem.images.get(id) ?? null;
+      }
+    },
+    async saveRecord(r) {
+      const d = read();
+      write({ ...d, records: [...d.records.filter((x) => x.quest.id !== r.quest.id), r] });
+    },
+  };
+}

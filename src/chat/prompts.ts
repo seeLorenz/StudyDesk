@@ -27,14 +27,14 @@ export function messageContent(m: Message): string {
 }
 
 /** Turns for the main chat: standing rules, then the conversation, newest last. Oldest turns drop first. */
-export function mainTurns(messages: Message[]): Turn[] {
+export function mainTurns(messages: Message[], rules: string = MAIN_RULES): Turn[] {
   const convo: Turn[] = messages
     .filter((m) => m.role === "user" || (m.text.trim() && !m.error))
     .map((m) => ({ role: m.role, content: messageContent(m) }));
   let size = convo.reduce((n, t) => n + t.content.length, 0);
   while (size > MAX_PROMPT_CHARS && convo.length > 1) size -= convo.shift()!.content.length;
-  while (convo.length && convo[0].role !== "user") convo.shift();
-  return [{ role: "user", content: MAIN_RULES }, ...convo];
+  // The rules are a user turn, so the conversation may open with StudyDesk (e.g. a review chat's first message).
+  return [{ role: "user", content: rules }, ...convo];
 }
 
 function transcript(chat: Chat, uptoMessageId: string, budget: number): string {
@@ -51,7 +51,7 @@ function transcript(chat: Chat, uptoMessageId: string, budget: number): string {
 function where(note: Note): string {
   const c = note.context;
   if (!c) return "";
-  const parts = ["", "", "WHERE IT IS: the student highlighted this exact spot in StudyDesk's last answer above" + (c.section ? `, in the section "${c.section}"` : "") + "."];
+  const parts = ["", "", "WHERE IT IS: the student highlighted this exact spot in the text above" + (c.section ? `, in the section "${c.section}"` : "") + "."];
   if (c.formula && c.formula !== note.label) parts.push(`They selected "${note.label}" inside the formula ${c.formula}.`);
   parts.push("Here is that part of the answer, with the highlighted text between ⟦ and ⟧:", "", c.excerpt, "", "The question is about that marked spot only. Don't guess between other places where the same words or numbers appear.");
   return parts.join("\n");
@@ -59,11 +59,17 @@ function where(note: Note): string {
 
 /** Turns for a side note: rules + conversation + highlighted passage, then the note's own back-and-forth. */
 export function noteTurns(chat: Chat, note: Note): Turn[] {
-  const head = `${NOTE_RULES}
+  return passageNoteTurns(NOTE_RULES, `<conversation>\n${transcript(chat, note.messageId, 60_000)}\n</conversation>`, note);
+}
 
-<conversation>
-${transcript(chat, note.messageId, 60_000)}
-</conversation>
+/**
+ * Side-note turns for any page: `rules`, then the page text the passage sits
+ * in (`context`), the highlighted passage, and the note's own back-and-forth.
+ */
+export function passageNoteTurns(rules: string, context: string, note: Note): Turn[] {
+  const head = `${rules}
+
+${context}
 
 HIGHLIGHTED PASSAGE:
 """${note.label}"""${where(note)}`;

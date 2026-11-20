@@ -200,7 +200,7 @@ Points reward only verified progress, and they always sit next to the real pictu
 | Skill mastered | 50 |
 | Review passed | 20 |
 | Fundamental cleared in the first check | 10 |
-| Day's quest finished | 25 |
+| Day's quest finished | up to 25, scaled by the share of its problems solved (nothing right, no bonus) |
 | Slip confirmed and reviewed | 5 |
 | Solved with hints, time spent, problems opened | 0 |
 

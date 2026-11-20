@@ -28,8 +28,13 @@ export function normalizeMath(src: string): string {
     .join("");
 }
 
+/** Markers Claude leaves for the app (e.g. [[check:passed:p3]]) are never shown. */
+export function stripMarkers(src: string): string {
+  return src.replace(/\[\[check:[^\]]*\]\]/g, "").trimEnd();
+}
+
 export function renderMarkdown(src: string): string {
-  const html = md.parse(normalizeMath(src), { async: false }) as string;
+  const html = md.parse(normalizeMath(stripMarkers(src)), { async: false }) as string;
   // <annotation> keeps each formula's TeX source, which side notes send to Claude.
   return DOMPurify.sanitize(html, { USE_PROFILES: { html: true, mathMl: true, svg: true }, ADD_TAGS: ["annotation"], ADD_ATTR: ["encoding"] });
 }
