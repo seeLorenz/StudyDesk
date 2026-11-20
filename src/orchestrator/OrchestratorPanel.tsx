@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Note } from "../chat/types";
 import { uid } from "../chat/types";
 import { InputBox } from "../chat/InputBox";
@@ -49,6 +50,8 @@ type Env = {
   live: boolean;
 };
 
+export type OrchStatus = { needs: number; notes: number; nightly: "on" | "off" | "failed"; nightlyTime: string | null };
+
 type Props = {
   open: boolean;
   expanded: boolean;
@@ -59,7 +62,10 @@ type Props = {
   /** Text the student selected when they opened the chat. */
   quote: string | null;
   onClearQuote: () => void;
-  onUnseen: (n: number) => void;
+  /** What the sidebar shows on Organize: things that need the student, unread notes, the nightly run. */
+  onStatus: (s: OrchStatus) => void;
+  /** On the Organize page the chat sits in this element as a full page instead of a side panel. */
+  dock?: HTMLElement | null;
   onOpenAsk: (question: string) => void;
   onOpenSetup: () => void;
 };
@@ -80,7 +86,8 @@ function message(e: unknown): string {
 const dayOf = (ts: number) => toDay(new Date(ts));
 
 export function OrchestratorPanel(props: Props) {
-  const { open, expanded, onClose, onToggleExpand, screen, quote, onClearQuote, onUnseen, onOpenAsk, onOpenSetup } = props;
+  const { expanded, onClose, onToggleExpand, screen, quote, onClearQuote, onStatus, onOpenAsk, onOpenSetup, dock } = props;
+  const open = props.open || !!dock;
   const [env, setEnv] = useState<Env | null>(null);
   const [draft, setDraft] = useState<SemesterDraft | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -655,9 +662,11 @@ export function OrchestratorPanel(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doneJobs]);
 
-  // Unseen check-ins show as a badge; opening the chat marks them seen.
+  // Unseen check-ins show on Organize: a number when StudyDesk needs an answer, a dot for notes. Opening the chat marks them seen.
   const unseen = state.notifications.filter((n) => n.seenAt === null).length;
-  useEffect(() => onUnseen(unseen), [unseen, onUnseen]);
+  const needs = state.notifications.filter((n) => n.seenAt === null && n.kind === "needs_answer").length + state.confirms.filter((c) => c.status === "waiting").length;
+  const nightlyTime = profile?.schedule || nightly === "failed" ? nightlySettings(profile?.nightly).time : null;
+  useEffect(() => onStatus({ needs, notes: unseen, nightly, nightlyTime }), [needs, unseen, nightly, nightlyTime, onStatus]);
   useEffect(() => {
     if (open && unseen) saveState((s) => ({ ...s, notifications: s.notifications.map((n) => (n.seenAt === null ? { ...n, seenAt: Date.now() } : n)) }));
   }, [open, unseen, saveState]);
@@ -716,13 +725,15 @@ export function OrchestratorPanel(props: Props) {
   };
   const deskNow = draft && profile ? { draft, profile } : null;
 
-  return (
-    <aside className={"orch" + (open ? " is-open" : "") + (expanded ? " is-expanded" : "")} aria-label="StudyDesk chat" aria-hidden={!open}>
+  const panel = (
+    <aside className={"orch" + (dock ? " is-docked" : (open ? " is-open" : "") + (expanded ? " is-expanded" : ""))} aria-label="Organize" aria-hidden={!open}>
       <header className="orch-head">
         <span className="orch-title">
           <span className="brand-mark" aria-hidden="true" />
-          StudyDesk
+          Organize
         </span>
+        {!dock && (
+          <>
         <button type="button" className="icon-btn" onClick={onToggleExpand} aria-label={expanded ? "Back to side panel" : "Expand to full window"} title={expanded ? "Side panel" : "Full window"}>
           <svg viewBox="0 0 16 16" aria-hidden="true">
             {expanded ? (
@@ -732,11 +743,13 @@ export function OrchestratorPanel(props: Props) {
             )}
           </svg>
         </button>
-        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close StudyDesk chat">
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close Organize">
           <svg viewBox="0 0 16 16" aria-hidden="true">
             <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         </button>
+          </>
+        )}
       </header>
 
       <div className="orch-body" ref={scroller} data-select-scope="">
@@ -754,7 +767,7 @@ export function OrchestratorPanel(props: Props) {
           <div className="orch-empty">
             <p>Set up your semester first: then you can ask me anything about your courses, dates and progress here, and I'll keep everything up to date.</p>
             <button type="button" className="mini-btn primary" onClick={onOpenSetup}>
-              Start New Semester
+              Set up your semester
             </button>
           </div>
         )}
@@ -804,6 +817,7 @@ export function OrchestratorPanel(props: Props) {
       <SelectionReply scope={scroller} disabled={false} onAsk={notes.ask} />
     </aside>
   );
+  return dock ? createPortal(panel, dock) : panel;
 }
 
 // ---------- cards ----------
