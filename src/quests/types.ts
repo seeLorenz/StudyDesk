@@ -86,6 +86,8 @@ export type Semester = {
   /** The original files and where each skill is covered in them. */
   uploads?: Upload[];
   catalog?: CatalogEntry[];
+  /** Read today's Google Calendar when sizing quests (set when the student imported it during setup). */
+  calendarSync?: boolean;
   /** The id of the placement check quest. */
   placementQuestId?: string;
 };

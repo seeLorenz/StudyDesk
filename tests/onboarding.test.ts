@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { localFound, parseFound, weekdayIndex } from "../src/onboarding/extract";
 import { parseSetup, buildSemester, localSetup, setupTurns, type SetupInput } from "../src/onboarding/setup";
 import { planPlacement, recommendWorkload, studyDaysUntil } from "../src/onboarding/placement";
-import { defaultSemester, gradeSteps, scaleFor } from "../src/onboarding/scales";
+import { gradeSteps } from "../src/onboarding/scales";
+import { applySheetUpdate, chatTurns, setupReady, sheetSnapshot } from "../src/onboarding/agent";
+import { busyMinutesFromEvents, toEvents, weeklyPattern } from "../src/platform/calendar";
 import type { DraftCourse, Profile, SemesterDraft } from "../src/onboarding/types";
 import { replay } from "../src/mastery/replay";
 import type { Attempt } from "../src/mastery/types";
@@ -10,7 +11,7 @@ import { questMistakes } from "../src/quests/review";
 import { emptyProgress, gradingProblem, emptyWork } from "../src/quests/handin";
 
 const TODAY = "2026-11-20"; // a Friday
-const profile: Profile = { level: "university", school: "TU", country: "Austria", gradeScale: scaleFor("Austria", "university"), program: "BSc Physics", year: "1", updatedAt: 0 };
+const profile: Profile = { level: "university", school: "TU", country: "Austria", gradeScale: { name: "Austrian 1–5", best: 1, worst: 5 }, program: "BSc Physics", year: "1", updatedAt: 0 };
 const course: DraftCourse = { id: "c1", name: "Analysis 1", short: "Ana1", credits: 9, teachingLanguage: "", targetGrade: 2, setupStatus: "waiting" };
 
 const REPLY = `=== SUMMARY ===
@@ -63,31 +64,6 @@ s3 | F9 | p. 2
 `;
 
 const input = { course, profile, today: TODAY, priorFundamentals: [] };
-
-describe("extract", () => {
-  it("reads courses and slots from Claude's reply", () => {
-    const f = parseFound(`=== COURSES ===
-Analysis 1 | Ana1 | 9 ECTS
-Physik Labor | Lab | -
-=== TIMETABLE ===
-Mon | 10:00 | 11:30 | lecture | Analysis 1
-Mi | 8.15 | 9:45 | Übung | Analysis 1
-Fri | 12:00 | 11:00 | lecture | broken`);
-    expect(f.courses).toEqual([
-      { name: "Analysis 1", short: "Ana1", credits: 9 },
-      { name: "Physik Labor", short: "Lab", credits: null },
-    ]);
-    expect(f.timetable).toHaveLength(2);
-    expect(f.timetable[1]).toMatchObject({ weekday: 3, start: "08:15", end: "09:45", kind: "exercise" });
-  });
-  it("reads typed lines in the local preview", () => {
-    const f = localFound("courses", "Analysis 1, 9 ECTS\nLinear Algebra\nTue 10:00-12:00 Linear Algebra");
-    expect(f.courses.map((c) => c.name)).toEqual(["Analysis 1", "Linear Algebra"]);
-    expect(f.courses[0].credits).toBe(9);
-    expect(f.timetable[0]).toMatchObject({ weekday: 2, start: "10:00", end: "12:00" });
-    expect(weekdayIndex("Donnerstag")).toBe(4);
-  });
-});
 
 describe("parseSetup", () => {
   const keys = new Map([
@@ -259,18 +235,99 @@ describe("placement check", () => {
   });
 });
 
-describe("scales and defaults", () => {
-  it("picks a scale per country and offers whole grades", () => {
-    expect(scaleFor("Germany", "school").name).toBe("German 1–6");
-    expect(gradeSteps(scaleFor("Austria", "school"))).toEqual([1, 2, 3, 4, 5]);
-    expect(gradeSteps(scaleFor("Switzerland", "school"))).toEqual([6, 5, 4, 3, 2, 1]);
-    expect(gradeSteps(scaleFor("", "school"))).toBeNull();
-    expect(defaultSemester(TODAY, "university").name).toBe("WS 2026/27");
-    expect(defaultSemester("2027-04-02", "university").name).toBe("SS 2027");
+describe("scales", () => {
+  it("offers whole grades in the scale's direction", () => {
+    expect(gradeSteps({ name: "AT", best: 1, worst: 5 })).toEqual([1, 2, 3, 4, 5]);
+    expect(gradeSteps({ name: "CH", best: 6, worst: 1 })).toEqual([6, 5, 4, 3, 2, 1]);
+    expect(gradeSteps({ name: "%", best: 100, worst: 0 })).toBeNull();
   });
   it("builds a usable local preview map", () => {
     const r = localSetup({ profile, draft: { name: "x", startDate: TODAY, endDate: TODAY }, course, facts: [], files: [], today: TODAY, priorFundamentals: [] });
     expect(r.skills.length).toBe(6);
     expect(r.keyDates).toHaveLength(1);
+  });
+});
+
+function emptyDraft(): SemesterDraft {
+  return { id: "s", name: "", startDate: "", endDate: "", status: "setting_up", setupStep: "chat", courseIndex: 0, courses: [], timetable: [], studyGoal: [0, 0, 0, 0, 0, 0, 0], uploads: [], facts: [], results: {}, chat: [], createdAt: 0, updatedAt: 0 };
+}
+
+describe("setup chat: update_sheet", () => {
+  it("fills the sheet from one call and reports course ids and what's missing", () => {
+    const d0 = { ...emptyDraft(), uploads: [{ id: "up1", courseId: null, fileName: "syllabus.pdf", type: "pdf" as const, studentNote: "", addedAt: 0, cataloguedAt: null, assetId: null, pages: 3 }] };
+    const r = applySheetUpdate(d0, { ...profile, gradeScale: { name: "", best: 1, worst: 5 } }, {
+      profile: { country: "Austria", gradeScale: { name: "Austrian 1–5", best: 1, worst: 5 }, level: "university" },
+      semester: { name: "WS 2026/27", startDate: "2026-10-01", endDate: "bad" },
+      addCourses: [{ name: "Analysis 1", short: "Ana1", credits: 9, targetGrade: 2 }, { name: "Physics", targetGrade: 9 }],
+      addSlots: [
+        { weekday: "Mon", start: "10:00", end: "11:30", kind: "lecture", title: "Analysis 1 lecture", course: "Analysis 1" },
+        { weekday: "Tue", start: "18:00", end: "17:00", kind: "fixed", title: "broken" },
+        { weekday: "Tue", start: "18:00", end: "20:00", kind: "fixed", title: "Volleyball" },
+      ],
+      facts: [{ course: "Ana1", text: "exam on 28 Jan" }],
+      files: [{ uploadId: "up1", course: "Analysis 1", note: "syllabus" }],
+      studyGoalMinutes: { Mon: 180, Sun: 0 },
+    }, 7);
+    const d = r.draft;
+    expect(r.profile.gradeScale.name).toBe("Austrian 1–5");
+    expect(d.name).toBe("WS 2026/27");
+    expect(d.endDate).toBe("");
+    expect(d.courses.map((c) => [c.name, c.targetGrade])).toEqual([["Analysis 1", 2], ["Physics", null]]);
+    expect(r.result).toContain("Target 9 is outside");
+    expect(r.result).toMatch(/Analysis 1 = c/);
+    expect(d.timetable).toHaveLength(2);
+    expect(d.timetable[0].courseId).toBe(d.courses[0].id);
+    expect(d.timetable[1]).toMatchObject({ kind: "fixed", courseId: null });
+    expect(d.facts[0]).toMatchObject({ courseId: d.courses[0].id, text: "exam on 28 Jan" });
+    expect(d.uploads[0]).toMatchObject({ courseId: d.courses[0].id, studentNote: "syllabus" });
+    expect(d.studyGoal[1]).toBe(180);
+    expect(setupReady(d).ok).toBe(true);
+    expect(r.result).toContain("Ready to start");
+  });
+  it("removes courses with their slots and facts, and frees their files", () => {
+    const a = applySheetUpdate(emptyDraft(), profile, { addCourses: [{ name: "Chem" }], addSlots: [{ weekday: "Wed", start: "8:00", end: "9:00", kind: "lecture", title: "Chem", course: "Chem" }], facts: [{ course: "Chem", text: "x" }] });
+    const id = a.draft.courses[0].id;
+    const b = applySheetUpdate(a.draft, profile, { removeCourseIds: [id] });
+    expect(b.draft.courses).toEqual([]);
+    expect(b.draft.timetable).toEqual([]);
+    expect(b.draft.facts).toEqual([]);
+    expect(setupReady(b.draft).missing).toHaveLength(2);
+  });
+  it("sends the chat with the sheet on the newest message", () => {
+    const d = emptyDraft();
+    const turns = chatTurns(
+      [
+        { id: "1", role: "assistant", text: "Hi", createdAt: 0 },
+        { id: "2", role: "user", text: "I study at TU", files: ["plan.png"], createdAt: 0 },
+      ],
+      sheetSnapshot(d, profile, TODAY),
+      false,
+    );
+    expect(turns.map((t) => t.role)).toEqual(["user", "assistant", "user"]);
+    expect(turns[2].content).toContain("[Dropped: plan.png]");
+    expect(turns[2].content).toContain("<sheet>");
+    expect(turns[2].content).toContain(TODAY);
+  });
+});
+
+describe("calendar", () => {
+  const raw = [0, 7].flatMap((off) => {
+    const day = new Date(`2026-11-23T12:00`);
+    day.setDate(day.getDate() + off);
+    const iso = (h: number, m: number) => { const d = new Date(day); d.setHours(h, m, 0, 0); return d.toISOString(); };
+    return [
+      { summary: "Analysis lecture", start: { dateTime: iso(10, 0) }, end: { dateTime: iso(11, 30) }, recurringEventId: "r1" },
+      ...(off === 0 ? [{ summary: "Overlap", start: { dateTime: iso(11, 0) }, end: { dateTime: iso(12, 0) } }] : []),
+    ];
+  });
+  const events = toEvents([...raw, { summary: "Exam", start: { date: "2027-01-28" }, end: { date: "2027-01-29" } }, { summary: "gone", status: "cancelled", start: { dateTime: "2026-11-24T10:00:00Z" }, end: { dateTime: "2026-11-24T11:00:00Z" } }]);
+  it("reads events in local time and finds the weekly pattern", () => {
+    expect(events).toHaveLength(4);
+    const p = weeklyPattern(events);
+    expect(p.weekly).toEqual([expect.objectContaining({ title: "Analysis lecture", weekday: 1, start: "10:00", end: "11:30", times: 2 })]);
+    expect(p.once.some((e) => e.title === "Exam")).toBe(true);
+  });
+  it("counts busy minutes once where events overlap", () => {
+    expect(busyMinutesFromEvents(events, "2026-11-23")).toBe(120);
   });
 });

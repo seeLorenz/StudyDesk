@@ -355,6 +355,7 @@ export function buildSemester(draft: SemesterDraft, profile: Profile, now = Date
     timetable: draft.timetable,
     studyGoal: draft.studyGoal,
     studyGoalSource: "student",
+    calendarSync: !!draft.calendarImportedAt,
     gradeRules: res.flatMap((r) => (r.gradeRules ? [r.gradeRules] : [])),
     uploads: draft.uploads,
     catalog: res.flatMap((r) => r.catalog),

@@ -10,7 +10,8 @@ import { replay } from "../mastery/replay";
 import type { Skill } from "../mastery/types";
 import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
 import { useSideNotes } from "../notes/useSideNotes";
-import { askClaude, canSendImages, claudeAvailable, errorCopy, type AskError } from "../platform/claude";
+import { readCalendar, weeklyPattern, type CalendarError } from "../platform/calendar";
+import { askClaude, canSendImages, canUseTools, claudeAvailable, errorCopy, type AskError } from "../platform/claude";
 import { openMasteryStore, type MasteryData, type MasteryStore } from "../platform/masteryStore";
 import { offerDownload, openOnboardingStore, type OnboardingStore } from "../platform/onboardingStore";
 import { openQuestStore, type QuestStore } from "../platform/questStore";
@@ -18,35 +19,27 @@ import { emptyProgress } from "../quests/handin";
 import { compressImage, dataUrlToBlob } from "../quests/images";
 import { busyMinutes, formatDue } from "../quests/plan";
 import { sampleWriter } from "../quests/seed";
-import type { Semester, TimetableEntry } from "../quests/types";
+import type { Semester } from "../quests/types";
 import { writeQuest, type WriteStatus } from "../quests/write";
-import { extract } from "./extract";
+import { SHEET_TOOL_DESCRIPTION, SHEET_TOOL_SCHEMA, applySheetUpdate, chatTurns, greeting, localReply, setupReady, sheetSnapshot } from "./agent";
 import { placementWriter, planPlacement } from "./placement";
-import { SCALES, defaultSemester, gradeSteps, scaleFor } from "./scales";
+import { gradeSteps } from "./scales";
 import { buildSemester, localSetup, runCourseSetup, type FileForSetup } from "./setup";
-import type { DraftCourse, Profile, SemesterDraft, SetupStep, Upload } from "./types";
+import type { DraftCourse, Profile, SemesterDraft, SetupMessage, SetupStep, Upload } from "./types";
 
-// Start New Semester: a guided setup with a semester sheet beside it.
-// design/onboarding.md. Every step saves as it goes and has "skip, add later",
-// so the student can close the page and come back. Until the Orchestrator
-// exists, each step asks its own question; the Orchestrator will take over the
-// conversation and fill the same sheet.
+// Start New Semester: one chat with the Orchestrator, with the semester sheet
+// beside it. design/onboarding.md. The student talks, pastes and drops files;
+// Claude asks, reads, and fills the sheet through page tools; the student can
+// also edit the sheet by hand. Everything saves as it goes. When the student
+// confirms, the setup run reads the course files, and the first quest is a
+// placement check.
 
 /** Keep at most this much readable text per file (one database document holds 256 KiB). */
 const MAX_FILE_CHARS = 240_000;
+/** How much of a dropped file Claude sees in the chat, to tell what it is. */
+const PREVIEW_CHARS = 3_000;
 const WEEK = [1, 2, 3, 4, 5, 6, 0];
-const DAY_NAME = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-const STEPS: Array<{ key: SetupStep; label: string }> = [
-  { key: "about", label: "About you" },
-  { key: "courses", label: "Courses" },
-  { key: "course", label: "Each course" },
-  { key: "time", label: "Your time" },
-  { key: "check", label: "Check and start" },
-  { key: "done", label: "Placement check" },
-];
-const stepIndex = (s: SetupStep) => (s === "running" ? 4 : s === "welcome" ? -1 : STEPS.findIndex((x) => x.key === s));
 
 const hours = (m: number) => (m % 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m / 60} h`);
 
@@ -55,28 +48,29 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : "Something went wrong.";
 }
 
-function newDraft(profile: Profile | null, today: string): SemesterDraft {
-  const d = defaultSemester(today, profile?.level ?? "university");
+function newDraft(): SemesterDraft {
   return {
     id: `sem_${uid()}`,
-    ...d,
+    name: "",
+    startDate: "",
+    endDate: "",
     status: "setting_up",
-    setupStep: "welcome",
+    setupStep: "chat",
     courseIndex: 0,
     courses: [],
     timetable: [],
-    // A first suggestion (3 h on weekdays, 4 h on Saturday, Sunday off); step 7 recommends a real one.
-    studyGoal: [0, 180, 180, 180, 180, 180, 240],
+    studyGoal: [0, 0, 0, 0, 0, 0, 0],
     uploads: [],
     facts: [],
     results: {},
+    chat: [],
     notes: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
 }
 
-const emptyProfile = (): Profile => ({ level: "university", school: "", country: "", gradeScale: scaleFor("", "university"), program: "", year: "", updatedAt: 0 });
+const emptyProfile = (): Profile => ({ level: "university", school: "", country: "", gradeScale: { name: "", best: 1, worst: 5 }, program: "", year: "", updatedAt: 0 });
 
 type Loaded = {
   os: OnboardingStore;
@@ -88,9 +82,9 @@ type Loaded = {
 };
 
 const NOTE_RULES = `You are StudyDesk, a study assistant for high school and university students.
-The student is setting up their semester and highlighted a passage of the setup report to ask about.
+The student is setting up their semester and highlighted a passage to ask about.
 Your answer appears in a small side note right under that passage. So:
-- Answer only the question about the highlighted passage, using the report as context.
+- Answer only the question about the highlighted passage, using the context.
 - Be brief: usually 2 to 6 sentences, or a short list.
 - Don't restate the passage and don't greet.
 - Use Markdown; write math with $...$ inline.`;
@@ -109,9 +103,14 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
       const [os, qs, ms, live] = await Promise.all([openOnboardingStore(), openQuestStore(), openMasteryStore(), claudeAvailable()]);
       const [p, d, current, mastery] = await Promise.all([os.loadProfile(), os.loadDraft(), qs.loadSemester(), ms.load()]);
       // A finished draft belongs to the current semester; starting again makes a new one.
-      const usable = d && (d.status === "setting_up" || (current && current.id === d.id)) ? d : null;
+      let usable = d && (d.status === "setting_up" || (current && current.id === d.id)) ? d : null;
+      // Drafts from the first (form) version continue as a chat.
+      if (usable && !["chat", "running", "done"].includes(usable.setupStep)) usable = { ...usable, setupStep: "chat" };
       if (p) setProfile(p);
-      setDraft(usable ?? newDraft(p, today));
+      const draft = usable ?? newDraft();
+      const returning = current?.source === "onboarding" && current.id !== draft.id;
+      if (!draft.chat?.length) draft.chat = [{ id: uid(), role: "assistant", text: greeting(returning || !!p, null), createdAt: Date.now() }];
+      setDraft(draft);
       setEnv({ os, qs, ms, mastery, live, current });
     })().catch((e) => setLoadError(message(e)));
   }, [today]);
@@ -151,30 +150,32 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
 
   const update = useCallback(
     (fn: (d: SemesterDraft) => SemesterDraft) => {
-      setDraft((d) => {
-        if (!d) return d;
-        const next = fn(d);
-        draftRef.current = next;
-        return next;
-      });
+      const cur = draftRef.current;
+      if (!cur) return;
+      const next = fn(cur);
+      draftRef.current = next;
+      setDraft(next);
       schedule();
     },
     [schedule],
   );
-  const updateProfile = (patch: Partial<Profile>) => {
-    setProfile((p) => ({ ...p, ...patch }));
-    dirtyProfile.current = true;
-    schedule();
-  };
-  const go = (setupStep: SetupStep, courseIndex?: number) => {
-    update((d) => ({ ...d, setupStep, courseIndex: courseIndex ?? d.courseIndex }));
-    scroller.current?.scrollTo({ top: 0 });
-  };
+  const updateProfile = useCallback(
+    (fn: (p: Profile) => Profile) => {
+      const next = fn(profileRef.current);
+      profileRef.current = next;
+      setProfile(next);
+      dirtyProfile.current = true;
+      schedule();
+    },
+    [schedule],
+  );
+  const go = (setupStep: SetupStep) => update((d) => ({ ...d, setupStep }));
 
-  // ---- select-to-reply on the setup report ----
+  // ---- select-to-reply on the chat and the setup report ----
   const blocks = useMemo(() => {
     const m = new Map<string, { text: string; label: string }>();
     if (!draft) return m;
+    for (const msg of draft.chat ?? []) if (msg.role === "assistant") m.set(msg.id, { text: msg.text, label: "a message of the setup chat" });
     for (const c of draft.courses) {
       const r = draft.results[c.id];
       if (r?.summary) m.set(`sum-${c.id}`, { text: r.summary, label: `the setup report for ${c.name}` });
@@ -184,7 +185,7 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   const turnsFor = useCallback(
     (note: Note) => {
       const b = blocks.get(note.messageId);
-      return passageNoteTurns(NOTE_RULES, `<report>\nThe passage is in ${b?.label ?? "the setup report"}:\n"""\n${b?.text ?? ""}\n"""\n</report>`, note);
+      return passageNoteTurns(NOTE_RULES, `<context>\nThe passage is in ${b?.label ?? "the setup"}:\n"""\n${b?.text ?? ""}\n"""\n</context>`, note);
     },
     [blocks],
   );
@@ -197,44 +198,23 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   if (loadError) return <div className="quest-page"><p className="quest-error">Setup couldn't be loaded: {loadError}</p></div>;
   if (!env || !draft) return <div className="quest-page"><p className="quest-muted">Loading…</p></div>;
 
-  const at = stepIndex(draft.setupStep);
   const returning = env.current?.source === "onboarding" && env.current.id !== draft.id;
-  const props = { env, draft, profile, update, updateProfile, go, today, flush, md, onDone, setEnv };
+  const props: StepProps = { env, draft, profile, update, updateProfile, go, today, flush, md, onDone, setEnv, returning, draftRef, profileRef };
 
   return (
     <div className="quest-page setup-page" ref={scroller} data-select-scope="">
-      {!env.live && <p className="quest-banner">Preview mode: no Claude here, so setup reads typed lines only and builds a made-up skill map.</p>}
+      {!env.live && <p className="quest-banner">Preview mode: no Claude here, so the chat is a simple stand-in and setup builds a made-up skill map.</p>}
       {saveError && <p className="quest-error">{saveError}</p>}
       <header className="quest-head">
         <p className="quest-kicker">Start New Semester{draft.name ? ` · ${draft.name}` : ""}</p>
-        {at >= 0 && (
-          <ol className="setup-steps" aria-label="Setup steps">
-            {STEPS.map((s, i) => (
-              <li key={s.key} className={i < at ? "is-done" : i === at ? "is-current" : ""}>
-                {i < at && i < 4 && draft.status === "setting_up" ? (
-                  <button type="button" className="link-btn" onClick={() => go(s.key, s.key === "course" ? 0 : undefined)}>
-                    {s.label}
-                  </button>
-                ) : (
-                  <span>{s.label}</span>
-                )}
-              </li>
-            ))}
-          </ol>
-        )}
       </header>
       <div className="setup-grid">
-        <section className="setup-step">
-          {draft.setupStep === "welcome" && <Welcome {...props} returning={returning} />}
-          {draft.setupStep === "about" && <About {...props} />}
-          {draft.setupStep === "courses" && <Courses {...props} />}
-          {draft.setupStep === "course" && <CourseStep {...props} />}
-          {draft.setupStep === "time" && <Time {...props} />}
-          {draft.setupStep === "check" && <Check {...props} />}
+        <section className="setup-main">
+          <SetupChat {...props} />
           {draft.setupStep === "running" && <Running {...props} />}
           {draft.setupStep === "done" && <Done {...props} />}
         </section>
-        {draft.setupStep !== "welcome" && <Sheet draft={draft} profile={profile} go={go} editable={draft.status === "setting_up"} />}
+        <Sheet {...props} editable={draft.setupStep === "chat"} />
       </div>
       <SelectionReply scope={scroller} disabled={false} onAsk={notes.ask} />
     </div>
@@ -246,331 +226,42 @@ type StepProps = {
   draft: SemesterDraft;
   profile: Profile;
   update: (fn: (d: SemesterDraft) => SemesterDraft) => void;
-  updateProfile: (p: Partial<Profile>) => void;
-  go: (s: SetupStep, courseIndex?: number) => void;
+  updateProfile: (fn: (p: Profile) => Profile) => void;
+  go: (s: SetupStep) => void;
   today: string;
   flush: () => Promise<void>;
   md: (blockId: string, text: string) => JSX.Element;
   onDone: () => void;
   setEnv: (e: Loaded) => void;
+  returning: boolean;
+  draftRef: React.MutableRefObject<SemesterDraft | null>;
+  profileRef: React.MutableRefObject<Profile>;
 };
 
-function Actions({ children, skip }: { children?: React.ReactNode; skip?: () => void }) {
-  return (
-    <div className="setup-actions">
-      {skip && (
-        <button type="button" className="link-btn" onClick={skip}>
-          Skip, add later
-        </button>
-      )}
-      {children}
-    </div>
-  );
+function Actions({ children }: { children?: React.ReactNode }) {
+  return <div className="setup-actions">{children}</div>;
 }
 
-// ---------- 1. welcome ----------
+// ---------- the setup chat ----------
 
-function Welcome({ env, draft, go, returning, today }: StepProps & { returning: boolean }) {
-  const [exported, setExported] = useState<string | null>(null);
-  const exportLast = async () => {
-    const data = JSON.stringify({ semester: env.current, mastery: env.mastery, exportedAt: new Date().toISOString() }, null, 2);
-    const r = await offerDownload(`studydesk-${(env.current?.name ?? "semester").replace(/[^\w-]+/g, "-")}.json`, data);
-    setExported(r === "saved" ? "Saved." : "Not saved.");
-  };
-  return (
-    <div className="setup-card">
-      {returning ? (
-        <>
-          <h1>Start a new semester</h1>
-          <p>
-            StudyDesk will set up your new courses. <strong>{env.current?.name}</strong> is archived when the new semester starts, and every skill you mastered is kept,
-            so you won't be asked about it again.
-          </p>
-          <p className="quest-muted">You can save a copy of last semester's data first.</p>
-          <Actions>
-            <button type="button" className="mini-btn" onClick={exportLast}>
-              Export last semester
-            </button>
-            {exported && <span className="quest-muted">{exported}</span>}
-            <button type="button" className="mini-btn primary big" onClick={() => go(draft.courses.length ? "courses" : "about")}>
-              Start
-            </button>
-          </Actions>
-        </>
-      ) : (
-        <>
-          <h1>Let's set up your semester</h1>
-          <p>StudyDesk needs a short setup before it can build your daily quests. It takes about ten minutes, and it's saved as you go, so you can stop and come back.</p>
-          <p>You'll tell it three things:</p>
-          <ul className="setup-list">
-            <li>who you are (asked once),</li>
-            <li>your courses, with the grade you're aiming for in each,</li>
-            <li>how much time you want to study.</li>
-          </ul>
-          <p className="quest-muted">Course materials (syllabus, homework sheets, past exams, slides) make everything better, but they're optional. Anything can be added later.</p>
-          <Actions>
-            <button type="button" className="mini-btn primary big" onClick={() => go("about")}>
-              Start setup
-            </button>
-          </Actions>
-          <p className="quest-muted setup-today">Today is {new Date(`${today}T12:00`).toLocaleDateString("en", { weekday: "long", day: "numeric", month: "long" })}.</p>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ---------- 2. about you ----------
-
-function About({ profile, updateProfile, draft, update, go, today, flush }: StepProps) {
-  const scaleKey = SCALES.find((s) => s.scale.name === profile.gradeScale.name)?.key ?? "";
-  const setLevelOrCountry = (patch: Partial<Profile>) => {
-    const next = { ...profile, ...patch };
-    updateProfile({ ...patch, gradeScale: scaleFor(next.country, next.level) });
-    if (patch.level && !draft.courses.length) update((d) => ({ ...d, ...defaultSemester(today, next.level) }));
-  };
-  return (
-    <div className="setup-card">
-      <h1>About you</h1>
-      <p className="quest-muted">Asked once and kept for every semester. Your program and year tell StudyDesk which basics matter.</p>
-      <div className="setup-form">
-        <fieldset className="setup-seg">
-          <legend>I'm at</legend>
-          {(["school", "university"] as const).map((l) => (
-            <label key={l} className={profile.level === l ? "is-on" : ""}>
-              <input type="radio" name="level" checked={profile.level === l} onChange={() => setLevelOrCountry({ level: l })} />
-              {l === "school" ? "School" : "University"}
-            </label>
-          ))}
-        </fieldset>
-        <label>
-          {profile.level === "school" ? "School" : "University"}
-          <input value={profile.school} onChange={(e) => updateProfile({ school: e.target.value })} placeholder={profile.level === "school" ? "e.g. BRG Linz" : "e.g. TU Wien"} />
-        </label>
-        <label>
-          Country
-          <input value={profile.country} onChange={(e) => setLevelOrCountry({ country: e.target.value })} placeholder="e.g. Austria" list="countries" />
-          <datalist id="countries">
-            {["Austria", "Germany", "Switzerland", "Netherlands", "United States"].map((c) => (
-              <option key={c} value={c} />
-            ))}
-          </datalist>
-        </label>
-        <label>
-          Grade scale
-          <select
-            value={scaleKey}
-            onChange={(e) => {
-              const s = SCALES.find((x) => x.key === e.target.value);
-              if (s) updateProfile({ gradeScale: s.scale });
-            }}
-          >
-            {!scaleKey && <option value="">{profile.gradeScale.name}</option>}
-            {SCALES.map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          {profile.level === "school" ? "School type" : "Program"}
-          <input value={profile.program} onChange={(e) => updateProfile({ program: e.target.value })} placeholder={profile.level === "school" ? "e.g. Gymnasium, science branch" : "e.g. BSc Physics"} />
-        </label>
-        <label>
-          Year
-          <input value={profile.year} onChange={(e) => updateProfile({ year: e.target.value })} placeholder={profile.level === "school" ? "e.g. 7th grade" : "e.g. 1st year"} />
-        </label>
-      </div>
-      <h2 className="setup-h2">This semester</h2>
-      <div className="setup-form">
-        <label>
-          Name
-          <input value={draft.name} onChange={(e) => update((d) => ({ ...d, name: e.target.value }))} />
-        </label>
-        <label>
-          Starts
-          <input type="date" value={draft.startDate} onChange={(e) => update((d) => ({ ...d, startDate: e.target.value }))} />
-        </label>
-        <label>
-          Ends
-          <input type="date" value={draft.endDate} onChange={(e) => update((d) => ({ ...d, endDate: e.target.value }))} />
-        </label>
-      </div>
-      <Actions skip={() => go("courses")}>
-        <button
-          type="button"
-          className="mini-btn primary big"
-          onClick={() => {
-            void flush();
-            go("courses");
-          }}
-        >
-          Continue
-        </button>
-      </Actions>
-    </div>
-  );
-}
-
-// ---------- 3. courses ----------
-
-function Courses({ env, draft, update, go }: StepProps) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [found, setFound] = useState<string | null>(null);
-
-  const onSend = async (text: string, files: PendingAttachment[]) => {
-    setBusy(true);
-    setError(null);
-    setFound(null);
-    try {
-      const images = (await canSendImages()) ? files.filter((f) => f.kind === "image" && f.blob).map((f) => f.blob!) : [];
-      const texts = files.filter((f) => f.text).map((f) => `${f.name}:\n${f.text}`);
-      const res = await extract("courses", text, texts, images, env.live ? askClaude : null);
-      let added = 0;
-      let slots = 0;
-      update((d) => {
-        const courses = [...d.courses];
-        for (const c of res.courses) {
-          if (courses.some((x) => x.name.toLowerCase() === c.name.toLowerCase())) continue;
-          courses.push({ id: `c${uid().slice(0, 6)}`, name: c.name, short: c.short, credits: c.credits, teachingLanguage: "", targetGrade: null, setupStatus: "waiting" });
-          added++;
-        }
-        const timetable = [...d.timetable];
-        for (const t of res.timetable) {
-          const name = (t.courseName ?? "").toLowerCase();
-          const course = courses.find((c) => c.name.toLowerCase() === name) ?? courses.find((c) => name && (name.includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(name)));
-          const entry: TimetableEntry = { weekday: t.weekday, start: t.start, end: t.end, kind: t.kind, title: course ? `${course.name} ${t.kind}` : t.title, courseId: course?.id ?? null };
-          if (timetable.some((x) => x.weekday === entry.weekday && x.start === entry.start && x.end === entry.end)) continue;
-          timetable.push(entry);
-          slots++;
-        }
-        return { ...d, courses, timetable };
-      });
-      setFound(added || slots ? `Added ${added} ${added === 1 ? "course" : "courses"} and ${slots} weekly ${slots === 1 ? "slot" : "slots"}. Check them below.` : "No new courses found in that. Try typing them, one per line.");
-    } catch (e) {
-      setError(message(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const patch = (id: string, p: Partial<DraftCourse>) => update((d) => ({ ...d, courses: d.courses.map((c) => (c.id === id ? { ...c, ...p } : c)) }));
-  return (
-    <div className="setup-card">
-      <h1>Your courses</h1>
-      <p>Drop your timetable, a screenshot of your course list, or just type them.</p>
-      <InputBox id="setup-courses" placeholder="e.g. a screenshot of your timetable, or “Analysis 1, Linear Algebra, Physics lab”" busy={busy} onSend={onSend} sendLabel="Add" />
-      {busy && <p className="quest-muted">Reading…</p>}
-      {found && <p className="setup-ok">{found}</p>}
-      {error && <p className="quest-error">{error}</p>}
-
-      {draft.courses.length > 0 && (
-        <>
-          <h2 className="setup-h2">Courses StudyDesk will track</h2>
-          <p className="quest-muted">Fix names, remove what you don't want tracked, and add what's missing.</p>
-          <div className="setup-rows">
-            {draft.courses.map((c) => (
-              <div key={c.id} className="setup-row">
-                <input aria-label="Course name" value={c.name} onChange={(e) => patch(c.id, { name: e.target.value })} />
-                <input aria-label="Short name" className="is-short" value={c.short} onChange={(e) => patch(c.id, { short: e.target.value.slice(0, 8) })} />
-                <input
-                  aria-label="Credits"
-                  className="is-num"
-                  inputMode="decimal"
-                  placeholder="credits"
-                  value={c.credits ?? ""}
-                  onChange={(e) => patch(c.id, { credits: e.target.value ? Number(e.target.value.replace(",", ".")) || null : null })}
-                />
-                <button
-                  type="button"
-                  className="chat-del"
-                  aria-label={`Remove ${c.name}`}
-                  onClick={() => update((d) => ({ ...d, courses: d.courses.filter((x) => x.id !== c.id), timetable: d.timetable.filter((t) => t.courseId !== c.id) }))}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-      <button
-        type="button"
-        className="link-btn"
-        onClick={() => update((d) => ({ ...d, courses: [...d.courses, { id: `c${uid().slice(0, 6)}`, name: "", short: "", credits: null, teachingLanguage: "", targetGrade: null, setupStatus: "waiting" }] }))}
-      >
-        + Add a course by hand
-      </button>
-
-      <Slots draft={draft} update={update} kinds={["lecture", "exercise"]} title="Lectures and exercise classes" />
-
-      <Actions>
-        <button type="button" className="mini-btn" onClick={() => go("about")}>
-          Back
-        </button>
-        <button type="button" className="mini-btn primary big" disabled={!draft.courses.some((c) => c.name.trim())} onClick={() => {
-          update((d) => ({ ...d, courses: d.courses.filter((c) => c.name.trim()).map((c) => ({ ...c, short: c.short || c.name.slice(0, 8) })) }));
-          go("course", 0);
-        }}>
-          Continue
-        </button>
-      </Actions>
-    </div>
-  );
-}
-
-function Slots({ draft, update, kinds, title }: { draft: SemesterDraft; update: StepProps["update"]; kinds: TimetableEntry["kind"][]; title: string }) {
-  const list = draft.timetable.map((t, i) => ({ t, i })).filter(({ t }) => kinds.includes(t.kind)).sort((a, b) => WEEK.indexOf(a.t.weekday) - WEEK.indexOf(b.t.weekday) || (a.t.start < b.t.start ? -1 : 1));
-  if (!list.length) return null;
-  return (
-    <>
-      <h2 className="setup-h2">{title}</h2>
-      <ul className="setup-slots">
-        {list.map(({ t, i }) => (
-          <li key={i}>
-            <span className="setup-slot-time">
-              {DAY_SHORT[t.weekday]} {t.start}–{t.end}
-            </span>
-            <span>{t.title}</span>
-            <button type="button" className="chat-del" aria-label="Remove" onClick={() => update((d) => ({ ...d, timetable: d.timetable.filter((_, k) => k !== i) }))}>
-              ×
-            </button>
-          </li>
-        ))}
-      </ul>
-    </>
-  );
-}
-
-// ---------- 4. each course ----------
-
-function CourseStep({ env, draft, profile, update, go }: StepProps) {
-  const i = Math.min(draft.courseIndex, draft.courses.length - 1);
-  const course = draft.courses[i];
+function SetupChat({ env, draft, update, updateProfile, today, flush, md, returning, draftRef, profileRef }: StepProps) {
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  if (!course) {
-    return (
-      <div className="setup-card">
-        <p>No courses yet.</p>
-        <button type="button" className="mini-btn" onClick={() => go("courses")}>
-          Add courses
-        </button>
-      </div>
-    );
-  }
-  const steps = gradeSteps(profile.gradeScale);
-  const facts = draft.facts.filter((f) => f.courseId === course.id);
-  const uploads = draft.uploads.filter((u) => u.courseId === course.id);
-  const next = () => (i + 1 < draft.courses.length ? go("course", i + 1) : go("time"));
+  const ctl = useRef<AbortController | null>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const chat = draft.chat ?? [];
+  const open = draft.setupStep === "chat";
 
-  const onSend = async (text: string, files: PendingAttachment[]) => {
-    setError(null);
-    const now = Date.now();
-    if (text) update((d) => ({ ...d, facts: [...d.facts, { id: uid(), courseId: course.id, text, addedAt: now }] }));
-    const added: Upload[] = [];
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [chat.length]);
+
+  const patchMsg = (id: string, p: Partial<SetupMessage>) => update((d) => ({ ...d, chat: (d.chat ?? []).map((m) => (m.id === id ? { ...m, ...p } : m)) }));
+
+  /** Keeps each dropped file: readable content in the student's data, the original in the file store. */
+  const keepFiles = async (files: PendingAttachment[]): Promise<{ uploads: Upload[]; previews: string[]; images: Blob[]; failed: string[] }> => {
+    const uploads: Upload[] = [];
+    const previews: string[] = [];
+    const images: Blob[] = [];
     const failed: string[] = [];
     for (const [k, f] of files.entries()) {
       setBusy(`Keeping ${f.name} (${k + 1} of ${files.length})…`);
@@ -581,252 +272,158 @@ function CourseStep({ env, draft, profile, update, go }: StepProps) {
           const image = await compressImage(f.blob);
           if (!image) throw new Error("couldn't be read");
           await env.os.saveUploadContent(id, { image });
-        } else if (f.file) {
-          const full = await readFullText(f.file, MAX_FILE_CHARS);
+          images.push(f.blob);
+          previews.push(`File ${id} "${f.name}": image ${images.length} of the attached images.`);
+        } else {
+          const full = f.file ? await readFullText(f.file, MAX_FILE_CHARS) : { text: f.text ?? "", pages: null, cut: false };
           pages = full.pages;
           await env.os.saveUploadContent(id, { text: full.text });
-        } else {
-          await env.os.saveUploadContent(id, { text: f.text ?? "" });
+          previews.push(`File ${id} "${f.name}"${pages ? `, ${pages} pages` : ""}. Beginning:\n"""\n${full.text.slice(0, PREVIEW_CHARS)}\n"""`);
         }
         const assetId = f.file ? await env.os.storeOriginal(f.file) : null;
-        added.push({ id, courseId: course.id, fileName: f.name, type: f.kind, studentNote: text, addedAt: now, cataloguedAt: null, assetId, pages });
+        uploads.push({ id, courseId: null, fileName: f.name, type: f.kind, studentNote: "", addedAt: Date.now(), cataloguedAt: null, assetId, pages });
       } catch (e) {
         failed.push(`${f.name}: ${message(e)}`);
       }
     }
-    setBusy(null);
-    if (added.length) update((d) => ({ ...d, uploads: [...d.uploads, ...added], courses: d.courses.map((c) => (c.id === course.id ? { ...c, setupStatus: "waiting" } : c)) }));
-    if (failed.length) setError(`Not kept: ${failed.join("; ")}`);
+    return { uploads, previews, images, failed };
   };
 
-  return (
-    <div className="setup-card" key={course.id}>
-      <p className="quest-kicker">
-        Course {i + 1} of {draft.courses.length}
-      </p>
-      <h1>{course.name}</h1>
+  const send = async (text: string, files: PendingAttachment[]) => {
+    if (!open) return;
+    const userMsg: SetupMessage = { id: uid(), role: "user", text, files: files.map((f) => f.name), createdAt: Date.now() };
+    update((d) => ({ ...d, chat: [...(d.chat ?? []), userMsg] }));
+    const kept = files.length ? await keepFiles(files) : { uploads: [], previews: [], images: [], failed: [] };
+    if (kept.uploads.length) update((d) => ({ ...d, uploads: [...d.uploads, ...kept.uploads] }));
+    const reply: SetupMessage = { id: uid(), role: "assistant", text: "", createdAt: Date.now() };
+    update((d) => ({ ...d, chat: [...(d.chat ?? []), reply] }));
+    setBusy("Thinking…");
+    let startNow = false;
 
-      <h2 className="setup-h2">What grade are you aiming for?</h2>
-      {steps ? (
-        <div className="setup-grades" role="radiogroup" aria-label="Target grade">
-          {steps.map((g) => (
-            <button
-              key={g}
-              type="button"
-              role="radio"
-              aria-checked={course.targetGrade === g}
-              className={course.targetGrade === g ? "is-on" : ""}
-              onClick={() => update((d) => ({ ...d, courses: d.courses.map((c) => (c.id === course.id ? { ...c, targetGrade: g } : c)) }))}
-            >
-              {g}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <input
-          className="setup-num"
-          inputMode="decimal"
-          value={course.targetGrade ?? ""}
-          onChange={(e) => update((d) => ({ ...d, courses: d.courses.map((c) => (c.id === course.id ? { ...c, targetGrade: e.target.value ? Number(e.target.value) : null } : c)) }))}
-        />
-      )}
-      <p className="quest-muted">
-        {profile.gradeScale.name}: {profile.gradeScale.best} is best. This is the one thing every course needs.
-      </p>
-
-      <h2 className="setup-h2">Anything you know about it (optional)</h2>
-      <p>How is it graded? Known exam and hand-in dates? Drop materials too, as many as you like. Most useful first:</p>
-      <ol className="setup-list">
-        <li>the syllabus or course overview,</li>
-        <li>homework sheets,</li>
-        <li>past exams,</li>
-        <li>slides or the lecture script.</li>
-      </ol>
-      <InputBox
-        id={`setup-course-${course.id}`}
-        placeholder="e.g. “Exam on 28 Jan, homework counts 40%”, or drop files and say what they are"
-        busy={!!busy}
-        onSend={onSend}
-        sendLabel="Add"
-      />
-      {busy && <p className="quest-muted">{busy}</p>}
-      {error && <p className="quest-error">{error}</p>}
-
-      {(facts.length > 0 || uploads.length > 0) && (
-        <ul className="setup-items">
-          {facts.map((f) => (
-            <li key={f.id}>
-              <span className="setup-item-kind">You said</span>
-              <span>“{f.text}”</span>
-              <button type="button" className="chat-del" aria-label="Remove" onClick={() => update((d) => ({ ...d, facts: d.facts.filter((x) => x.id !== f.id) }))}>
-                ×
-              </button>
-            </li>
-          ))}
-          {uploads.map((u) => (
-            <li key={u.id}>
-              <span className="setup-item-kind">{u.type === "pdf" ? "PDF" : u.type === "image" ? "Image" : "File"}</span>
-              <span>
-                {u.fileName}
-                {u.pages ? ` · ${u.pages} pages` : ""}
-                {u.studentNote ? <span className="quest-muted"> · “{u.studentNote}”</span> : null}
-              </span>
-              <button type="button" className="chat-del" aria-label={`Remove ${u.fileName}`} onClick={() => update((d) => ({ ...d, uploads: d.uploads.filter((x) => x.id !== u.id) }))}>
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <Actions skip={next}>
-        <button type="button" className="mini-btn" onClick={() => (i > 0 ? go("course", i - 1) : go("courses"))}>
-          Back
-        </button>
-        <button type="button" className="mini-btn primary big" disabled={!!busy} onClick={next}>
-          {i + 1 < draft.courses.length ? "Next course" : "Continue"}
-        </button>
-      </Actions>
-    </div>
-  );
-}
-
-// ---------- 5. your time ----------
-
-function Time({ env, draft, update, go }: StepProps) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const onSend = async (text: string, files: PendingAttachment[]) => {
-    setBusy(true);
-    setError(null);
     try {
-      const images = (await canSendImages()) ? files.filter((f) => f.kind === "image" && f.blob).map((f) => f.blob!) : [];
-      const res = await extract("commitments", text, files.filter((f) => f.text).map((f) => f.text!), images, env.live ? askClaude : null);
-      update((d) => ({ ...d, timetable: [...d.timetable, ...res.timetable.map((t): TimetableEntry => ({ weekday: t.weekday, start: t.start, end: t.end, kind: "fixed", title: t.title, courseId: null }))] }));
-      if (!res.timetable.length) setError("No weekly times found in that. Try “Tue 18:00-20:00 football”.");
+      if (!env.live) {
+        const r = localReply(text, draftRef.current!, profileRef.current);
+        if (r.input) applyUpdate(r.input);
+        startNow = r.start;
+        patchMsg(reply.id, { text: r.reply });
+      } else {
+        if (!(await canUseTools())) throw new Error("This view can't let Claude fill in the sheet. Open StudyDesk on claude.ai in a browser or the desktop app.");
+        const sendImages = (await canSendImages()) ? kept.images : [];
+        const extra = [
+          kept.previews.length ? `The student just dropped these files (saved as unsortedFiles; assign each to a course):\n${kept.previews.join("\n\n")}` : "",
+          kept.images.length && !sendImages.length ? "Images can't be sent in this view; ask the student what the images show." : "",
+          kept.failed.length ? `These files couldn't be kept: ${kept.failed.join("; ")}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        const c = new AbortController();
+        ctl.current = c;
+        const turns = chatTurns(draftRef.current!.chat!.filter((m) => m.id !== reply.id), sheetSnapshot(draftRef.current!, profileRef.current, today), returning, extra);
+        const answer = await askClaude(turns, {
+          signal: c.signal,
+          images: sendImages,
+          tier: "default",
+          onText: (t) => patchMsg(reply.id, { text: t }),
+          tools: [
+            { name: "update_sheet", description: SHEET_TOOL_DESCRIPTION, inputSchema: SHEET_TOOL_SCHEMA as unknown as Claude.sample.SampleToolInputSchema, execute: (input) => applyUpdate(input) },
+            {
+              name: "read_calendar",
+              description:
+                "Reads the student's Google Calendar (through their own connector): repeating weekly events of the next two weeks, and one-off events of the next four months (exams, trips). Returns plain lists. Use it when the student agrees or asks to import their calendar.",
+              execute: async (_input, ctx) => {
+                setBusy("Reading your calendar…");
+                try {
+                  const events = await readCalendar(today, 120, ctx.signal);
+                  const twoWeeks = events.filter((e) => e.date < addDaysLocal(today, 14));
+                  const { weekly } = weeklyPattern(twoWeeks);
+                  const recurringTitles = new Set(weekly.map((w) => `${w.title}|${w.weekday}|${w.start}`));
+                  const once = events.filter((e) => !e.recurring && !recurringTitles.has(`${e.title}|${e.weekday}|${e.start}`)).slice(0, 80);
+                  update((d) => ({ ...d, calendarImportedAt: Date.now() }));
+                  return {
+                    weekly: weekly.map((w) => `${DAY_SHORT[w.weekday]} ${w.start}-${w.end}: ${w.title}${w.location ? ` @ ${w.location}` : ""}`),
+                    upcomingOnce: once.map((e) => `${e.date}${e.start ? ` ${e.start}-${e.end}` : " (all day)"}: ${e.title}`),
+                  };
+                } catch (e) {
+                  throw new Error((e as CalendarError).message ?? "The calendar couldn't be read.");
+                } finally {
+                  setBusy("Thinking…");
+                }
+              },
+            },
+            {
+              name: "start_setup",
+              description: "Starts the setup run (reading the files and mapping each course). Call only after the student confirmed the summary. Returns an error if something required is missing.",
+              execute: () => {
+                const r = setupReady(draftRef.current!);
+                if (!r.ok) throw new Error(`Can't start yet: missing ${r.missing.join(", ")}.`);
+                startNow = true;
+                return "Started. Tell the student in one line that you're reading their materials now, course by course, and that they can follow the progress below.";
+              },
+            },
+          ],
+        });
+        patchMsg(reply.id, { text: answer });
+      }
     } catch (e) {
-      setError(message(e));
+      const err = e as AskError;
+      patchMsg(reply.id, { error: err?.code === "cancelled" ? "Stopped." : message(e), text: err?.text ?? draftRef.current?.chat?.find((m) => m.id === reply.id)?.text ?? "" });
     } finally {
-      setBusy(false);
+      ctl.current = null;
+      setBusy(null);
+      if (startNow && setupReady(draftRef.current!).ok) {
+        update((d) => ({ ...d, setupStep: "running", courses: d.courses.map((c) => (c.setupStatus === "ready" || c.setupStatus === "needs_check" ? c : { ...c, setupStatus: "waiting" })) }));
+      }
+      void flush();
     }
   };
+
+  function applyUpdate(input: Record<string, unknown>): string {
+    const r = applySheetUpdate(draftRef.current!, profileRef.current, input);
+    update(() => r.draft);
+    if (r.profile !== profileRef.current) updateProfile(() => r.profile);
+    return r.result;
+  }
+
   return (
-    <div className="setup-card">
-      <h1>Your time</h1>
-      <p>How much do you want to study each day, lectures included? This is a starting point: after your placement check, StudyDesk recommends a real amount for your target grades.</p>
-      <table className="setup-week">
-        <thead>
-          <tr>
-            <th>Day</th>
-            <th>Study goal</th>
-            <th>Lectures and fixed</th>
-            <th>Left for quests</th>
-          </tr>
-        </thead>
-        <tbody>
-          {WEEK.map((wd) => {
-            const busyMin = busyMinutes(draft.timetable, wd);
-            const goal = draft.studyGoal[wd] ?? 0;
-            return (
-              <tr key={wd}>
-                <th scope="row">{DAY_NAME[wd]}</th>
-                <td>
-                  <input
-                    className="setup-num"
-                    type="number"
-                    min={0}
-                    max={16}
-                    step={0.5}
-                    aria-label={`Study goal on ${DAY_NAME[wd]}, hours`}
-                    value={goal / 60}
-                    onChange={(e) => update((d) => ({ ...d, studyGoal: d.studyGoal.map((m, k) => (k === wd ? Math.max(0, Math.round(Number(e.target.value) * 60)) : m)) }))}
-                  />{" "}
-                  h
-                </td>
-                <td className="quest-muted">{busyMin ? hours(busyMin) : "–"}</td>
-                <td>{goal ? hours(Math.max(0, goal - busyMin)) : "day off"}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      <h2 className="setup-h2">Other fixed commitments (optional)</h2>
-      <p className="quest-muted">A job, sport, a long commute: drop a screenshot or type them, and they're taken off your free time.</p>
-      <InputBox id="setup-commitments" placeholder="e.g. “Tue and Thu 18:00-20:00 football”" busy={busy} onSend={onSend} sendLabel="Add" />
-      {busy && <p className="quest-muted">Reading…</p>}
-      {error && <p className="quest-error">{error}</p>}
-      <Slots draft={draft} update={update} kinds={["fixed"]} title="Fixed commitments" />
-      <Actions skip={() => go("check")}>
-        <button type="button" className="mini-btn" onClick={() => go("course", Math.max(0, draft.courses.length - 1))}>
-          Back
-        </button>
-        <button type="button" className="mini-btn primary big" onClick={() => go("check")}>
-          Continue
-        </button>
-      </Actions>
+    <div className="setup-chat">
+      <div className="setup-thread">
+        {chat.map((m) =>
+          m.role === "user" ? (
+            <div key={m.id} className="row-user">
+              <div className="bubble">
+                {m.text && <div className="bubble-text">{m.text}</div>}
+                {m.files && m.files.length > 0 && <div className="setup-files">{m.files.map((f) => `📎 ${f}`).join("  ")}</div>}
+              </div>
+            </div>
+          ) : (
+            <div key={m.id} className="row-assistant">
+              {m.text ? md(m.id, m.text) : !m.error && <p className="thinking">{busy ?? "…"}</p>}
+              {m.error && <p className="error-line">{m.error}</p>}
+            </div>
+          ),
+        )}
+        <div ref={endRef} />
+      </div>
+      {open && (
+        <div className="setup-composer">
+          {busy && <p className="quest-muted">{busy}</p>}
+          <InputBox
+            id="setup-chat"
+            placeholder="Type, paste or drop anything: your timetable, a course list, syllabus, homework sheets…"
+            busy={!!busy}
+            onSend={(t, f) => void send(t, f)}
+            onStop={() => ctl.current?.abort()}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
-// ---------- 6. check and start ----------
-
-function Check({ draft, profile, go, update }: StepProps) {
-  const withTarget = draft.courses.filter((c) => c.targetGrade !== null);
-  const hasGoal = draft.studyGoal.some((m) => m > 0);
-  const ready = withTarget.length > 0 && hasGoal;
-  return (
-    <div className="setup-card">
-      <h1>Check and start</h1>
-      <p>Here's everything in one view. When you start, StudyDesk reads your files carefully, once, and maps which pages cover which topics, so later it only opens the pages it needs.</p>
-      <ul className="setup-check">
-        {draft.courses.map((c, i) => {
-          const files = draft.uploads.filter((u) => u.courseId === c.id).length;
-          const facts = draft.facts.filter((f) => f.courseId === c.id).length;
-          return (
-            <li key={c.id}>
-              <button type="button" className="link-btn setup-check-name" onClick={() => go("course", i)}>
-                {c.name}
-              </button>
-              <span className={c.targetGrade === null ? "setup-warn" : ""}>{c.targetGrade === null ? "needs a target grade" : `target ${c.targetGrade}`}</span>
-              <span className="quest-muted">
-                {files ? `${files} ${files === 1 ? "file" : "files"}` : "no files"}
-                {facts ? ` · ${facts} ${facts === 1 ? "note" : "notes"}` : ""}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-      {draft.courses.some((c) => c.targetGrade === null) && withTarget.length > 0 && (
-        <p className="quest-muted">Courses without a target grade are set up too, aiming for the best grade, until you give them one.</p>
-      )}
-      {!hasGoal && (
-        <p className="setup-warn">
-          Set a study goal for at least one day.{" "}
-          <button type="button" className="link-btn" onClick={() => go("time")}>
-            Your time
-          </button>
-        </p>
-      )}
-      {!profile.school && !profile.program && <p className="quest-muted">You skipped "About you". That's fine, but StudyDesk will guess the basics your courses need.</p>}
-      <Actions>
-        <button type="button" className="mini-btn" onClick={() => go("time")}>
-          Back
-        </button>
-        <button
-          type="button"
-          className="mini-btn primary big"
-          disabled={!ready}
-          onClick={() => {
-            update((d) => ({ ...d, courses: d.courses.map((c) => (c.setupStatus === "ready" || c.setupStatus === "needs_check" ? c : { ...c, setupStatus: "waiting" })) }));
-            go("running");
-          }}
-        >
-          Start setup
-        </button>
-      </Actions>
-      {!ready && <p className="quest-muted">Setup can start once one course has a target grade and you have a study goal.</p>}
-    </div>
-  );
+function addDaysLocal(day: string, n: number): string {
+  const d = new Date(`${day}T12:00`);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 // ---------- 6b. the setup run ----------
@@ -922,7 +519,7 @@ function Running({ env, draft, profile, update, go, today, flush }: StepProps) {
   }, [pending, failed.length, doneCount, finish]);
 
   return (
-    <div className="setup-card">
+    <div className="setup-card setup-run">
       <h1>Setting up your semester</h1>
       <p>StudyDesk is reading your materials, one course at a time. Keep this page open; if you close it, it carries on with the next course when you come back.</p>
       <ul className="setup-progress">
@@ -959,7 +556,7 @@ function Running({ env, draft, profile, update, go, today, flush }: StepProps) {
       </ul>
       {!pending && failed.length > 0 && (
         <Actions>
-          <button type="button" className="mini-btn" onClick={() => go("check")}>
+          <button type="button" className="mini-btn" onClick={() => go("chat")}>
             Back
           </button>
           {doneCount > 0 && (
@@ -1106,61 +703,162 @@ function Done({ env, draft, md, onDone, setEnv, today }: StepProps) {
   );
 }
 
-// ---------- the semester sheet ----------
 
-function Sheet({ draft, profile, go, editable }: { draft: SemesterDraft; profile: Profile; go: StepProps["go"]; editable: boolean }) {
-  const lectures = draft.timetable.filter((t) => t.kind !== "fixed").length;
-  const fixed = draft.timetable.length - lectures;
-  const edit = (s: SetupStep, i?: number) =>
-    editable ? (
-      <button type="button" className="link-btn" onClick={() => go(s, i)}>
-        edit
-      </button>
-    ) : null;
+// ---------- the semester sheet: filled by the chat, editable by hand ----------
+
+function Sheet({ env, draft, profile, update, updateProfile, returning, editable }: StepProps & { editable: boolean }) {
+  const [exported, setExported] = useState<string | null>(null);
+  const steps = gradeSteps(profile.gradeScale);
+  const patchCourse = (id: string, p: Partial<DraftCourse>) => update((d) => ({ ...d, courses: d.courses.map((c) => (c.id === id ? { ...c, ...p } : c)) }));
+  const exportLast = async () => {
+    const data = JSON.stringify({ semester: env.current, mastery: env.mastery, exportedAt: new Date().toISOString() }, null, 2);
+    const r = await offerDownload(`studydesk-${(env.current?.name ?? "semester").replace(/[^\w-]+/g, "-")}.json`, data);
+    setExported(r === "saved" ? "Saved." : "Not saved.");
+  };
+  const field = (label: string, value: string, set: (v: string) => void, type = "text") => (
+    <label className="sheet-field">
+      <span>{label}</span>
+      <input type={type} value={value} disabled={!editable} onChange={(e) => set(e.target.value)} />
+    </label>
+  );
+  const ready = setupReady(draft);
   return (
     <aside className="setup-sheet" aria-label="Semester sheet">
       <h2>Semester sheet</h2>
-      <dl>
-        <dt>Semester {edit("about")}</dt>
-        <dd>
-          {draft.name || "–"}
-          <span className="quest-muted"> · {draft.startDate} to {draft.endDate}</span>
-        </dd>
-        <dt>You {edit("about")}</dt>
-        <dd>{[profile.level === "school" ? "School" : "University", profile.school, profile.program, profile.year].filter(Boolean).join(", ")}</dd>
-        <dd className="quest-muted">Grades: {profile.gradeScale.name}</dd>
-        <dt>Courses {edit("courses")}</dt>
-        {draft.courses.length === 0 && <dd className="quest-muted">none yet</dd>}
-        {draft.courses.map((c, i) => {
-          const files = draft.uploads.filter((u) => u.courseId === c.id).length;
-          return (
-            <dd key={c.id} className="setup-sheet-course">
-              {editable ? (
-                <button type="button" className="link-btn" onClick={() => go("course", i)}>
-                  {c.name || "(no name)"}
+      {returning && (
+        <p className="sheet-export">
+          <button type="button" className="link-btn" onClick={() => void exportLast()}>
+            Export last semester ({env.current?.name})
+          </button>
+          {exported && <span className="quest-muted"> {exported}</span>}
+        </p>
+      )}
+
+      <h3>You</h3>
+      <div className="sheet-grid">
+        <label className="sheet-field">
+          <span>Level</span>
+          <select value={profile.level} disabled={!editable} onChange={(e) => updateProfile((p) => ({ ...p, level: e.target.value as Profile["level"] }))}>
+            <option value="school">School</option>
+            <option value="university">University</option>
+          </select>
+        </label>
+        {field(profile.level === "school" ? "School" : "University", profile.school, (v) => updateProfile((p) => ({ ...p, school: v })))}
+        {field("Country", profile.country, (v) => updateProfile((p) => ({ ...p, country: v })))}
+        {field(profile.level === "school" ? "School type" : "Program", profile.program, (v) => updateProfile((p) => ({ ...p, program: v })))}
+        {field("Year", profile.year, (v) => updateProfile((p) => ({ ...p, year: v })))}
+        {field("Grade scale", profile.gradeScale.name, (v) => updateProfile((p) => ({ ...p, gradeScale: { ...p.gradeScale, name: v } })))}
+        {field("Best grade", String(profile.gradeScale.best), (v) => Number.isFinite(Number(v)) && updateProfile((p) => ({ ...p, gradeScale: { ...p.gradeScale, best: Number(v) } })), "number")}
+        {field("Worst grade", String(profile.gradeScale.worst), (v) => Number.isFinite(Number(v)) && updateProfile((p) => ({ ...p, gradeScale: { ...p.gradeScale, worst: Number(v) } })), "number")}
+      </div>
+
+      <h3>Semester</h3>
+      <div className="sheet-grid">
+        {field("Name", draft.name, (v) => update((d) => ({ ...d, name: v })))}
+        {field("Starts", draft.startDate, (v) => update((d) => ({ ...d, startDate: v })), "date")}
+        {field("Ends", draft.endDate, (v) => update((d) => ({ ...d, endDate: v })), "date")}
+      </div>
+
+      <h3>Courses</h3>
+      {draft.courses.length === 0 && <p className="quest-muted">None yet.</p>}
+      {draft.courses.map((c) => {
+        const files = draft.uploads.filter((u) => u.courseId === c.id).length;
+        const facts = draft.facts.filter((f) => f.courseId === c.id).length;
+        return (
+          <div key={c.id} className="sheet-course">
+            <div className="sheet-course-row">
+              <input aria-label="Course name" value={c.name} disabled={!editable} onChange={(e) => patchCourse(c.id, { name: e.target.value })} />
+              <select
+                aria-label={`Target grade for ${c.name}`}
+                className={c.targetGrade === null ? "is-missing" : ""}
+                value={c.targetGrade ?? ""}
+                disabled={!editable}
+                onChange={(e) => patchCourse(c.id, { targetGrade: e.target.value === "" ? null : Number(e.target.value) })}
+              >
+                <option value="">target?</option>
+                {(steps ?? [profile.gradeScale.best]).map((g) => (
+                  <option key={g} value={g}>
+                    target {g}
+                  </option>
+                ))}
+                {c.targetGrade !== null && !(steps ?? []).includes(c.targetGrade) && <option value={c.targetGrade}>target {c.targetGrade}</option>}
+              </select>
+              {editable && (
+                <button
+                  type="button"
+                  className="chat-del"
+                  aria-label={`Remove ${c.name}`}
+                  onClick={() =>
+                    update((d) => ({
+                      ...d,
+                      courses: d.courses.filter((x) => x.id !== c.id),
+                      timetable: d.timetable.filter((t) => t.courseId !== c.id),
+                      facts: d.facts.filter((f) => f.courseId !== c.id),
+                      uploads: d.uploads.map((u) => (u.courseId === c.id ? { ...u, courseId: null } : u)),
+                    }))
+                  }
+                >
+                  ×
                 </button>
-              ) : (
-                c.name
               )}
-              <span className={c.targetGrade === null ? "setup-warn" : "quest-muted"}>{c.targetGrade === null ? " · no target yet" : ` · target ${c.targetGrade}`}</span>
-              {files > 0 && <span className="quest-muted"> · {files} {files === 1 ? "file" : "files"}</span>}
+            </div>
+            <p className="quest-muted sheet-course-meta">
+              {[c.credits ? `${c.credits} credits` : "", files ? `${files} ${files === 1 ? "file" : "files"}` : "", facts ? `${facts} ${facts === 1 ? "note" : "notes"}` : ""].filter(Boolean).join(" · ") || "no materials yet"}
               {c.setupStatus !== "waiting" && <span className={`setup-tag is-${c.setupStatus}`}>{c.setupStatus === "needs_check" ? "check" : c.setupStatus}</span>}
-            </dd>
-          );
-        })}
-        <dt>Week {edit("time")}</dt>
-        <dd>
-          {draft.studyGoal.some((m) => m > 0)
-            ? WEEK.filter((wd) => draft.studyGoal[wd] > 0)
-                .map((wd) => `${DAY_SHORT[wd]} ${hours(draft.studyGoal[wd])}`)
-                .join(", ")
-            : "no study goal yet"}
-        </dd>
-        <dd className="quest-muted">
-          {lectures} lecture {lectures === 1 ? "slot" : "slots"}
-          {fixed ? `, ${fixed} fixed ${fixed === 1 ? "commitment" : "commitments"}` : ""}
-        </dd>
-      </dl>
+            </p>
+          </div>
+        );
+      })}
+      {draft.uploads.some((u) => !u.courseId) && <p className="quest-muted">{draft.uploads.filter((u) => !u.courseId).length} files not sorted to a course yet.</p>}
+
+      <h3>Week {draft.calendarImportedAt ? <span className="setup-tag">from your calendar</span> : null}</h3>
+      <table className="sheet-week">
+        <tbody>
+          {WEEK.map((wd) => {
+            const busy = busyMinutes(draft.timetable, wd);
+            return (
+              <tr key={wd}>
+                <th scope="row">{DAY_SHORT[wd]}</th>
+                <td>
+                  <input
+                    type="number"
+                    min={0}
+                    max={16}
+                    step={0.5}
+                    aria-label={`Study goal on ${DAY_SHORT[wd]}, hours`}
+                    disabled={!editable}
+                    value={(draft.studyGoal[wd] ?? 0) / 60}
+                    onChange={(e) => update((d) => ({ ...d, studyGoal: d.studyGoal.map((m, k) => (k === wd ? Math.max(0, Math.round(Number(e.target.value) * 60)) : m)) }))}
+                  />{" "}
+                  h
+                </td>
+                <td className="quest-muted">{busy ? `${hours(busy)} fixed` : ""}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {draft.timetable.length > 0 && (
+        <ul className="sheet-slots">
+          {draft.timetable
+            .map((t, i) => ({ t, i }))
+            .sort((a, b) => WEEK.indexOf(a.t.weekday) - WEEK.indexOf(b.t.weekday) || (a.t.start < b.t.start ? -1 : 1))
+            .map(({ t, i }) => (
+              <li key={i}>
+                <span className="setup-slot-time">
+                  {DAY_SHORT[t.weekday]} {t.start}–{t.end}
+                </span>
+                <span>{t.title}</span>
+                {editable && (
+                  <button type="button" className="chat-del" aria-label="Remove" onClick={() => update((d) => ({ ...d, timetable: d.timetable.filter((_, k) => k !== i) }))}>
+                    ×
+                  </button>
+                )}
+              </li>
+            ))}
+        </ul>
+      )}
+      {editable && <p className={"sheet-ready " + (ready.ok ? "is-ok" : "")}>{ready.ok ? "Ready to start. Tell StudyDesk to go when you're happy." : `Still needed: ${ready.missing.join(", ")}.`}</p>}
     </aside>
   );
 }

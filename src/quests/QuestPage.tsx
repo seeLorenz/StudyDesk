@@ -22,6 +22,7 @@ import { claudeWriter, writeQuest, type WriteStatus } from "./write";
 import { compressImage, dataUrlToBlob } from "./images";
 import { applyChecks, checkResults, isResolved, newReviewChat, questMistakes, reviewRules } from "./review";
 import { WorkloadCard } from "../onboarding/WorkloadCard";
+import { busyMinutesFromEvents, readCalendar } from "../platform/calendar";
 
 // The quest page: builds today's quest on the first open of the day (the
 // in-page fallback from the design), then lets the student work through it
@@ -139,7 +140,17 @@ export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
       setBuildError(null);
       setPlanNotice(null);
       const { semester, records, mastery } = data;
+      // A semester set up from the calendar sizes today's quest from today's real calendar.
+      let calendarBusyMinutes: number | undefined;
+      if (semester.calendarSync && data.live) {
+        try {
+          calendarBusyMinutes = busyMinutesFromEvents(await readCalendar(today, 1), today);
+        } catch {
+          calendarBusyMinutes = undefined; // not reachable now: the weekly timetable is used
+        }
+      }
       const res = planQuest({
+        calendarBusyMinutes,
         semester,
         today,
         nowLocal: nowLocal(),

@@ -10,6 +10,8 @@ export type AskOptions = {
   signal?: AbortSignal;
   onText?: (text: string) => void;
   tier?: "quick" | "default" | "complex";
+  /** Page functions Claude may call while answering (never cached). */
+  tools?: Claude.sample.SampleTool[];
 };
 
 export type AskError = { code: string; message: string; text?: string };
@@ -31,6 +33,14 @@ export async function claudeAvailable(): Promise<boolean> {
   return (await getSample()) !== null;
 }
 
+/** True when this view lets Claude call page functions. */
+export async function canUseTools(): Promise<boolean> {
+  const sample = await getSample();
+  if (!sample) return false;
+  const limits = await sample.limits().catch(() => null);
+  return !!limits?.tools;
+}
+
 export async function canSendImages(): Promise<boolean> {
   const sample = await getSample();
   if (!sample) return false;
@@ -47,7 +57,7 @@ export async function askClaude(turns: Turn[], opts: AskOptions = {}): Promise<s
   if (!sample) return mockAnswer(turns, opts);
   try {
     const { text, truncated } = await sample(turns, {
-      cache: false,
+      ...(opts.tools ? { tools: opts.tools } : { cache: false }),
       signal: opts.signal,
       modelTier: opts.tier ?? "default",
       images: opts.images && opts.images.length ? opts.images : undefined,

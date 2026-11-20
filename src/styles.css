@@ -1665,7 +1665,7 @@ sup.sd-ref {
 }
 .setup-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr) 340px;
   gap: 28px;
   align-items: start;
 }
@@ -2044,4 +2044,160 @@ sup.sd-ref {
 .workload-days .quest-muted {
   font-size: 12px;
   font-weight: 400;
+}
+
+/* setup chat */
+.setup-main {
+  min-width: 0;
+}
+.setup-thread {
+  display: grid;
+  gap: 18px;
+  padding-bottom: 8px;
+}
+.setup-thread .row-assistant .md {
+  font-size: 16px;
+  line-height: 1.65;
+}
+.setup-thread .row-assistant .md ul,
+.setup-thread .row-assistant .md ol {
+  margin: 8px 0 12px;
+}
+.setup-files {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.setup-composer {
+  position: sticky;
+  bottom: 0;
+  padding: 12px 0 4px;
+  background: linear-gradient(to bottom, transparent, var(--paper) 22%);
+}
+.setup-composer .quest-muted {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.setup-run {
+  margin-top: 22px;
+}
+.setup-main > .setup-card {
+  margin-top: 22px;
+}
+.setup-sheet h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-3);
+  margin: 18px 0 6px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.sheet-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.sheet-field {
+  display: grid;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--ink-3);
+  min-width: 0;
+}
+.sheet-field input,
+.sheet-field select,
+.sheet-course-row input,
+.sheet-course-row select,
+.sheet-week input {
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 5px 8px;
+  min-width: 0;
+  width: 100%;
+}
+.sheet-field input:disabled,
+.sheet-field select:disabled,
+.sheet-course-row input:disabled,
+.sheet-course-row select:disabled,
+.sheet-week input:disabled {
+  background: transparent;
+  border-color: transparent;
+  padding-left: 0;
+}
+.sheet-course {
+  margin-bottom: 8px;
+}
+.sheet-course-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px 24px;
+  gap: 6px;
+  align-items: center;
+}
+.sheet-course-row select.is-missing {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.sheet-course-meta {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+.sheet-week {
+  border-collapse: collapse;
+  font-size: 13px;
+  width: 100%;
+}
+.sheet-week th {
+  text-align: left;
+  font-weight: 500;
+  width: 44px;
+}
+.sheet-week td {
+  padding: 2px 4px;
+}
+.sheet-week input {
+  width: 64px;
+}
+.sheet-slots {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  font-size: 12.5px;
+}
+.sheet-slots li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+}
+.sheet-slots li > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+.sheet-slots .setup-slot-time {
+  min-width: 96px;
+}
+.sheet-ready {
+  margin: 16px 0 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.sheet-ready.is-ok {
+  color: var(--accent);
+  font-weight: 500;
+}
+.sheet-export {
+  margin: 0 0 6px;
+}
+@media (max-width: 900px) {
+  .setup-sheet {
+    position: static;
+  }
+}
+.setup-sheet .chat-del {
+  opacity: 1;
 }

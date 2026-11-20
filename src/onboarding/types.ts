@@ -60,7 +60,11 @@ export type StudentFact = { id: string; courseId: string | null; text: string; a
 /** Where a skill is covered in a real file, so later only those lines are read. */
 export type CatalogEntry = { skillId: string; uploadId: string; where: string };
 
-export type SetupStep = "welcome" | "about" | "courses" | "course" | "time" | "check" | "running" | "done";
+/** "chat" while the student and the Orchestrator fill the sheet; older drafts may hold step names from the first version. */
+export type SetupStep = "chat" | "running" | "done";
+
+/** One message of the setup chat. Files are kept as uploads; the message only names them. */
+export type SetupMessage = { id: string; role: "user" | "assistant"; text: string; files?: string[]; createdAt: number; error?: string };
 
 /** What the setup run found for one course. */
 export type CourseSetup = {
@@ -101,7 +105,11 @@ export type SemesterDraft = {
   uploads: Upload[];
   facts: StudentFact[];
   results: Record<string, CourseSetup>;
-  /** Side notes from select-to-reply on the setup report. */
+  /** The setup chat with the Orchestrator. */
+  chat?: SetupMessage[];
+  /** When lectures and commitments were last imported from Google Calendar. */
+  calendarImportedAt?: number | null;
+  /** Side notes from select-to-reply on the chat and the setup report. */
   notes?: Note[];
   createdAt: number;
   updatedAt: number;

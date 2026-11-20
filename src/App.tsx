@@ -5,6 +5,7 @@ import { uid } from "./chat/types";
 import { openStore, type ChatStore } from "./platform/store";
 import { QuestPage } from "./quests/QuestPage";
 import { OnboardingPage } from "./onboarding/OnboardingPage";
+import { openQuestStore } from "./platform/questStore";
 
 const newChat = (): Chat => ({ id: uid(), title: "New chat", createdAt: Date.now(), updatedAt: Date.now(), messages: [], notes: [] });
 
@@ -24,6 +25,16 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [view, setView] = useState<"chat" | "quest" | "setup">("chat");
+
+  // A new student (no semester yet) starts in the setup chat.
+  useEffect(() => {
+    openQuestStore()
+      .then((qs) => qs.loadSemester())
+      .then((sem) => {
+        if (!sem) setView((v) => (v === "chat" ? "setup" : v));
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let stop = () => {};
