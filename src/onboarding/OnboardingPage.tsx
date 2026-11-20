@@ -315,7 +315,7 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
       {!env.live && <p className="quest-banner">Preview mode: no Claude here, so the chat is a simple stand-in and setup builds a made-up skill map.</p>}
       {saveError && <p className="quest-error">{saveError}</p>}
       <header className="quest-head">
-        <p className="quest-kicker">Start New Semester{draft.name ? ` · ${draft.name}` : ""}</p>
+        <p className="quest-kicker">Semester setup{draft.name ? ` · ${draft.name}` : ""}</p>
       </header>
       {draft.status === "active" && (
         <div className="setup-current">
