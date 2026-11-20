@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatView } from "./chat/ChatView";
 import type { Chat } from "./chat/types";
 import { uid } from "./chat/types";
 import { openStore, type ChatStore } from "./platform/store";
-import { QuestPage } from "./quests/QuestPage";
+import { QuestPage, type QuestCommand } from "./quests/QuestPage";
 import { OnboardingPage } from "./onboarding/OnboardingPage";
 import { openQuestStore } from "./platform/questStore";
-import { OrchestratorPanel } from "./orchestrator/OrchestratorPanel";
+import { OrchestratorPanel, type OrchStatus } from "./orchestrator/OrchestratorPanel";
 import { subscribe } from "./platform/deskBus";
+import type { Semester } from "./quests/types";
+import { DeskPanel } from "./shell/DeskPanel";
+import { daysBetween, toDay } from "./mastery/days";
 
 const newChat = (): Chat => ({ id: uid(), title: "New chat", createdAt: Date.now(), updatedAt: Date.now(), messages: [], notes: [] });
 
@@ -18,6 +21,33 @@ function when(ts: number) {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
+type View = "today" | "chat" | "organize" | "setup";
+
+const Icon = {
+  today: <path d="M3.5 2.5h9v11h-9zM5.8 7.6l1.6 1.6 3-3.4" />,
+  ask: <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" />,
+  organize: <path d="M2.5 4h11v9.5h-11zM2.5 7h11M5.5 2.5v3M10.5 2.5v3" />,
+  plus: <path d="M8 3.5v9M3.5 8h9" />,
+};
+const Svg = ({ children }: { children: JSX.Element }) => (
+  <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    {children}
+  </svg>
+);
+
+/** "Winter semester · week 6 of 14", or just the name. */
+function semesterLine(s: Semester | null): string | null {
+  if (!s) return null;
+  if (s.source === "sample") return "Sample semester";
+  if (!s.startDate || !s.endDate) return s.name;
+  const today = toDay();
+  const total = Math.max(1, Math.ceil((daysBetween(s.startDate, s.endDate) + 1) / 7));
+  const week = Math.floor(daysBetween(s.startDate, today) / 7) + 1;
+  if (week < 1) return `${s.name} · starts soon`;
+  if (week > total) return `${s.name} · ended`;
+  return `${s.name} · week ${week} of ${total}`;
+}
+
 export function App() {
   const [store, setStore] = useState<ChatStore | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
@@ -26,16 +56,30 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
-  const [view, setView] = useState<"chat" | "quest" | "setup">("chat");
-  // The StudyDesk chat (Orchestrator): a side panel over every screen.
+  const [view, setView] = useState<View>("today");
+  // The semester, for the sidebar line; null until loaded, "none" when there isn't one yet.
+  const [semester, setSemester] = useState<Semester | null | "none">(null);
+  // Organize (the Orchestrator): a full page, and a quick panel over every other screen.
   const [orchOpen, setOrchOpen] = useState(false);
   const [orchExpanded, setOrchExpanded] = useState(false);
+  const [dock, setDock] = useState<HTMLDivElement | null>(null);
   const [quote, setQuote] = useState<string | null>(null);
-  const [unseen, setUnseen] = useState(0);
+  const [status, setStatus] = useState<OrchStatus>({ needs: 0, notes: 0, nightly: "off", nightlyTime: null });
   const [askSeed, setAskSeed] = useState<{ chatId: string; question: string } | null>(null);
-  // A reading started from the StudyDesk chat runs in the setup screen's runner, kept mounted (hidden) while it works.
+  // The ⋯ menu: testing tools and a new semester.
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [confirmRestart, setConfirmRestart] = useState(false);
+  const [command, setCommand] = useState<QuestCommand | null>(null);
+  // A reading started from Organize runs in the setup screen's runner, kept mounted (hidden) while it works.
   const [runPending, setRunPending] = useState(false);
   useEffect(() => subscribe("draft", "app", (d) => setRunPending(d.status === "active" && d.setupStep === "running")), []);
+
+  const go = useCallback((v: View) => {
+    setView(v);
+    setMenuOpen(false);
+    setToolsOpen(false);
+    if (v === "organize") setOrchOpen(false);
+  }, []);
 
   const openOrch = useCallback(() => {
     const sel = window.getSelection()?.toString().trim();
@@ -43,19 +87,24 @@ export function App() {
     setOrchOpen(true);
     setMenuOpen(false);
   }, []);
+  // On the Organize page the chat is already there; elsewhere it opens as a panel.
+  const viewRef = useRef(view);
+  viewRef.current = view;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
         e.preventDefault();
+        if (viewRef.current === "organize") return (document.querySelector(".orch.is-docked textarea") as HTMLTextAreaElement | null)?.focus();
         setOrchOpen((o) => {
           if (!o) openOrch();
           return !o;
         });
       }
+      if (e.key === "Escape") setToolsOpen(false);
     };
     const onAsk = (e: Event) => {
       setQuote((e as CustomEvent<{ quote: string }>).detail?.quote || null);
-      setOrchOpen(true);
+      if (viewRef.current !== "organize") setOrchOpen(true);
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("studydesk:ask", onAsk);
@@ -63,17 +112,24 @@ export function App() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("studydesk:ask", onAsk);
     };
+    // viewRef is read at event time
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openOrch]);
 
-  // A new student (no semester yet) starts in the setup chat.
+  // A new student (no semester yet) starts in Organize, which begins with the setup chat.
+  const first = useRef(true);
   useEffect(() => {
     openQuestStore()
       .then((qs) => qs.loadSemester())
       .then((sem) => {
-        if (!sem) setView((v) => (v === "chat" ? "setup" : v));
+        setSemester(sem ?? "none");
+        if (!sem && first.current) setView((v) => (v === "today" ? "setup" : v));
+        first.current = false;
       })
-      .catch(() => {});
-  }, []);
+      .catch(() => setSemester("none"));
+    // Read again on each screen change: the quest page can switch to sample data without telling anyone.
+  }, [view]);
+  useEffect(() => subscribe("semester", "app", (s) => setSemester(s)), []);
 
   useEffect(() => {
     let stop = () => {};
@@ -102,61 +158,62 @@ export function App() {
 
   const open = (c: Chat) => {
     setCurrent(c);
-    setView("chat");
-    setMenuOpen(false);
+    go("chat");
   };
+
+  const sem = semester && semester !== "none" ? semester : null;
+  // Setting up counts as something StudyDesk needs from the student.
+  const needs = status.needs + (semester === "none" || sem?.source === "sample" ? 1 : 0);
+  const organizeView = view === "organize" || view === "setup";
+  // Organize without a semester is the setup chat.
+  const shown: View = view === "organize" && semester === "none" ? "setup" : view;
+  const chatTitle = chats.find((c) => c.id === current.id)?.title ?? "New chat";
+  const title = shown === "today" ? "Today" : shown === "chat" ? chatTitle : shown === "setup" ? "Set up your semester" : "Organize";
+  const command_ = (kind: QuestCommand["kind"]) => {
+    setCommand({ id: Date.now(), kind });
+    setConfirmRestart(false);
+    go("today");
+  };
+
+  const badge = needs > 0 ? (
+    <span className="nav-badge" aria-label={`${needs} ${needs === 1 ? "thing needs" : "things need"} you`}>
+      {needs}
+    </span>
+  ) : status.notes > 0 ? (
+    <span className="nav-dot" aria-label="New note" />
+  ) : null;
 
   return (
     <div className={"app" + (menuOpen ? " menu-open" : "")}>
-      <aside className="side" aria-label="Chats">
+      <aside className="side" aria-label="StudyDesk">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true" />
           StudyDesk
         </div>
-        <button
-          type="button"
-          className={"quest-link" + (view === "quest" ? " is-current" : "")}
-          onClick={() => {
-            setView("quest");
-            setMenuOpen(false);
-          }}
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M3 2.5h10v11H3zM5.5 6l1.5 1.5L10.5 4M5.5 10.5h5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          Today's quest
-        </button>
-        <button
-          type="button"
-          className={"quest-link" + (view === "setup" ? " is-current" : "")}
-          onClick={() => {
-            setView("setup");
-            setMenuOpen(false);
-          }}
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M2.5 4h11v9.5h-11zM2.5 7h11M5.5 2.5v3M10.5 2.5v3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          Start New Semester
-        </button>
-        <button type="button" className={"quest-link" + (orchOpen ? " is-current" : "")} onClick={() => (orchOpen ? setOrchOpen(false) : openOrch())} title="Ask about your desk or tell it what changed (Ctrl/⌘ J)">
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-          </svg>
-          Talk to StudyDesk
-          {unseen > 0 && <span className="orch-badge" aria-label={`${unseen} new`}>{unseen}</span>}
-        </button>
-        <button type="button" className="new-chat" onClick={() => open(newChat())}>
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
-          New chat
-        </button>
-        <nav className="chat-list">
+        {semesterLine(sem) && <p className="side-semester">{semesterLine(sem)}</p>}
+
+        <nav className="side-nav" aria-label="Screens">
+          <button type="button" className={"nav-item" + (shown === "today" ? " is-current" : "")} aria-current={shown === "today" ? "page" : undefined} onClick={() => go("today")}>
+            <Svg>{Icon.today}</Svg>
+            Today
+          </button>
+          <div className="nav-split">
+            <button type="button" className={"nav-item" + (shown === "chat" ? " is-current" : "")} aria-current={shown === "chat" ? "page" : undefined} onClick={() => go("chat")}>
+              <Svg>{Icon.ask}</Svg>
+              Ask
+            </button>
+            <button type="button" className="icon-btn nav-new" aria-label="New chat" title="New chat" onClick={() => open(newChat())}>
+              <Svg>{Icon.plus}</Svg>
+            </button>
+          </div>
+        </nav>
+
+        <p className="side-label">Recent chats</p>
+        <nav className="chat-list" aria-label="Chats">
           {!loaded && <p className="side-empty">Loading your chats…</p>}
           {loaded && chats.length === 0 && <p className="side-empty">Your chats will show up here.</p>}
           {chats.map((c) => (
-            <div key={c.id} className={"chat-item" + (view === "chat" && c.id === current.id ? " is-current" : "")}>
+            <div key={c.id} className={"chat-item" + (shown === "chat" && c.id === current.id ? " is-current" : "")}>
               <button type="button" className="chat-open" onClick={() => open(c)}>
                 <span className="chat-title">{c.title}</span>
                 <span className="chat-meta">
@@ -191,26 +248,79 @@ export function App() {
             </div>
           ))}
         </nav>
-        <p className="side-foot">
-          {store?.mode === "cloud" ? "Chats are saved privately to your claude.ai account." : "Preview mode: chats are saved in this browser only."}
-        </p>
+
+        <button
+          type="button"
+          className={"organize-btn" + (organizeView ? " is-current" : "")}
+          aria-current={organizeView ? "page" : undefined}
+          onClick={() => go("organize")}
+          title="Your semester, dates and files. Tell StudyDesk what changed (Ctrl/⌘ J)"
+        >
+          <Svg>{Icon.organize}</Svg>
+          Organize
+          {badge}
+          <kbd className="organize-kbd">Ctrl J</kbd>
+        </button>
+        <div className="side-foot">
+          <span className={"run-dot is-" + status.nightly} aria-hidden="true" />
+          <span className="side-run">
+            {status.nightly === "on" && status.nightlyTime
+              ? `Nightly run at ${status.nightlyTime}`
+              : status.nightly === "failed"
+                ? "Nightly run not set up"
+                : store?.mode === "local"
+                  ? "Preview: saved in this browser"
+                  : "Saved to your claude.ai account"}
+          </span>
+          <button type="button" className="icon-btn tools-btn" aria-label="More" aria-expanded={toolsOpen} onClick={() => setToolsOpen((o) => !o)}>
+            <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+              <circle cx="3.5" cy="8" r="1.3" />
+              <circle cx="8" cy="8" r="1.3" />
+              <circle cx="12.5" cy="8" r="1.3" />
+            </svg>
+          </button>
+          {toolsOpen && (
+            <div className="tools-menu" role="menu">
+              <button type="button" role="menuitem" onClick={() => go("setup")}>
+                {sem && sem.source !== "sample" ? "Start a new semester" : "Set up your semester"}
+              </button>
+              <p className="tools-label">Testing tools</p>
+              <button type="button" role="menuitem" onClick={() => command_("build")}>
+                Build a new quest for today
+              </button>
+              {sem?.source === "sample" &&
+                (confirmRestart ? (
+                  <div className="tools-confirm">
+                    <span>Restart with fresh sample homework? Your attempts are kept.</span>
+                    <span>
+                      <button type="button" className="mini-btn" onClick={() => command_("restart")}>
+                        Restart
+                      </button>
+                      <button type="button" className="mini-btn" onClick={() => setConfirmRestart(false)}>
+                        Cancel
+                      </button>
+                    </span>
+                  </div>
+                ) : (
+                  <button type="button" role="menuitem" onClick={() => setConfirmRestart(true)}>
+                    Restart the sample semester
+                  </button>
+                ))}
+              <p className="tools-foot">{store?.mode === "cloud" ? "Chats are saved privately to your claude.ai account." : "Preview mode: everything is saved in this browser only."}</p>
+            </div>
+          )}
+        </div>
       </aside>
-      <button type="button" className="scrim" aria-label="Close chat list" onClick={() => setMenuOpen(false)} />
+      <button type="button" className="scrim" aria-label="Close the menu" onClick={() => setMenuOpen(false)} />
 
       <main className="main">
         <header className="topbar">
-          <button type="button" className="icon-btn menu-btn" aria-label="Show chats" onClick={() => setMenuOpen(true)}>
+          <button type="button" className="icon-btn menu-btn" aria-label="Show menu and chats" onClick={() => setMenuOpen(true)}>
             <svg viewBox="0 0 20 20" aria-hidden="true">
               <path d="M3.5 6h13M3.5 10h13M3.5 14h13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
             </svg>
           </button>
-          <button type="button" className="icon-btn orch-top" aria-label="Talk to StudyDesk" onClick={() => (orchOpen ? setOrchOpen(false) : openOrch())}>
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <path d="M3 4.5h14v9H9.5l-4 3v-3H3z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-            </svg>
-            {unseen > 0 && <span className="orch-badge">{unseen}</span>}
-          </button>
-          <span className="topbar-title">{view === "quest" ? "Today's quest" : view === "setup" ? "Start New Semester" : chats.find((c) => c.id === current.id)?.title ?? "New chat"}</span>
+          <span className="topbar-title">{title}</span>
         </header>
         {notice && (
           <div className="notice" role="status">
@@ -220,36 +330,64 @@ export function App() {
             </button>
           </div>
         )}
-        {view === "quest" ? (
-          <QuestPage onStartSetup={() => setView("setup")} />
-        ) : view === "setup" ? null : (
-          <ChatView key={current.id} initial={current} save={save} onSaveError={onSaveError} autoSend={askSeed?.chatId === current.id ? askSeed.question : undefined} />
-        )}
-        {(view === "setup" || runPending) && (
-          <div className={view === "setup" ? "setup-host" : "setup-host is-hidden"} aria-hidden={view !== "setup"}>
-            <OnboardingPage onDone={() => setView("quest")} />
+        {shown === "today" && <QuestPage onStartSetup={() => go("setup")} command={command} />}
+        {shown === "chat" && <ChatView key={current.id} initial={current} save={save} onSaveError={onSaveError} autoSend={askSeed?.chatId === current.id ? askSeed.question : undefined} />}
+        {shown === "organize" && (
+          <div className="organize">
+            <div className="organize-chat" ref={setDock} />
+            <div className="organize-data">
+              <DeskPanel onOpenSetup={() => go("setup")} />
+            </div>
           </div>
         )}
+        {(shown === "setup" || runPending) && (
+          <div className={shown === "setup" ? "setup-host" : "setup-host is-hidden"} aria-hidden={shown !== "setup"}>
+            {shown === "setup" && sem && (
+              <button type="button" className="link-btn setup-back" onClick={() => go("organize")}>
+                ← Back to Organize
+              </button>
+            )}
+            <OnboardingPage onDone={() => go("today")} />
+          </div>
+        )}
+
+        <nav className="tabbar" aria-label="Screens">
+          <button type="button" className={shown === "today" ? "is-current" : ""} onClick={() => go("today")}>
+            <Svg>{Icon.today}</Svg>
+            Today
+          </button>
+          <button type="button" className={shown === "chat" ? "is-current" : ""} onClick={() => go("chat")}>
+            <Svg>{Icon.ask}</Svg>
+            Ask
+          </button>
+          <button type="button" className={organizeView ? "is-current" : ""} onClick={() => go("organize")}>
+            <span className="tab-icon">
+              <Svg>{Icon.organize}</Svg>
+              {badge}
+            </span>
+            Organize
+          </button>
+        </nav>
       </main>
       <OrchestratorPanel
-        open={orchOpen}
+        open={orchOpen && shown !== "organize"}
+        dock={shown === "organize" ? dock : null}
         expanded={orchExpanded}
         onClose={() => setOrchOpen(false)}
         onToggleExpand={() => setOrchExpanded((x) => !x)}
-        screen={view === "quest" ? "Today's quest" : view === "setup" ? "Start New Semester" : `Ask chat "${chats.find((c) => c.id === current.id)?.title ?? "New chat"}"`}
+        screen={shown === "today" ? "Today's quest" : shown === "setup" ? "Semester setup" : shown === "organize" ? "Organize page (semester, courses, dates, files)" : `Ask chat "${chatTitle}"`}
         quote={quote}
         onClearQuote={() => setQuote(null)}
-        onUnseen={setUnseen}
+        onStatus={setStatus}
         onOpenAsk={(question) => {
           const c = newChat();
           setAskSeed({ chatId: c.id, question });
           setCurrent(c);
-          setView("chat");
-          if (!orchExpanded) return;
+          go("chat");
           setOrchExpanded(false);
         }}
         onOpenSetup={() => {
-          setView("setup");
+          go("setup");
           setOrchOpen(false);
         }}
       />

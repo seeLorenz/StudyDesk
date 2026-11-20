@@ -27,6 +27,7 @@ import { publish, subscribe } from "../platform/deskBus";
 import { openOnboardingStore } from "../platform/onboardingStore";
 import { openRoutineStore } from "../platform/routineStore";
 import { mergeGrading, type GradingOutbox } from "../routine/apply";
+import { ComingUp } from "../shell/ComingUp";
 
 // The quest page: builds today's quest on the first open of the day (the
 // in-page fallback from the design), then lets the student work through it
@@ -84,14 +85,16 @@ function message(e: unknown): string {
 
 const WEEKDAY = (day: string) => new Date(`${day}T12:00`).toLocaleDateString("en", { weekday: "long" });
 
-export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
+/** A testing tool picked in the sidebar's menu; `id` changes each time it's picked. */
+export type QuestCommand = { id: number; kind: "build" | "restart" };
+
+export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void; command?: QuestCommand | null }) {
   const [data, setData] = useState<Data | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [building, setBuilding] = useState<{ plan: Quest; status: Record<string, WriteStatus> } | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
   const [planNotice, setPlanNotice] = useState<Exclude<PlanResult, { kind: "quest" }> | null>(null);
-  const [confirmRestart, setConfirmRestart] = useState(false);
   const autoBuilt = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const today = toDay();
@@ -305,10 +308,19 @@ export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
     const semester = sampleSemester(toDay());
     await data.qs.saveSemester(semester);
     setData({ ...data, semester });
-    setConfirmRestart(false);
     autoBuilt.current = true;
     void build();
   };
+
+  // Testing tools live in the sidebar's menu and arrive here as commands.
+  const doneCommand = useRef<number | null>(null);
+  useEffect(() => {
+    if (!command || !data || doneCommand.current === command.id) return;
+    doneCommand.current = command.id;
+    if (command.kind === "build" && !(building && !buildError)) void build();
+    if (command.kind === "restart" && data.semester.source === "sample") void restartSample();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [command, data]);
 
   if (loadError) return <div className="quest-page"><p className="quest-error">Your quests couldn't be loaded: {loadError}</p></div>;
   if (needsSetup)
@@ -323,7 +335,7 @@ export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
               Look around with sample data first
             </button>
             <button type="button" className="mini-btn primary big" onClick={onStartSetup}>
-              Start New Semester
+              Set up your semester
             </button>
           </div>
         </section>
@@ -430,6 +442,7 @@ export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
           record={current}
           data={data}
           scroller={scroller}
+          extra={<ComingUp semester={data.semester} today={today} />}
           onRecord={(r) => setData((d) => (d ? { ...d, records: d.records.map((x) => (x.quest.id === r.quest.id ? r : x)) } : d))}
           onMastery={(m) => setData((d) => (d ? { ...d, mastery: m } : d))}
         />
@@ -437,6 +450,7 @@ export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
         <section className="quest-empty">
           <h2>Today's quest is done</h2>
           <p className="quest-muted">It's in the archive below{review?.record === current ? ", and the mistake review above goes through what went wrong" : ""}. Tomorrow's quest builds on today's results.</p>
+          <ComingUp semester={data.semester} today={today} />
         </section>
       ) : building ? (
         <section className="quest-building" aria-live="polite">
@@ -530,33 +544,6 @@ export function QuestPage({ onStartSetup }: { onStartSetup: () => void }) {
         </section>
       )}
 
-      <footer className="quest-testing">
-        <span>Testing tools</span>
-        <button type="button" className="link-btn" disabled={!!building && !buildError} onClick={() => void build()}>
-          Build a new quest for today
-        </button>
-        <button type="button" className="link-btn" onClick={onStartSetup}>
-          Start New Semester
-        </button>
-        {data.semester.source !== "sample" ? null : confirmRestart ? (
-          <span>
-            Restart with fresh sample homework (Sheet 4 due tomorrow)? Your attempts are kept.{" "}
-            <button type="button" className="link-btn" onClick={() => void restartSample()}>
-              Restart
-            </button>{" "}
-            <button type="button" className="link-btn" onClick={() => setConfirmRestart(false)}>
-              Cancel
-            </button>
-          </span>
-        ) : (
-          <button type="button" className="link-btn" onClick={() => setConfirmRestart(true)}>
-            Restart the sample semester
-          </button>
-        )}
-        <span className="quest-muted">
-          {data.semester.source === "sample" ? "Using sample course data (Calculus 1). Start New Semester replaces it with your real courses." : ""}
-        </span>
-      </footer>
     </div>
   );
 }
@@ -569,6 +556,8 @@ type ViewProps = {
   scroller: React.RefObject<HTMLDivElement>;
   onRecord: (r: QuestRecord) => void;
   onMastery: (m: MasteryData) => void;
+  /** Shown under the quest's header (Coming up). */
+  extra?: React.ReactNode;
 };
 
 const KIND = { learn: "Learn", lesson: "Learn & try", practice: "Practice", assignment: "Homework" } as const;
@@ -586,7 +575,7 @@ const HOMEWORK_RULE = `
 - This passage belongs to real homework the student hasn't handed in yet. Guide with a question or the principle behind it; never give the answer or a finished step.`;
 
 
-function QuestView({ record, data, scroller, onRecord, onMastery }: ViewProps) {
+function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewProps) {
   const { quest } = record;
   const { semester, mastery, ms, qs, live } = data;
   // A copy of the work is kept in this browser on every change, so a crash or a
@@ -1027,6 +1016,8 @@ ${b?.text ?? ""}
           </p>
         ))}
       </header>
+
+      {extra}
 
       {errors.save && <p className="quest-error">{errors.save}</p>}
 
