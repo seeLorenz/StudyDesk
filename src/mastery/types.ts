@@ -96,6 +96,11 @@ export type SkillState = {
   lastCreditDay: Day | null;
   /** Ladder step to restart at after a lapse. */
   restartStep: number;
+  /**
+   * Day of the first solve when the skill was solved clean on first sight and
+   * every attempt since was clean too (the fast track); null otherwise.
+   */
+  fastTrackFrom: Day | null;
   medianSeconds: number | null;
 };
 

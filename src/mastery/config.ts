@@ -6,6 +6,14 @@ import type { Difficulty, PointsKind } from "./types";
 export const CONFIG = {
   defaultStreakTarget: 3,
 
+  /**
+   * Fast track: a skill solved clean on first sight, then clean again at least
+   * minGapDays later (nothing but clean solves in between), is mastered after
+   * `solves` solves instead of the full streak target. Outside the placement
+   * check, one first-sight solve never counts as mastered on its own.
+   */
+  fastTrack: { solves: 2, minGapDays: 3 },
+
   /** Days until the next review, per ladder step. Past the last step a skill is retained. */
   ladder: {
     normal: [3, 7, 16, 35],

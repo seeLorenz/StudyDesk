@@ -34,6 +34,7 @@ export function emptyState(skillId: string): SkillState {
     lapses: 0,
     lastCreditDay: null,
     restartStep: 1,
+    fastTrackFrom: null,
     medianSeconds: null,
   };
 }
@@ -91,6 +92,9 @@ function step(skill: Skill, st: SkillState, a: Attempt, outcome: Outcome, points
   // The placement check right after onboarding is the one exception to the
   // streak rule: a skill solved there on first sight counts as mastered at once.
   const placementSolve = a.part === "check" && outcome === "clean" && st.stage === "new";
+  // Anywhere else, a first-sight solve only opens the fast track (see below).
+  if (st.stage === "new" && outcome === "clean" && !placementSolve) st.fastTrackFrom = a.day;
+  else if (outcome !== "clean") st.fastTrackFrom = null;
   if (st.stage === "new") st.stage = "learning";
   if (placementSolve) st.streak = Math.max(st.streak, target - 1);
 
@@ -101,8 +105,12 @@ function step(skill: Skill, st: SkillState, a: Attempt, outcome: Outcome, points
         st.streak += 1;
         st.lastCreditDay = a.day;
       }
-      if (st.streak >= target) {
+      const ft = CONFIG.fastTrack;
+      const fastTracked =
+        st.fastTrackFrom !== null && st.streak >= ft.solves && a.day >= addDays(st.fastTrackFrom, ft.minGapDays);
+      if (st.streak >= target || fastTracked) {
         st.stage = "mastered";
+        st.fastTrackFrom = null;
         st.ladderStep = st.restartStep;
         st.dueAt = addDays(a.day, ladder[st.ladderStep - 1]);
         // Already known before StudyDesk: the placement check gives its solve points, not the mastery bonus.
@@ -112,7 +120,10 @@ function step(skill: Skill, st: SkillState, a: Attempt, outcome: Outcome, points
     } else if (outcome === "miss") {
       st.streak = 0;
     }
-    st.dueAt = addDays(a.day, 1); // still learning: back the next study day
+    // Still learning: back the next study day. A first-sight solve instead
+    // comes back after the fast-track gap, so the second solve can master it.
+    const firstSight = outcome === "clean" && st.fastTrackFrom === a.day && st.streak === 1;
+    st.dueAt = addDays(a.day, firstSight ? CONFIG.fastTrack.minGapDays : 1);
     return;
   }
 
@@ -143,6 +154,7 @@ function step(skill: Skill, st: SkillState, a: Attempt, outcome: Outcome, points
     st.ladderStep = 0;
     st.lapses += 1;
     st.lastCreditDay = null;
+    st.fastTrackFrom = null;
     st.dueAt = addDays(a.day, 1);
   }
   // helped, slip_ok, slip_pending: unchanged

@@ -197,6 +197,48 @@ describe("streak rules", () => {
   });
 });
 
+describe("fast track (solved on first sight)", () => {
+  const s = skill({ difficulty: "normal" });
+  const st = (as: Attempt[]) => replay([s], as, []).states.get("chain")!;
+
+  it("one first-sight solve is not mastered and comes back after 3 days", () => {
+    const r = st([att(1)]);
+    expect(r.stage).toBe("learning");
+    expect(r.streak).toBe(1);
+    expect(r.dueAt).toBe(D(4));
+  });
+
+  it("two first-sight clean solves 3 days apart master the skill with the bonus", () => {
+    const r = replay([s], [att(1), att(4)], []);
+    const state = r.states.get("chain")!;
+    expect(state.stage).toBe("mastered");
+    expect(state.ladderStep).toBe(1);
+    expect(state.dueAt).toBe(D(7));
+    expect(r.points.filter((p) => p.kind === "mastered")).toHaveLength(1);
+  });
+
+  it("two clean solves too close together still need the full streak", () => {
+    expect(st([att(1), att(3)]).stage).toBe("learning");
+    expect(st([att(1), att(1), att(4)]).stage).toBe("mastered"); // same-day repeat doesn't break the track
+  });
+
+  it("anything but a clean solve closes the fast track", () => {
+    expect(st([att(1, { hintsUsed: 1 }), att(2), att(5)]).stage).toBe("learning");
+    expect(st([att(1), att(2, { verdict: "not_understood" }), att(5), att(8)]).stage).toBe("learning");
+    const a2 = att(2, { verdict: "slip" });
+    expect(replay([s], [att(1), a2, att(5)], [slipReview(a2, "confirmed")]).states.get("chain")!.stage).toBe("learning");
+  });
+
+  it("a relearned skill after a lapse never fast-tracks", () => {
+    const lapsedThenTwo = [att(1), att(2), att(3), att(6, { verdict: "not_understood" }), att(7), att(10)];
+    expect(st(lapsedThenTwo).stage).toBe("lapsed");
+  });
+
+  it("the placement check still masters on first sight", () => {
+    expect(st([att(1, { part: "check" })]).stage).toBe("mastered");
+  });
+});
+
 describe("due skills", () => {
   const s = skill({ difficulty: "normal" });
   it("a retained skill comes back once in the week before its exam", () => {
