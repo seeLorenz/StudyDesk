@@ -11,8 +11,8 @@ import { contentTypeOf, ImportError, parseBackupZip, prepareImport, relink } fro
 import { countDocs, diffSnapshots, toSnapshot, type Snapshot, type SnapshotWrite } from "../updates/layout";
 import { dataVersionOf, upgrade } from "../updates/migrations";
 import { validateSnapshot } from "../updates/validate";
-import { checkJobBody, emptyUpdates, keepBackups, parseCheckAnswer, planLoad, publishJobBody, type UpdateCheck, UPDATE_TIMEOUT_MS, readUpdates, type Backup, type Failure, type Pending, type ReleaseDoc, type UpdatesDoc } from "../updates/plan";
-import { APP_VERSION, DATA_VERSION } from "../updates/version";
+import { checkJobBody, emptyUpdates, keepBackups, parseCheckAnswer, planLoad, publishJobBody, type UpdateCheck, type MainBuild, UPDATE_TIMEOUT_MS, readUpdates, type Backup, type Failure, type Pending, type ReleaseDoc, type UpdatesDoc } from "../updates/plan";
+import { APP_VERSION, BUILD_ID, DATA_VERSION, DEV_CHANNEL } from "../updates/version";
 
 export type UpdateEnv = { db: DB; uid: string; assets: Claude.Assets | null };
 
@@ -50,7 +50,7 @@ export async function loadRelease(e: UpdateEnv): Promise<ReleaseDoc | null> {
   const s = await ref(e, "release").get();
   const d = s.exists ? (s.data() as Partial<ReleaseDoc>) : null;
   return d && typeof d.latest === "string"
-    ? { latest: d.latest, notes: typeof d.notes === "string" ? d.notes : null, dataVersion: typeof d.dataVersion === "number" ? d.dataVersion : null, checkedAt: Number(d.checkedAt) || 0, ...(Array.isArray(d.releases) ? { releases: d.releases } : {}) }
+    ? { latest: d.latest, notes: typeof d.notes === "string" ? d.notes : null, dataVersion: typeof d.dataVersion === "number" ? d.dataVersion : null, checkedAt: Number(d.checkedAt) || 0, ...(Array.isArray(d.releases) ? { releases: d.releases } : {}), ...(d.main && typeof d.main === "object" ? { main: d.main } : {}) }
     : null;
 }
 
@@ -130,7 +130,7 @@ export async function prepareOnLoad(onProgress: (line: string) => void): Promise
   const e = await updateEnv();
   if (!e) return { kind: "ok" };
   const doc = await loadUpdates(e);
-  const plan = planLoad(APP_VERSION, doc);
+  const plan = planLoad(APP_VERSION, doc, DATA_VERSION, BUILD_ID);
   if (plan.kind === "ok") return { kind: "ok" };
 
   if (plan.kind === "rolling-back")
@@ -240,6 +240,16 @@ export async function startUpdate(release: ReleaseDoc, onProgress: (line: string
   return fire(e, setup, { kind: "update", from: APP_VERSION, to: release.latest, jobId: null, startedAt: Date.now(), backupId: backup.assetId, notes: release.notes }, onProgress);
 }
 
+/** For developers: the newest build of main onto this same link (backup first, like an update). */
+export async function startDevUpdate(main: MainBuild, onProgress: (line: string) => void): Promise<Pending> {
+  const e = await updateEnv();
+  if (!e) throw new Error("Updates only work inside StudyDesk on claude.ai.");
+  onProgress("Checking that Claude sessions can start…");
+  const setup = await readyHandoff(e);
+  const backup = await makeBackup(e, onProgress);
+  return fire(e, setup, { kind: "update", from: APP_VERSION, to: DEV_CHANNEL, jobId: null, startedAt: Date.now(), backupId: backup.assetId, notes: main.notes }, onProgress);
+}
+
 /**
  * "Go back to vX": the same hand-off with the older release. With `restore`,
  * the old version puts the backup's data back when it arrives (anything done
@@ -254,11 +264,13 @@ export async function startGoBack(to: string, restore: boolean, backupId: string
   return fire(e, setup, { kind: "rollback", from: APP_VERSION, to, jobId: null, startedAt: Date.now(), backupId, restore }, onProgress);
 }
 
-async function fire(e: UpdateEnv, setup: HandoffSetup, pending: Pending, onProgress: (line: string) => void): Promise<Pending> {
+async function fire(e: UpdateEnv, setup: HandoffSetup, start: Pending, onProgress: (line: string) => void): Promise<Pending> {
+  const pending: Pending = { ...start, fromBuild: BUILD_ID };
   await changeUpdates(e, (d) => ({ ...d, pending }));
   onProgress("Starting a Claude session for the update…");
   try {
-    const job = await startJob(setup, pending.kind === "update" ? `Update StudyDesk to ${pending.to}` : `Put StudyDesk back to ${pending.to}`, publishJobBody(pending.to, pending.kind));
+    const title = pending.kind === "rollback" ? `Put StudyDesk back to ${pending.to}` : pending.to === DEV_CHANNEL ? "Load StudyDesk's newest build from main" : `Update StudyDesk to ${pending.to}`;
+    const job = await startJob(setup, title, publishJobBody(pending.to, pending.kind));
     const next = { ...pending, jobId: job.jobId };
     await changeUpdates(e, (d) => ({ ...d, pending: next }));
     return next;

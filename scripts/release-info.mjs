@@ -4,12 +4,13 @@
 //
 // Writes <releases folder>/<tag>/release.json and, when this tag is the newest
 // release, <releases folder>/latest.json, which the nightly run reads to offer
-// "Update to <tag>".
+// "Update to <tag>". The tag "main" is the newest build of main, for
+// developers: main/release.json gets the commit and never touches latest.json.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [tag, notesFile, root] = process.argv.slice(2);
-if (!/^v\d+(\.\d+)*$/.test(tag ?? "")) throw new Error(`Not a release tag: ${tag}`);
+if (tag !== "main" && !/^v\d+(\.\d+)*$/.test(tag ?? "")) throw new Error(`Not a release tag: ${tag}`);
 const parse = (v) => v.slice(1).split(".").map(Number);
 const newer = (a, b) => {
   const pa = parse(a);
@@ -22,6 +23,11 @@ if (!Number.isInteger(dataVersion)) throw new Error("DATA_VERSION not found in s
 const notes = existsSync(notesFile) ? readFileSync(notesFile, "utf8").trim() : "";
 const info = { version: tag, notes, dataVersion, builtAt: new Date().toISOString(), commit: process.env.GITHUB_SHA ?? null };
 writeFileSync(join(root, tag, "release.json"), JSON.stringify(info, null, 2) + "\n");
+if (tag === "main") {
+  if (!info.commit) throw new Error("A main build needs GITHUB_SHA");
+  console.log(`main → ${info.commit.slice(0, 7)}`);
+  process.exit(0);
+}
 const latestFile = join(root, "latest.json");
 const latest = existsSync(latestFile) ? JSON.parse(readFileSync(latestFile, "utf8")) : null;
 if (!latest?.version || latest.version === tag || newer(tag, latest.version)) {
