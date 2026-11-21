@@ -2139,7 +2139,8 @@ sup.sd-ref {
 .setup-run {
   margin-top: 22px;
 }
-.setup-main > .setup-card {
+.setup-main > .setup-card,
+.setup-thread > .setup-card {
   margin-top: 22px;
 }
 .setup-sheet h3 {
@@ -3977,6 +3978,71 @@ input::placeholder {
   }
   .setup-grid[data-narrow="chat"] > .setup-sheet,
   .setup-grid[data-narrow="sheet"] > .setup-main {
+    display: none;
+  }
+}
+
+/* After setup the side panel is "To do | Semester", opening on To do. */
+.side-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  margin: -4px -4px 14px;
+  border-radius: 10px;
+  background: var(--paper);
+}
+.side-tabs button {
+  flex: 1;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: none;
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.side-tabs button.is-on {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 15%);
+}
+.side-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--sunken);
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 18px;
+}
+.setup-sheet .setup-todo {
+  margin-top: 4px;
+}
+.setup-todo-count {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.sheet-course-map {
+  margin: 2px 0 8px;
+  font-size: 13px;
+}
+.sheet-course-map > summary {
+  cursor: pointer;
+  color: var(--ink-2);
+}
+.sheet-course-map[open] > summary {
+  margin-bottom: 6px;
+}
+.sheet-course-map .md {
+  font-size: 13.5px;
+}
+@media (max-width: 900px) {
+  /* The top switch already picks To do or Semester. */
+  .setup-page .side-tabs {
     display: none;
   }
 }

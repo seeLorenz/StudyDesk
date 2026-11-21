@@ -370,19 +370,27 @@ describe("setup to-do list", () => {
   };
   it("merges file requests into one upload item and keeps at most 3 questions per course", () => {
     const d = withQuestions(["Please upload the syllabus", "When is the exam?", "How is it graded?", "Which language?", "Is a calculator allowed?"]);
-    const items = setupTodo(d);
+    const items = setupTodo(d).filter((i) => i.key === "upload" || i.key.startsWith("q-"));
     expect(items.map((i) => i.key)).toEqual(["upload", "q-c1"]);
     expect(items[1].body.split("\n")).toHaveLength(3);
     expect(items[1].chatPrompt).toContain("1. When is the exam?");
   });
   it("asks for materials when a course was only estimated", () => {
-    expect(setupTodo(withQuestions([], "general")).map((i) => i.key)).toEqual(["upload"]);
+    expect(setupTodo(withQuestions([], "general")).map((i) => i.key)).toEqual(["upload", "dates", "conflicts"]);
     expect(asksForFiles("Could you share the current UE sheets?")).toBe(true);
     expect(asksForFiles("When is the exam?")).toBe(false);
   });
+  it("lists the dates and file conflicts for the student to check", () => {
+    const d = withQuestions([]);
+    const items = setupTodo(d);
+    const dates = items.find((i) => i.key === "dates")!;
+    expect(dates.title).toMatch(/^Check \d+ important dates?$/);
+    expect(dates.body).toContain("Say if any is wrong");
+    expect(items.find((i) => i.key === "conflicts")!.body).toContain("Your word was used");
+  });
   it("marks ticked items done and finds courses with new answers", () => {
     const d = { ...withQuestions(["When is the exam?"]), todoDone: ["q-c1"] };
-    expect(setupTodo(d)[0].done).toBe(true);
+    expect(setupTodo(d).find((i) => i.key === "q-c1")?.done).toBe(true);
     expect(staleCourses(d)).toHaveLength(0);
     d.facts = [{ id: "f", courseId: "c1", text: "exam on 28 Jan", addedAt: d.results.c1.finishedAt + 1 }];
     expect(staleCourses(d).map((c) => c.id)).toEqual(["c1"]);
