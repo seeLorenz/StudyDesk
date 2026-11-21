@@ -160,7 +160,7 @@ export function checkinTriggers(input: TriggerInput): Trigger[] {
     if (item.done || item.key === "dates" || item.key === "conflicts") continue;
     const cid = item.key.startsWith("q-") ? item.key.slice(2) : null;
     // Keyed by the question itself: a re-read that asks the same thing doesn't ask again.
-    add({ key: `todo:${item.key}:${hash(item.body)}`, kind: "needs_answer", courseId: cid, facts: item.chatPrompt });
+    add({ key: `todo:${item.key}:${hash(item.body + (item.subs ?? []).map((x) => x.text).join("|"))}`, kind: "needs_answer", courseId: cid, facts: item.chatPrompt });
   }
   for (const j of jobs) {
     if (j.status === "running") continue;

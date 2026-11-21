@@ -372,7 +372,7 @@ describe("setup to-do list", () => {
     const d = withQuestions(["Please upload the syllabus", "When is the exam?", "How is it graded?", "Which language?", "Is a calculator allowed?"]);
     const items = setupTodo(d).filter((i) => i.key === "upload" || i.key.startsWith("q-"));
     expect(items.map((i) => i.key)).toEqual(["upload", "q-c1"]);
-    expect(items[1].body.split("\n")).toHaveLength(3);
+    expect(items[1].subs).toHaveLength(3);
     expect(items[1].chatPrompt).toContain("1. When is the exam?");
   });
   it("asks for materials when a course was only estimated", () => {
@@ -387,6 +387,22 @@ describe("setup to-do list", () => {
     expect(dates.title).toMatch(/^Check \d+ important dates?$/);
     expect(dates.body).toContain("Say if any is wrong");
     expect(items.find((i) => i.key === "conflicts")!.body).toContain("Your word was used");
+  });
+  it("ticks single questions off and updates the item live", () => {
+    const d = { ...withQuestions(["When is the exam?", "How is it graded?", "Is a calculator allowed?"]), setupStep: "done" as const };
+    const item = setupTodo(d).find((t) => t.key === "q-c1")!;
+    expect(item.title).toMatch(/3 questions$/);
+    const first = item.subs![0].key;
+    const r = applySheetUpdate(d, profile, { facts: [{ course: "c1", text: "exam on 28 Jan" }], todoDone: [first] });
+    const after = setupTodo(r.draft).find((t) => t.key === "q-c1")!;
+    expect(after.done).toBe(false);
+    expect(after.title).toMatch(/2 of 3 questions left$/);
+    expect(after.chatPrompt).not.toContain("When is the exam?");
+    const all = applySheetUpdate(r.draft, profile, { todoDone: after.subs!.map((x) => x.key) });
+    expect(setupTodo(all.draft).find((t) => t.key === "q-c1")!.done).toBe(true);
+    // opening one part again opens the item
+    const back = applySheetUpdate(all.draft, profile, { todoOpen: [first] });
+    expect(setupTodo(back.draft).find((t) => t.key === "q-c1")!.done).toBe(false);
   });
   it("lets the setup chat tick items off itself", () => {
     const d = { ...withQuestions(["When is the exam?"]), setupStep: "done" as const };

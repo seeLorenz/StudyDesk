@@ -1253,8 +1253,12 @@ function TodoList({ draft, md, update, onStart }: StepProps & { onStart: () => v
   const left = todo.filter((t) => !t.done);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const shownKey = openKey ?? left[0]?.key ?? null;
+  // Unticking an item opens all its parts; unticking a part opens its item.
   const tick = (key: string, on: boolean) =>
-    update((d) => ({ ...d, todoDone: on ? [...new Set([...(d.todoDone ?? []), key])] : (d.todoDone ?? []).filter((k) => k !== key) }));
+    update((d) => ({
+      ...d,
+      todoDone: on ? [...new Set([...(d.todoDone ?? []), key])] : (d.todoDone ?? []).filter((k) => k !== key && k !== key.split(":")[0] && !k.startsWith(`${key}:`)),
+    }));
   const startInChat = (item: TodoItem) => {
     const msg: SetupMessage = { id: uid(), role: "assistant", text: item.chatPrompt, createdAt: Date.now() };
     update((d) => ({ ...d, chat: [...(d.chat ?? []), msg] }));
@@ -1278,6 +1282,16 @@ function TodoList({ draft, md, update, onStart }: StepProps & { onStart: () => v
             {shownKey === t.key && (
               <div className="setup-todo-body">
                 {md(`todo-${t.key}`, t.body, `the to-do list after setup ("${t.title}")`)}
+                {t.subs && (
+                  <ul className="setup-todo-subs">
+                    {t.subs.map((x) => (
+                      <li key={x.key} className={x.done ? "is-done" : ""}>
+                        <input type="checkbox" checked={x.done} aria-label={x.done ? "Done" : "Mark done"} onChange={(e) => tick(x.key, e.target.checked)} />
+                        <div className="setup-todo-sub">{md(`todo-${x.key}`, x.text, `the to-do list after setup ("${t.title}")`)}</div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <button type="button" className="mini-btn" onClick={() => startInChat(t)}>
                   {t.key === "upload" ? "Add files in the chat" : "Answer in the chat"}
                 </button>

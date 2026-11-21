@@ -311,6 +311,14 @@ describe("changing the nightly run through the StudyDesk chat", () => {
     expect(setupTodo(r.desk.draft).find((t) => t.key === key)?.done).toBe(true);
     expect(r.change?.lines[0]).toMatch(/^To do: ticked off/);
     expect(applyOps({ draft: d, profile }, [{ op: "tick_todo", key: "nope" }], { studentWords: "" }).errors[0]).toContain("no to-do");
+    const withParts = setupTodo(d).find((t) => t.subs && t.subs.length > 1);
+    if (withParts) {
+      const part = applyOps({ draft: d, profile }, [{ op: "tick_todo", key: withParts.subs![0].key }], { studentWords: "" });
+      expect(part.errors).toEqual([]);
+      const now = setupTodo(part.desk.draft).find((t) => t.key === withParts.key)!;
+      expect(now.subs![0].done).toBe(true);
+      expect(now.done).toBe(false);
+    }
   });
 
   it("treats the calendar as live unless the student says otherwise", () => {

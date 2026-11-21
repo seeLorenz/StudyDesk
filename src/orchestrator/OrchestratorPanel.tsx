@@ -383,7 +383,7 @@ export function OrchestratorPanel(props: Props) {
     if (!seed && !needsSummary(messagesRef.current, mem, today)) return;
     summarizing.current = true;
     try {
-      const text = await askClaude(summaryTurns(mem, fresh, seed), { tier: "default" });
+      const text = await askClaude(summaryTurns(mem, fresh, seed), { tier: "default", background: true });
       const last = fresh[fresh.length - 1]?.createdAt ?? mem.coversUpTo;
       saveState((s) => ({ ...s, memory: { text: text.trim(), updatedAt: Date.now(), coversUpTo: last, day: today } }));
     } catch {
@@ -672,7 +672,7 @@ export function OrchestratorPanel(props: Props) {
       });
       if (!triggers.length) return;
       const facts = triggers.map((t) => t.facts);
-      const text = env.live ? await askClaude(checkinTurns(stateRef.current.memory, facts, snapshot()), {}) : localCheckin(facts);
+      const text = env.live ? await askClaude(checkinTurns(stateRef.current.memory, facts, snapshot()), { background: true }) : localCheckin(facts);
       const msg: OrchMessage = { id: uid(), role: "assistant", text: text.trim(), createdAt: Date.now(), checkin: true };
       saveMessages((ms) => [...ms, msg]);
       const sent: Notification[] = triggers.map((t) => ({ ...t, day: today, at: Date.now(), messageId: msg.id, seenAt: open ? Date.now() : null }));
@@ -706,7 +706,7 @@ export function OrchestratorPanel(props: Props) {
       if (!last || last.announced || last.to !== APP_VERSION) return;
       let text = plainNote(last);
       if (env.live && last.kind === "update" && last.notes?.trim()) {
-        const note = await askClaude(whatsNewTurns(last, stateRef.current.memory.text), {}).catch(() => "");
+        const note = await askClaude(whatsNewTurns(last, stateRef.current.memory.text), { background: true }).catch(() => "");
         if (note.trim()) text = `**StudyDesk is updated to ${last.to}.** All your data came along.\n\n${note.trim()}`;
       }
       await markAnnounced();

@@ -417,16 +417,21 @@ export function applyOps(
       }
       case "tick_todo": {
         const key = str(op.key);
-        const item = setupTodo(desk.draft).find((t) => t.key === key || t.title === key);
-        if (!item) {
-          errors.push(`tick_todo: no to-do "${key}"; use a key from openToDo.`);
+        const todo = setupTodo(desk.draft);
+        const item = todo.find((t) => t.key === key || t.title === key);
+        const sub = item ? undefined : todo.flatMap((t) => t.subs ?? []).find((x) => x.key === key);
+        if (!item && !sub) {
+          errors.push(`tick_todo: no to-do "${key}"; use a key from openToDo (an item or one of its parts).`);
           break;
         }
+        const target = item ? { key: item.key, label: item.title, done: item.done } : { key: sub!.key, label: sub!.text.replace(/\*\*/g, ""), done: sub!.done };
         const on = !(op.done === false || op.done === "false");
-        if (item.done === on) break;
+        if (target.done === on) break;
         const list = desk.draft.todoDone ?? [];
-        touch("todoDone", on ? [...new Set([...list, item.key])] : list.filter((k) => k !== item.key));
-        lines.push(on ? `To do: ticked off "${item.title}"` : `To do: "${item.title}" is open again`);
+        // Opening a part again also opens its item when the whole item was ticked.
+        const parent = target.key.split(":")[0];
+        touch("todoDone", on ? [...new Set([...list, target.key])] : list.filter((k) => k !== target.key && k !== parent));
+        lines.push(on ? `To do: ticked off "${target.label}"` : `To do: "${target.label}" is open again`);
         break;
       }
       case "set_nightly": {

@@ -96,6 +96,8 @@ The organization agent's own design (how it reads, maps and decides) is its own 
 
 ## Notifications and check-ins
 
+Check-ins, memory summaries and update notes are background work: they never run while another Claude call from the page is running (they're skipped and tried again at the next check), so they never compete with what the student just asked. When Claude answers "busy" before anything was written, a call the student is waiting on is asked again after 8 s and 20 s before the error is shown.
+
 The Orchestrator speaks first, like a good teacher or assistant would. **Code decides when** there's a reason (each trigger is a plain rule on the stats, so it's testable and never guessed); **Claude writes what to say**, short and personal.
 
 | Trigger (checked by code) | Example of what the Orchestrator says |
