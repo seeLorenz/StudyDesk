@@ -6,6 +6,8 @@
 // missing) and collections by kind ({ id: document }). It is also the shape of
 // studydesk-data.json in the export zip, so old zips read the same way.
 
+import { joinAll, PARTS_COL, PARTS_DOC, splitDoc } from "../platform/bigDoc";
+
 export const DOC_KINDS = {
   profile: "profile",
   setup: "onboarding",
@@ -105,6 +107,34 @@ export function diffSnapshots(before: Snapshot, after: Snapshot): SnapshotWrite[
     for (const id of Object.keys(a)) if (!(id in b)) deletes.push({ path: docPath(k, id), data: null });
   }
   return [...sets, ...deletes];
+}
+
+/** A snapshot read straight from storage, with its split documents joined (src/platform/bigDoc.ts). */
+export function joinSnapshot(s: Snapshot, parts: Record<string, Rec>): Snapshot {
+  const out = { ...s } as Record<string, unknown>;
+  for (const k of DOC_KIND_LIST) out[k] = joinAll(s[k], parts);
+  for (const k of COLLECTION_KIND_LIST) out[k] = Object.fromEntries(Object.entries(s[k]).map(([id, d]) => [id, joinAll(d, parts)]));
+  return out as Snapshot;
+}
+
+/**
+ * Writes turned into what storage can hold: a big document becomes its parts
+ * (written first) and a main document. `have` holds part ids already stored,
+ * which aren't written again. Parts are never deleted here (the page sweeps them).
+ */
+export function splitWrites(writes: SnapshotWrite[], have: Set<string> = new Set()): SnapshotWrite[] {
+  const parts: SnapshotWrite[] = [];
+  const rest: SnapshotWrite[] = [];
+  for (const w of writes) {
+    if (!w.data) {
+      rest.push(w);
+      continue;
+    }
+    const { main, parts: ps } = splitDoc(w.path.join("."), w.data);
+    for (const [id, p] of Object.entries(ps)) if (!have.has(id)) parts.push({ path: [PARTS_DOC, PARTS_COL, id], data: p });
+    rest.push({ path: w.path, data: main });
+  }
+  return [...parts, ...rest];
 }
 
 /** How many documents a snapshot holds. */

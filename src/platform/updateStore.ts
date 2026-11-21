@@ -8,7 +8,7 @@ import { host } from "./host";
 import { checkHandoff, jobProgress, readJobDoc, removeJob, startJob, type HandoffSetup, type JobProgress } from "./handoff";
 import { readSnapshot } from "./backup";
 import { contentTypeOf, ImportError, parseBackupZip, prepareImport, relink } from "../updates/importZip";
-import { countDocs, diffSnapshots, toSnapshot, type Snapshot, type SnapshotWrite } from "../updates/layout";
+import { countDocs, diffSnapshots, splitWrites, toSnapshot, type Snapshot, type SnapshotWrite } from "../updates/layout";
 import { dataVersionOf, upgrade } from "../updates/migrations";
 import { validateSnapshot } from "../updates/validate";
 import { checkJobBody, emptyUpdates, keepBackups, parseCheckAnswer, planLoad, publishJobBody, type UpdateCheck, UPDATE_TIMEOUT_MS, readUpdates, type Backup, type Failure, type Pending, type ReleaseDoc, type UpdatesDoc } from "../updates/plan";
@@ -97,6 +97,8 @@ export async function loadBackup(assetId: string): Promise<Snapshot> {
 /** Applies writes one by one. On a failure it throws with how many were already saved. */
 export async function applyWrites(e: UpdateEnv, writes: SnapshotWrite[], onProgress?: (line: string) => void): Promise<void> {
   let done = 0;
+  // Big documents go in as parts (src/platform/bigDoc.ts).
+  writes = splitWrites(writes);
   try {
     for (const w of writes) {
       const r = ref(e, w.path.join("/"));
