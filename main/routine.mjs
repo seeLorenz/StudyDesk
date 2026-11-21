@@ -38,6 +38,36 @@ function deferredAsk(answers) {
   };
 }
 const isPending = (e) => e instanceof AnswerPending || !!e && typeof e === "object" && "cause" in e && e.cause !== e && isPending(e.cause);
+function guard(real, path) {
+  return new Proxy({}, {
+    has: (_t, prop) => prop in real,
+    get(_t, prop) {
+      const v = real[prop];
+      if (typeof v !== "function") return v;
+      const name = String(prop);
+      return (...args) => {
+        const out = v.apply(real, args);
+        if (out && typeof out === "object" && (name === "doc" || name === "collection")) {
+          const sub = out.path ?? `${path}/${String(args[0] ?? "")}`;
+          return guard(out, sub);
+        }
+        return out;
+      };
+    }
+  });
+}
+function window_() {
+  const c = globalThis.claude;
+  return c?.use ? c : null;
+}
+function host(opts = {}) {
+  const c = window_();
+  if (!c) return null;
+  if (opts.raw) return c;
+  return {
+    use: (name) => c.use(name).then((ns) => name === "db" && ns ? guard(ns, "") : ns)
+  };
+}
 function addDays(day, n) {
   const [y, m, d] = day.split("-").map(Number);
   const t = new Date(Date.UTC(y, m - 1, d + n));
@@ -55,6 +85,9 @@ function median(xs) {
   const s = [...xs].sort((a, b) => a - b);
   const mid = s.length >> 1;
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+function busyFromAhead(ahead, day) {
+  return ahead?.busy && Object.prototype.hasOwnProperty.call(ahead.busy, day) ? ahead.busy[day] : void 0;
 }
 const CONFIG = {
   defaultStreakTarget: 3,
@@ -860,7 +893,8 @@ function buildSemester(draft, profile, now = Date.now()) {
     timetable: draft.timetable,
     studyGoal: draft.studyGoal,
     studyGoalSource: "student",
-    calendarSync: !!draft.calendarImportedAt,
+    // Calendar data is live unless the student said otherwise.
+    calendarSync: !!draft.calendarImportedAt && draft.calendarLive !== false,
     gradeRules: res.flatMap((r) => r.gradeRules ? [r.gradeRules] : []),
     uploads: draft.uploads,
     catalog: res.flatMap((r) => r.catalog),
@@ -1229,6 +1263,21 @@ function applyOps(desk0, ops, o) {
         lines.push(`Noted${c ? ` for ${c.name}` : ""}: "${text}"`);
         break;
       }
+      case "set_calendar_live": {
+        const v = op.on === true || op.on === "true" ? true : op.on === false || op.on === "false" ? false : null;
+        if (v === null) {
+          errors.push("set_calendar_live: on must be true or false.");
+          break;
+        }
+        if (!desk.draft.calendarImportedAt) {
+          errors.push("set_calendar_live: no calendar was imported; use read_calendar first.");
+          break;
+        }
+        if (desk.draft.calendarLive !== false === v) break;
+        touch("calendarLive", v);
+        lines.push(v ? "Calendar: followed live again, each day's quest is sized from it" : "Calendar: no longer followed day by day, quests go by the weekly timetable");
+        break;
+      }
       case "set_nightly": {
         const cur = nightlySettings(desk.profile.nightly);
         const next = { ...cur };
@@ -1375,36 +1424,6 @@ function syncSemester(draft, profile, current, now = Date.now()) {
     placementQuestId: current.placementQuestId,
     studyGoalSource: goalChanged ? "student" : current.studyGoalSource ?? "student",
     studyGoalDecidedAt: current.studyGoalDecidedAt ?? (goalChanged ? now : void 0)
-  };
-}
-function guard(real, path) {
-  return new Proxy({}, {
-    has: (_t, prop) => prop in real,
-    get(_t, prop) {
-      const v = real[prop];
-      if (typeof v !== "function") return v;
-      const name = String(prop);
-      return (...args) => {
-        const out = v.apply(real, args);
-        if (out && typeof out === "object" && (name === "doc" || name === "collection")) {
-          const sub = out.path ?? `${path}/${String(args[0] ?? "")}`;
-          return guard(out, sub);
-        }
-        return out;
-      };
-    }
-  });
-}
-function window_() {
-  const c = globalThis.claude;
-  return c?.use ? c : null;
-}
-function host(opts = {}) {
-  const c = window_();
-  if (!c) return null;
-  if (opts.raw) return c;
-  return {
-    use: (name) => c.use(name).then((ns) => name === "db" && ns ? guard(ns, "") : ns)
   };
 }
 const MODEL = "claude-opus-5-5";
@@ -2303,7 +2322,7 @@ async function runNightly(input, d) {
     if (semester && semester.id === desk.draft.id) semester = syncSemester(desk.draft, desk.profile, semester, now);
   }
   let questId = null;
-  const q = settings.quest ? await writeTomorrow(semester, records, mastery, tomorrow, now, d, log) : { pending: false, record: null };
+  const q = settings.quest ? await writeTomorrow(semester, input.calendar ?? null, records, mastery, tomorrow, now, d, log) : { pending: false, record: null };
   if (!settings.quest) log.push("Writing the quest overnight is turned off; it's written when you open StudyDesk.");
   if (q.pending) return { kind: "pending", log };
   if (q.record) {
@@ -2440,7 +2459,14 @@ async function organize(input, desk, org, mastery, d, log) {
   for (const k of s.v.skipped) log.push(`Left for you: ${k}.`);
   return out;
 }
-async function writeTomorrow(semester, records, mastery, tomorrow, now, d, log) {
+function sizedBy(semester, calendar, busy, now) {
+  if (!semester.calendarSync) return "It goes by your weekly timetable.";
+  if (busy === void 0 || !calendar) return "It goes by your weekly timetable: your calendar hasn't been read for tomorrow yet (it's read whenever StudyDesk is open).";
+  const h = Math.max(0, Math.round((now - calendar.readAt) / 36e5));
+  const ago = h < 1 ? "less than an hour ago" : h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
+  return `It's sized from your calendar, last read ${ago}.`;
+}
+async function writeTomorrow(semester, calendar, records, mastery, tomorrow, now, d, log) {
   const out = { pending: false, record: null };
   if (!semester) {
     log.push("No semester yet, so no quest was written.");
@@ -2454,7 +2480,9 @@ async function writeTomorrow(semester, records, mastery, tomorrow, now, d, log) 
     log.push("Tomorrow's quest already exists.");
     return out;
   }
+  const calendarBusyMinutes = semester.calendarSync ? busyFromAhead(calendar, tomorrow) : void 0;
   const res = planQuest({
+    calendarBusyMinutes,
     semester,
     today: tomorrow,
     nowLocal: `${tomorrow}T00:00`,
@@ -2479,7 +2507,7 @@ async function writeTomorrow(semester, records, mastery, tomorrow, now, d, log) 
     const quest = await writeQuest(res.quest, writer, void 0, { concurrency: res.quest.parts.length });
     out.record = { quest, progress: emptyProgress(quest.id) };
     const minutes = quest.plannedMinutes;
-    log.push(`Wrote tomorrow's quest: ${course?.name ?? "quest"}, ${quest.parts.length} ${quest.parts.length === 1 ? "part" : "parts"}, about ${minutes} min. It goes by your weekly timetable; your calendar isn't read at night.`);
+    log.push(`Wrote tomorrow's quest: ${course?.name ?? "quest"}, ${quest.parts.length} ${quest.parts.length === 1 ? "part" : "parts"}, about ${minutes} min. ${sizedBy(semester, calendar, calendarBusyMinutes, now)}`);
   } catch (e) {
     if (isPending(e)) out.pending = true;
     else log.push(`Tomorrow's quest couldn't be written (${e?.message ?? String(e)}). StudyDesk writes it when you open it.`);
@@ -3107,6 +3135,7 @@ async function main() {
     profile,
     draft: doc(all, "onboarding"),
     semester: doc(all, "semester"),
+    calendar: doc(all, "calendar"),
     records: collection(all, "quests/records").map((x) => x.data),
     mastery,
     outbox: collection(all, "routine/outbox").map((x) => x.data),
