@@ -82,6 +82,14 @@ The export zip now also holds `files.json` (which zip file was which original) a
 
 Installing is the same as updating, without a link: the student's own session clones the latest release and publishes it as a new artifact owned by the student. How a new student gets that first session started is part of the install flow, not designed yet.
 
+## Big documents
+
+The artifact database holds at most 256 KiB per document. A real semester outgrows that: Lorenz's first setup (11 courses, about 600 skills, a 3 GB import's file list) reached 385 KB for the setup and 324 KB for the semester, and the final save failed. So every place that reads or writes the student's data goes through `src/platform/bigDoc.ts`. A document over 200 KB has its largest lists moved into part documents (`parts/docs/<id>`), and the main document lists them under `__parts`. Readers join them back, so everything above storage sees whole documents, and backups and exports hold the joined form.
+
+- Part ids carry a hash of their content: an unchanged part is never written again, and a changed one always gets a new id. Parts are written before the main document, so a reader never meets a main document whose parts aren't there yet.
+- Old parts are removed by the page (once per load) only when no main document refers to them and they are over an hour old. The nightly program and updates never delete parts.
+- No data version change: documents without `__parts` read as before.
+
 ## Notes for other modules
 
 - **Orchestrator:** the "Update to vX" notice, the what's-new note, and "go back" with its warning. One new page tool: `update_studydesk`.

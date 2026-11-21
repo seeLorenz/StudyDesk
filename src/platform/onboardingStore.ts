@@ -9,6 +9,7 @@
 // Elsewhere it falls back to this browser's localStorage.
 
 import { host } from "./host";
+import { PARTS_COL, PARTS_DOC, readBig, sweepParts, writeBig, type Written } from "./bigDoc";
 import type { Semester } from "../quests/types";
 import type { Profile, SemesterDraft } from "../onboarding/types";
 
@@ -71,6 +72,10 @@ function cloudStore(db: DB, uid: string, assets: Claude.Assets | null): Onboardi
   const draft = db.doc(`data/users/${uid}/onboarding`);
   const uploads = db.doc(`data/users/${uid}/files`).collection("uploads");
   const archive = db.doc(`data/users/${uid}/archive`).collection("semesters");
+  // A big setup is split into parts (src/platform/bigDoc.ts).
+  const parts = db.doc(`data/users/${uid}/${PARTS_DOC}`).collection(PARTS_COL);
+  const written: Written = new Map();
+  let swept = false;
   // One draft write at a time; only the newest pending version is written.
   let running = false;
   let next: SemesterDraft | null = null;
@@ -85,7 +90,18 @@ function cloudStore(db: DB, uid: string, assets: Claude.Assets | null): Onboardi
       waiters = [];
       let err: unknown;
       try {
-        await draft.set(plain(d));
+        await writeBig("onboarding", plain(d), draft, parts, written);
+        if (!swept) {
+          swept = true;
+          void sweepParts(parts, async () => {
+            const one = async (r: typeof draft) => {
+              const x = await r.get();
+              return x.exists ? (x.data() as Record<string, unknown>) : null;
+            };
+            const archived = (await archive.get()).docs.filter((x) => x.exists).map((x) => x.data() as Record<string, unknown>);
+            return [await one(draft), await one(db.doc(`data/users/${uid}/semester`)), ...archived];
+          });
+        }
       } catch (e) {
         err = e;
       }
@@ -103,8 +119,7 @@ function cloudStore(db: DB, uid: string, assets: Claude.Assets | null): Onboardi
       await profile.set(plain(p));
     },
     async loadDraft() {
-      const s = await draft.get();
-      return s.exists ? (s.data() as unknown as SemesterDraft) : null;
+      return (await readBig(draft, parts)) as unknown as SemesterDraft | null;
     },
     saveDraft(d) {
       next = d;
@@ -137,7 +152,7 @@ function cloudStore(db: DB, uid: string, assets: Claude.Assets | null): Onboardi
       }
     },
     async archiveSemester(s) {
-      await archive.doc(s.id).set(plain(s));
+      await writeBig(`archive.${s.id}`, plain(s), archive.doc(s.id), parts, new Map());
     },
   };
 }
@@ -215,4 +230,14 @@ export async function offerDownload(filename: string, data: string): Promise<"sa
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
   return "saved";
+}
+
+/** What a failed save says. Database errors aren't Claude's, so they never get Claude's wording. */
+export function saveErrorCopy(e: unknown): string {
+  const err = (e ?? {}) as { code?: unknown; message?: unknown };
+  const code = typeof err.code === "string" ? err.code : "";
+  const msg = typeof err.message === "string" ? err.message : "";
+  if (/large|size|quota|limit|exceed/i.test(`${code} ${msg}`)) return "a record is bigger than the database allows. Your work is still open in this window; don't close it, and report this.";
+  if (/rate|busy|too_many/i.test(code)) return "the database is busy. Wait a moment, then try again.";
+  return msg || code || "the database didn't answer. Try again.";
 }
