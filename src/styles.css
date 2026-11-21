@@ -3928,6 +3928,22 @@ input::placeholder {
 .version-panel .update-card {
   margin-bottom: 12px;
 }
+.version-dev {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line, rgba(0, 0, 0, 0.08));
+}
+.version-dev summary {
+  cursor: pointer;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.version-dev p {
+  margin: 8px 0;
+}
+.version-dev code {
+  font-size: 11px;
+}
 .is-focus .version { display: none; }
 
 /* Narrow screens: the setup page switches between the chat and the sheet

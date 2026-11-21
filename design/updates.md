@@ -41,11 +41,12 @@ The page has no internet, so it can't look. The **nightly run** already starts a
 
 ### Checking by hand
 
-The version shows as a small grey label next to "StudyDesk" in the sidebar (`v1.1.1`, or `dev`). Clicking it opens a small panel that works any time, also during setup:
+The version shows as a small grey label next to "StudyDesk" in the sidebar (`v1.1.1`, or `dev · 1a2b3c4` for a build of main). Clicking it opens a small panel that works any time, also during setup:
 
 - **Check for updates** starts a quick cloud session (the same "StudyDesk agent" task) that reads every `release.json` on the `releases` branch and answers with the list. Code reads the answer and saves it as the `release` document, so "Update to vX" shows within a minute or two instead of after the next nightly run.
 - **Update to vX** (the same button as in Organize) when a newer release can read the data.
 - **What's new**: the notes of the installed release and every newer one, newest first, from the tags' messages. The nightly run saves the same list.
+- **For developers** (folded away): every push to main is also built, into `main/` on the releases branch, with the commit and the commit's first line as its note. It never changes `latest.json`, so students are never offered it. The panel shows the newest build of main and a "Load the newest build from main" button, the same hand-off as an update: backup first, same link, the upgrade steps run on arrival. It isn't offered when that commit is already running, or when its data version is older than the data. Two dev builds are told apart by their commit (`fromBuild`, version@commit), so the page knows the new build has arrived.
 
 ### Where the update state lives
 
@@ -81,6 +82,14 @@ The export zip now also holds `files.json` (which zip file was which original) a
 ## New students
 
 Installing is the same as updating, without a link: the student's own session clones the latest release and publishes it as a new artifact owned by the student. How a new student gets that first session started is part of the install flow, not designed yet.
+
+## Big documents
+
+The artifact database holds at most 256 KiB per document. A real semester outgrows that: Lorenz's first setup (11 courses, about 600 skills, a 3 GB import's file list) reached 385 KB for the setup and 324 KB for the semester, and the final save failed. So every place that reads or writes the student's data goes through `src/platform/bigDoc.ts`. A document over 200 KB has its largest lists moved into part documents (`parts/docs/<id>`), and the main document lists them under `__parts`. Readers join them back, so everything above storage sees whole documents, and backups and exports hold the joined form.
+
+- Part ids carry a hash of their content: an unchanged part is never written again, and a changed one always gets a new id. Parts are written before the main document, so a reader never meets a main document whose parts aren't there yet.
+- Old parts are removed by the page (once per load) only when no main document refers to them and they are over an hour old. The nightly program and updates never delete parts.
+- No data version change: documents without `__parts` read as before.
 
 ## Notes for other modules
 

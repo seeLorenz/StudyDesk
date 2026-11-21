@@ -6,7 +6,7 @@ import { compareVersions, newestRelease, parseVersion } from "../src/updates/ver
 import { countDocs, diffSnapshots, docPath, emptySnapshot, kindOf, toSnapshot, type Snapshot } from "../src/updates/layout";
 import { dataVersionOf, mapDocs, upgrade, type Step } from "../src/updates/migrations";
 import { validateSnapshot } from "../src/updates/validate";
-import { checkJobBody, emptyUpdates, goBackTarget, keepBackups, LIST_RELEASES_SCRIPT, offer, parseCheckAnswer, planLoad, publishJobBody, readUpdates, releaseDocFrom, whatsNewList, type Pending, type UpdatesDoc } from "../src/updates/plan";
+import { checkJobBody, devOffer, emptyUpdates, goBackTarget, keepBackups, LIST_RELEASES_SCRIPT, offer, parseCheckAnswer, planLoad, publishJobBody, readUpdates, releaseDocFrom, whatsNewList, type Pending, type UpdatesDoc } from "../src/updates/plan";
 import { contentTypeOf, parseBackupZip, prepareImport, relink } from "../src/updates/importZip";
 import { parseLatest, tagsFromLsRemote } from "../src/routine/release";
 import { whatsNewTurns, plainNote } from "../src/updates/whatsNew";
@@ -318,5 +318,47 @@ describe("checking for updates by hand, and what's new", () => {
   it("keeps a running check in the update state", () => {
     expect(readUpdates({ check: { jobId: "j1", startedAt: 5 } }).check).toEqual({ jobId: "j1", startedAt: 5 });
     expect(readUpdates({ check: { nope: 1 } }).check).toBeNull();
+  });
+});
+
+describe("the newest build of main, for developers", () => {
+  const list = [
+    { version: "v1", notes: "First", dataVersion: 1 },
+    { version: "main", commit: "abcdef1234567", builtAt: "2026-11-21T10:00:00Z", notes: "Fix the sidebar\n", dataVersion: 1 },
+  ];
+
+  it("reads main/release.json next to the releases", () => {
+    const r = releaseDocFrom(list, 5)!;
+    expect(r.latest).toBe("v1");
+    expect(r.releases!.map((x) => x.version)).toEqual(["v1"]);
+    expect(r.main).toEqual({ commit: "abcdef1", builtAt: "2026-11-21T10:00:00Z", notes: "Fix the sidebar", dataVersion: 1 });
+    expect(releaseDocFrom([list[0]], 5)!.main).toBeNull();
+  });
+
+  it("offers it unless that build is running or it can't read the data", () => {
+    const r = releaseDocFrom(list, 5)!;
+    const doc = emptyUpdates();
+    expect(devOffer("", r, doc)?.commit).toBe("abcdef1");
+    expect(devOffer("1234567", r, doc)?.commit).toBe("abcdef1");
+    expect(devOffer("abcdef1", r, doc)).toBeNull();
+    expect(devOffer("", r, { ...doc, dataVersion: 2 })).toBeNull();
+    expect(devOffer("", null, doc)).toBeNull();
+  });
+
+  it("tells two dev builds apart on load by their commit", () => {
+    const pending: Pending = { kind: "update", from: "dev", fromBuild: "dev@1234567", to: "main", jobId: "j", startedAt: 1, backupId: "b" };
+    const doc: UpdatesDoc = { ...emptyUpdates(), pending };
+    expect(planLoad("dev", doc, 1, "dev@1234567").kind).toBe("ok");
+    const arrived = planLoad("dev", doc, 1, "dev@abcdef1");
+    expect(arrived.kind).toBe("upgrade");
+    // Older pendings without fromBuild still compare the version.
+    const old: UpdatesDoc = { ...emptyUpdates(), pending: { ...pending, fromBuild: undefined, from: "v1", to: "v1.1" } };
+    expect(planLoad("v1.1", old, 1, "v1.1@abcdef1").kind).toBe("upgrade");
+  });
+
+  it("asks the session for the main/ folder", () => {
+    const body = publishJobBody("main", "update");
+    expect(body).toContain("Load the newest build from main");
+    expect(body).toContain("/main/");
   });
 });

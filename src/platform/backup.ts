@@ -14,7 +14,8 @@
 import { host } from "./host";
 import { zipSync, strToU8 } from "fflate";
 
-import { COLLECTION_KINDS, COLLECTION_KIND_LIST, DOC_KINDS, DOC_KIND_LIST, emptySnapshot, type CollectionKind, type Snapshot } from "../updates/layout";
+import { COLLECTION_KINDS, COLLECTION_KIND_LIST, DOC_KINDS, DOC_KIND_LIST, emptySnapshot, joinSnapshot, type CollectionKind, type Snapshot } from "../updates/layout";
+import { joinAll, PARTS_COL, PARTS_DOC } from "./bigDoc";
 import { APP_VERSION } from "../updates/version";
 import { dataVersionOf } from "../updates/migrations";
 
@@ -57,7 +58,13 @@ export async function collectData(): Promise<Record<string, unknown>> {
   return { mode: "cloud", ...(await readSnapshot(c.db, c.uid)) };
 }
 
-/** Reads every kind in layout.ts for one student. */
+/** Every part of a split document (src/platform/bigDoc.ts), by id. */
+async function readParts(db: DB, uid: string): Promise<Record<string, Record<string, unknown>>> {
+  const snap = await db.doc(`data/users/${uid}/${PARTS_DOC}`).collection(PARTS_COL).get();
+  return Object.fromEntries(snap.docs.filter((d) => d.exists).map((d) => [d.id, d.data() as Record<string, unknown>]));
+}
+
+/** Reads every kind in layout.ts for one student. Split documents come back whole. */
 export async function readSnapshot(db: DB, uid: string): Promise<Snapshot> {
   const base = `data/users/${uid}`;
   const out = emptySnapshot() as Record<string, unknown>;
@@ -70,7 +77,7 @@ export async function readSnapshot(db: DB, uid: string): Promise<Snapshot> {
     const snap = await db.doc(`${base}/${doc}`).collection(col).get();
     out[key] = Object.fromEntries(snap.docs.filter((d) => d.exists).map((d) => [d.id, d.data()]));
   }
-  return out as Snapshot;
+  return joinSnapshot(out as Snapshot, await readParts(db, uid));
 }
 
 /** The original files referenced by the setup, the semester and archived semesters. */
@@ -194,6 +201,8 @@ export async function freshStart(keepChats: boolean, onProgress?: (line: string)
   }
   await c.db.doc(`${base}/${DOC_KINDS.semester}`).delete().catch(() => undefined);
   await c.db.doc(`${base}/${DOC_KINDS.setup}`).delete().catch(() => undefined);
+  const parts = c.db.doc(`${base}/${PARTS_DOC}`).collection(PARTS_COL);
+  for (const d of (await parts.get()).docs) await parts.doc(d.id).delete().catch(() => undefined);
 }
 
 // ---------- leftovers from an import that didn't finish ----------
@@ -228,9 +237,11 @@ async function references(c: { db: DB; uid: string }) {
     const s = await c.db.doc(`${base}/${p}`).get();
     return s.exists ? (s.data() as Record<string, unknown>) : null;
   };
-  const [setup, semester, updates] = await Promise.all([get(DOC_KINDS.setup), get(DOC_KINDS.semester), get(DOC_KINDS.updates)]);
+  // Split documents are joined first: their file lists may live in parts.
+  const parts = await readParts(c.db, c.uid);
+  const [setup, semester, updates] = (await Promise.all([get(DOC_KINDS.setup), get(DOC_KINDS.semester), get(DOC_KINDS.updates)])).map((d) => joinAll(d, parts));
   const [adoc, acol] = COLLECTION_KINDS.archivedSemesters;
-  const archived = Object.fromEntries((await c.db.doc(`${base}/${adoc}`).collection(acol).get()).docs.map((d) => [d.id, d.data()]));
+  const archived = Object.fromEntries((await c.db.doc(`${base}/${adoc}`).collection(acol).get()).docs.map((d) => [d.id, joinAll(d.data() as Record<string, unknown>, parts)]));
   const data = { setup, semester, archivedSemesters: archived };
   const uploads = new Set<string>();
   for (const s of [setup, semester, ...Object.values(archived)] as Array<{ uploads?: Array<{ id: string }> } | null>) for (const u of s?.uploads ?? []) uploads.add(u.id);

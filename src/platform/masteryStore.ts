@@ -56,7 +56,8 @@ export function cloudMasteryStore(db: DB, uid: string): MasteryStore {
       return { skills, targets, attempts, reviews };
     },
     async putSkills(skills) {
-      await Promise.all(skills.map((s) => col("skills").doc(s.id).set(plain(s))));
+      // A few at a time: a new semester brings hundreds of skills at once.
+      for (let i = 0; i < skills.length; i += 8) await Promise.all(skills.slice(i, i + 8).map((s) => col("skills").doc(s.id).set(plain(s))));
     },
     async putTarget(t) {
       await col("targets").doc(t.courseId).set(plain(t));

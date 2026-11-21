@@ -17,7 +17,8 @@ import type { OutboxDoc } from "./apply";
 import { deferredAsk, type PendingCall } from "./deferred";
 import { runNightly, type NightInput, type RoutineDoc, type ScheduleInfo, type Write } from "./nightly";
 import { checkRelease } from "./release";
-import { COLLECTION_KINDS, COLLECTION_KIND_LIST, DOC_KINDS, DOC_KIND_LIST, diffSnapshots, emptySnapshot, type Snapshot } from "../updates/layout";
+import { COLLECTION_KINDS, COLLECTION_KIND_LIST, DOC_KINDS, DOC_KIND_LIST, diffSnapshots, emptySnapshot, joinSnapshot, type Snapshot } from "../updates/layout";
+import { joinAll, partIdsOf, PARTS_COL, PARTS_DOC, splitDoc } from "../platform/bigDoc";
 import { dataVersionOf, upgrade } from "../updates/migrations";
 import { validateSnapshot } from "../updates/validate";
 import { DATA_VERSION } from "../updates/version";
@@ -25,7 +26,8 @@ import { DATA_VERSION } from "../updates/version";
 const ME = "data/users/me";
 /** Collections to download (under data/users/me). Paths alternate collection/document. */
 // Everything StudyDesk stores (src/updates/layout.ts), so the data can be upgraded here after an update.
-const COLLECTIONS = Object.values(COLLECTION_KINDS).map((p) => p.join("/"));
+// Parts of big documents (src/platform/bigDoc.ts) are downloaded too and joined on read.
+const COLLECTIONS = [...Object.values(COLLECTION_KINDS).map((p) => p.join("/")), `${PARTS_DOC}/${PARTS_COL}`];
 const DOCS = [...(Object.values(DOC_KINDS) as string[]), "release"];
 const BATCH_BYTES = 800_000;
 
@@ -101,8 +103,15 @@ function unwrap(x: unknown): Loaded {
   return { data: o, version: null };
 }
 
+function partsOf(all: Map<string, Loaded>): Record<string, Record<string, unknown>> {
+  const prefix = `${ME}/${PARTS_DOC}/${PARTS_COL}/`;
+  return Object.fromEntries([...all.entries()].filter(([k]) => k.startsWith(prefix)).map(([k, v]) => [k.slice(prefix.length), v.data]));
+}
+
+/** One downloaded document, joined with its parts when it was split. */
 function doc<T>(all: Map<string, Loaded>, path: string): T | null {
-  return (all.get(`${ME}/${path}`)?.data as T | undefined) ?? null;
+  const d = all.get(`${ME}/${path}`)?.data ?? null;
+  return (d && partIdsOf(d).length ? joinAll(d, partsOf(all)) : d) as T | null;
 }
 
 function collection<T>(all: Map<string, Loaded>, path: string): Array<{ id: string; data: T }> {
@@ -161,7 +170,24 @@ async function callsStep(dir: string, calls: PendingCall[]): Promise<void> {
   ]);
 }
 
-function uploadStep(dir: string, url: string, writes: UploadWrite[], versions: Map<string, number | null>, upgrade?: { from: number; to: number }): void {
+/** Big documents become parts plus a main document; parts already stored aren't written again. */
+function splitUploads(writes: UploadWrite[], versions: Map<string, number | null>): UploadWrite[] {
+  const parts: UploadWrite[] = [];
+  const rest: UploadWrite[] = [];
+  for (const w of writes) {
+    if (w.mode === "delete") {
+      rest.push(w);
+      continue;
+    }
+    const { main, parts: ps } = splitDoc(w.path.join("."), w.data);
+    for (const [id, p] of Object.entries(ps)) if (!versions.has(`${ME}/${PARTS_DOC}/${PARTS_COL}/${id}`)) parts.push({ path: [PARTS_DOC, PARTS_COL, id], data: p, mode: "create" });
+    rest.push({ ...w, data: main });
+  }
+  return [...parts, ...rest];
+}
+
+function uploadStep(dir: string, url: string, writes0: UploadWrite[], versions: Map<string, number | null>, upgrade?: { from: number; to: number }): void {
+  const writes = splitUploads(writes0, versions);
   const up = join(dir, "upload");
   mkdirSync(up, { recursive: true });
   type Entry = { op: "set"; collection: string; doc_id: string; file_path: string; if_version?: number } | { op: "delete"; collection: string; doc_id: string };
@@ -221,7 +247,7 @@ function snapshotOf(all: Map<string, Loaded>): Snapshot {
   const s = emptySnapshot() as Record<string, unknown>;
   for (const k of DOC_KIND_LIST) s[k] = doc(all, DOC_KINDS[k]);
   for (const k of COLLECTION_KIND_LIST) s[k] = Object.fromEntries(collection<Record<string, unknown>>(all, COLLECTION_KINDS[k].join("/")).map((x) => [x.id, x.data]));
-  return s as Snapshot;
+  return joinSnapshot(s as Snapshot, partsOf(all));
 }
 
 // ---------- main ----------

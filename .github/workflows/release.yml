@@ -3,11 +3,14 @@
 # own Claude session publishes from there when they press "Update".
 # design/updates.md, "Releases". Release notes are the tag's message:
 #   git tag -a v1.1 -m "Grading now shows ..." && git push origin v1.1
+# Every push to main is built too, into main/, for developers ("Load the newest
+# build from main" in the version panel). It never touches latest.json.
 name: Build release
 
 on:
   push:
     tags: ["v*"]
+    branches: [main]
 
 permissions:
   contents: write
@@ -25,12 +28,21 @@ jobs:
           fetch-depth: 0
 
       - name: Check the tag
+        if: github.ref_type == 'tag'
         run: |
           TAG="${GITHUB_REF_NAME}"
           if ! echo "$TAG" | grep -Eq '^v[0-9]+(\.[0-9]+)*$'; then echo "Not a release tag: $TAG"; exit 1; fi
           echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "BUILD_VERSION=$TAG" >> "$GITHUB_ENV"
           git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
           git tag -l --format='%(contents)' "$TAG" | sed '/^-----BEGIN PGP/,$d' > "$RUNNER_TEMP/notes.md"
+
+      - name: Newest build of main
+        if: github.ref_type == 'branch'
+        run: |
+          echo "TAG=main" >> "$GITHUB_ENV"
+          echo "BUILD_VERSION=dev" >> "$GITHUB_ENV"
+          git log -1 --format=%s > "$RUNNER_TEMP/notes.md"
 
       - uses: actions/setup-node@v4
         with:
@@ -43,7 +55,8 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          VITE_STUDYDESK_VERSION: ${{ env.TAG }}
+          VITE_STUDYDESK_VERSION: ${{ env.BUILD_VERSION }}
+          VITE_STUDYDESK_COMMIT: ${{ github.sha }}
           VITE_STUDYDESK_REPO: ${{ github.repository }}
 
       - name: Put the build on the releases branch
@@ -58,7 +71,7 @@ jobs:
             git worktree add --detach "$RUNNER_TEMP/releases"
             git -C "$RUNNER_TEMP/releases" checkout --orphan releases
             git -C "$RUNNER_TEMP/releases" rm -rf --quiet .
-            printf '# StudyDesk releases\n\nBuilt by .github/workflows/release.yml from each release tag. Each folder is one version, ready to publish as a claude.ai artifact; latest.json names the newest. Do not edit by hand.\n' > "$RUNNER_TEMP/releases/README.md"
+            printf '# StudyDesk releases\n\nBuilt by .github/workflows/release.yml from each release tag (and main/ from every push to main, for developers). Each folder is one version, ready to publish as a claude.ai artifact; latest.json names the newest. Do not edit by hand.\n' > "$RUNNER_TEMP/releases/README.md"
           fi
           rm -rf "$RUNNER_TEMP/releases/$TAG"
           mkdir -p "$RUNNER_TEMP/releases/$TAG"
@@ -66,5 +79,6 @@ jobs:
           node scripts/release-info.mjs "$TAG" "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/releases"
           cd "$RUNNER_TEMP/releases"
           git add -A
-          git commit -m "Release $TAG"
+          if git diff --cached --quiet; then echo "Nothing changed"; exit 0; fi
+          if [ "$TAG" = main ]; then git commit -m "Build main ${GITHUB_SHA::7}"; else git commit -m "Release $TAG"; fi
           git push origin releases

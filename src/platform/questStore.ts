@@ -8,6 +8,7 @@
 // Elsewhere it falls back to this browser's localStorage.
 
 import { host } from "./host";
+import { PARTS_COL, PARTS_DOC, readBig, writeBig, type Written } from "./bigDoc";
 import type { Chat } from "../chat/types";
 import type { CalendarAhead } from "./calendar";
 import type { QuestRecord, Semester } from "../quests/types";
@@ -44,6 +45,10 @@ export async function openQuestStore(): Promise<QuestStore> {
 function cloudQuestStore(db: DB, uid: string): QuestStore {
   const semester = db.doc(`data/users/${uid}/semester`);
   const calendar = db.doc(`data/users/${uid}/calendar`);
+  // A big semester is split into parts (src/platform/bigDoc.ts); one write at a time.
+  const parts = db.doc(`data/users/${uid}/${PARTS_DOC}`).collection(PARTS_COL);
+  const written: Written = new Map();
+  let semWrites: Promise<unknown> = Promise.resolve();
   const records = db.doc(`data/users/${uid}/quests`).collection("records");
   const reviews = db.doc(`data/users/${uid}/quests`).collection("reviews");
   const images = db.doc(`data/users/${uid}/quests`).collection("images");
@@ -71,11 +76,12 @@ function cloudQuestStore(db: DB, uid: string): QuestStore {
   return {
     mode: "cloud",
     async loadSemester() {
-      const snap = await semester.get();
-      return snap.exists ? (snap.data() as unknown as Semester) : null;
+      return (await readBig(semester, parts)) as unknown as Semester | null;
     },
-    async saveSemester(s) {
-      await semester.set(plain(s));
+    saveSemester(s) {
+      const next = semWrites.catch(() => undefined).then(() => writeBig("semester", plain(s), semester, parts, written));
+      semWrites = next;
+      return next;
     },
     async loadCalendar() {
       const snap = await calendar.get();

@@ -19,7 +19,7 @@ import { useSideNotes } from "../notes/useSideNotes";
 import { readCalendar, weeklyPattern, type CalendarError } from "../platform/calendar";
 import { askClaude, canSendImages, canUseTools, claudeAvailable, errorCopy, lastModel, type AskError } from "../platform/claude";
 import { openMasteryStore, type MasteryData, type MasteryStore } from "../platform/masteryStore";
-import { offerDownload, openOnboardingStore, type OnboardingStore } from "../platform/onboardingStore";
+import { offerDownload, openOnboardingStore, saveErrorCopy, type OnboardingStore } from "../platform/onboardingStore";
 import { openQuestStore, type QuestStore } from "../platform/questStore";
 import { emptyProgress } from "../quests/handin";
 import { compressImage, dataUrlToBlob } from "../quests/images";
@@ -166,7 +166,7 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
     }
     return Promise.all(jobs)
       .then(() => setSaveError(null))
-      .catch((e) => setSaveError(`Your setup couldn't be saved: ${message(e)}`));
+      .catch((e) => setSaveError(`Your setup couldn't be saved: ${saveErrorCopy(e)}`));
   }, [env]);
   const schedule = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
@@ -975,7 +975,7 @@ function Running({ env, draft, profile, update, updateProfile, go, today, flush,
       update((x) => ({ ...x, status: "active", setupStep: "done" }));
       await flush();
     } catch (e) {
-      setFinishError(`The semester couldn't be saved: ${message(e)}`);
+      setFinishError(`The semester couldn't be saved: ${saveErrorCopy(e)}`);
     }
   }, [env, profile, update, flush]);
 
@@ -1102,7 +1102,14 @@ function Running({ env, draft, profile, update, updateProfile, go, today, flush,
           )}
         </Actions>
       )}
-      {finishError && <p className="quest-error">{finishError}</p>}
+      {finishError && (
+        <p className="quest-error">
+          {finishError}{" "}
+          <button type="button" className="link-btn" onClick={() => void finish()}>
+            Try again
+          </button>
+        </p>
+      )}
     </div>
   );
 }
