@@ -87,7 +87,7 @@ export function deskSnapshot(i: SnapshotInput): string {
       todaysQuest: quest ? { course: quest.quest.courseId, plannedMinutes: quest.quest.plannedMinutes, started: questStarted(quest) } : null,
       questSettings: questSettingsNow(draft.questSettings),
       speedLastQuests: sp.ratio === null ? "not measured yet" : `${sp.actual} min actual vs ${sp.planned} min planned over ${sp.quests} quests`,
-      openToDo: setupTodo(draft).filter((t) => !t.done).map((t) => t.title),
+      openToDo: setupTodo(draft).filter((t) => !t.done).map((t) => ({ key: t.key, title: t.title })),
       jobs: i.state.jobs.filter((j) => j.status === "running" || (j.finishedAt ?? 0) > Date.now() - 86_400_000).map((j) => ({ id: j.id, kind: j.kind, courses: j.courseIds, status: j.status, result: j.result })),
       recentChanges: i.state.changes.slice(-6).map((c) => ({ id: c.id, lines: c.lines, status: c.status })),
       unsortedFiles: unsortedList(draft.uploads, draft.zips),
@@ -145,6 +145,7 @@ export const CHANGE_TOOL = {
 - {op:"set_day_off", date, reason?} / {op:"remove_day_off", date}
 - {op:"add_slot", weekday, start, end, kind:"lecture"|"exercise"|"fixed", title, course?} / {op:"remove_slot", weekday, start}
 - {op:"set_calendar_live", on: bool} (calendar data is live by default: it's read again whenever StudyDesk is open and each day's quest is sized from it. Only set on:false when the student explicitly asks to stop following their calendar)
+- {op:"tick_todo", key, done?: bool} (an item of openToDo is done: its questions answered, its files in, its dates or conflicts confirmed. Tick it yourself in the same change that records the answer; never ask the student to tick it. done:false opens it again)
 - {op:"set_language", course, language}
 - {op:"set_quest_settings", hints?: 0-5 (per homework task), lessonMinutes?: 2-15 (reading part of a lesson), newSkillsPerQuest?: 0-4}
 - {op:"set_nightly", time?: "HH:MM", paused?: bool, grading?: bool, check?: bool, quest?: bool} (the nightly run: when it runs, pause it, or turn off grading / the courses' check / writing tomorrow's quest)

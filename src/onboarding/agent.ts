@@ -11,6 +11,7 @@ import { uid } from "../chat/types";
 import type { Turn } from "../platform/claude";
 import type { TimetableEntry } from "../quests/types";
 import type { DraftCourse, Profile, SemesterDraft, SetupMessage } from "./types";
+import { setupTodo } from "./todo";
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -45,6 +46,7 @@ export function sheetSnapshot(d: SemesterDraft, p: Profile, today: string, cloud
       calendarImported: !!d.calendarImportedAt,
       readyToStart: setupReady(d),
       setupDone: d.setupStep === "done",
+      ...(d.setupStep === "done" ? { toDo: setupTodo(d).map((t) => ({ key: t.key, title: t.title, done: t.done })) } : {}),
       cloudSessions,
     },
     null,
@@ -79,7 +81,7 @@ How to use update_sheet:
 
 After setup (setupDone is true):
 - The student works through a short to-do list below the chat, one item at a time; an item's questions appear in the chat as your message. Record every answer right away as a fact of its course, word for word, and assign new files to their course.
-- Don't ask the next item yourself; when one is answered, say in one line that they can tick it off.
+- Don't ask the next item yourself. When an item is done (its questions answered, its files dropped and assigned, its dates or conflicts confirmed or corrected), tick it off yourself with update_sheet's todoDone, in the same call that records the answer, and say in one line that you ticked it. Never ask the student to tick something off. If they only answered part of it, leave it open and say what's left.
 - Once answers or files changed something, offer to update those courses. Only when they say yes, call start_setup: it re-reads just the courses that changed.`
 }
 
@@ -111,6 +113,8 @@ const SHEET_SCHEMA = {
     facts: { type: "array", items: { type: "object", properties: { course: { type: "string", description: "Course id or name; omit for general facts." }, text: { type: "string" } }, required: ["text"] } },
     files: { type: "array", description: "Assign files to courses: uploadId is a file's id, or a zip's id (zip_…) for all files of that zip.", items: { type: "object", properties: { uploadId: { type: "string" }, course: { type: "string" }, note: { type: "string" } }, required: ["uploadId", "course"] } },
     studyGoalMinutes: { type: "object", description: "Minutes per weekday, lectures included, e.g. {Mon: 180, Sun: 0}. Only days that change.", properties: Object.fromEntries(DAY.map((d) => [d, { type: "number" }])) },
+    todoDone: { type: "array", description: "After setup: keys of to-do items that are now done (from toDo in the sheet). Tick them yourself; the student doesn't have to.", items: { type: "string" } },
+    todoOpen: { type: "array", description: "After setup: keys of to-do items to open again (only when the student says one isn't done after all).", items: { type: "string" } },
   },
 } as const;
 
@@ -245,6 +249,19 @@ export function applySheetUpdate(d: SemesterDraft, p: Profile, input: Record<str
       const m = num(v);
       if (wd >= 0 && m !== null) draft.studyGoal[wd] = Math.max(0, Math.min(16 * 60, Math.round(m)));
     }
+  }
+  // To-do items ticked or reopened by Claude (after setup).
+  const tickKeys = ((input.todoDone as unknown[]) ?? []).map(str).filter(Boolean);
+  const openKeys = ((input.todoOpen as unknown[]) ?? []).map(str).filter(Boolean);
+  if (tickKeys.length || openKeys.length) {
+    const known = new Set(setupTodo(draft).map((t) => t.key));
+    for (const k of [...tickKeys, ...openKeys]) if (!known.has(k)) notes.push(`To-do "${k}" not found; use a key from toDo.`);
+    const done = new Set(draft.todoDone ?? []);
+    for (const k of tickKeys) if (known.has(k)) done.add(k);
+    for (const k of openKeys) done.delete(k);
+    draft.todoDone = [...done];
+    const ticked = tickKeys.filter((k) => known.has(k));
+    if (ticked.length) notes.push(`Ticked off: ${ticked.join(", ")}.`);
   }
   draft = { ...draft, updatedAt: now };
   const parts = ["Saved."];

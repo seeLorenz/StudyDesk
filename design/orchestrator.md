@@ -151,7 +151,7 @@ This stays small. Anything detailed is fetched with a look-up tool only when the
 | `open_ask` | Opens an Ask note or chat with a learning question already filled in | None |
 | `rebuild_quest` | Asks the quest code to write today's quest again from the new records | Only when today's quest hasn't been started |
 
-`change` takes typed operations (for example `set_target_grade`, `move_date`, `add_homework`, `set_day_off`), not free text. Claude decides what the student meant; code decides whether it's valid and saves it.
+`change` takes typed operations (for example `set_target_grade`, `move_date`, `add_homework`, `set_day_off`), not free text. Claude decides what the student meant; code decides whether it's valid and saves it. When the student's message finishes an item of the setup to-do list, the same change includes `tick_todo` for it: StudyDesk ticks items off itself and never asks the student to.
 
 ## Records
 

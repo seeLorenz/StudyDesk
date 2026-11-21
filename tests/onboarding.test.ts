@@ -388,6 +388,16 @@ describe("setup to-do list", () => {
     expect(dates.body).toContain("Say if any is wrong");
     expect(items.find((i) => i.key === "conflicts")!.body).toContain("Your word was used");
   });
+  it("lets the setup chat tick items off itself", () => {
+    const d = { ...withQuestions(["When is the exam?"]), setupStep: "done" as const };
+    const r = applySheetUpdate(d, profile, { facts: [{ course: "c1", text: "exam on 28 Jan" }], todoDone: ["q-c1", "nope"] });
+    expect(setupTodo(r.draft).find((t) => t.key === "q-c1")?.done).toBe(true);
+    expect(r.result).toContain("Ticked off: q-c1");
+    expect(r.result).toContain('To-do "nope" not found');
+    expect(JSON.parse(sheetSnapshot(r.draft, profile)).toDo.find((t: { key: string }) => t.key === "q-c1").done).toBe(true);
+    const back = applySheetUpdate(r.draft, profile, { todoOpen: ["q-c1"] });
+    expect(setupTodo(back.draft).find((t) => t.key === "q-c1")?.done).toBe(false);
+  });
   it("marks ticked items done and finds courses with new answers", () => {
     const d = { ...withQuestions(["When is the exam?"]), todoDone: ["q-c1"] };
     expect(setupTodo(d).find((i) => i.key === "q-c1")?.done).toBe(true);

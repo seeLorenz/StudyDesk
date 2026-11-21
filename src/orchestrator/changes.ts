@@ -10,6 +10,7 @@ import { uid } from "../chat/types";
 import { assessmentAttempts } from "../mastery/grades";
 import type { AssessmentResult, Attempt, CourseTarget } from "../mastery/types";
 import { buildSemester } from "../onboarding/setup";
+import { setupTodo } from "../onboarding/todo";
 import type { CourseSetup, DraftCourse, Profile, SemesterDraft } from "../onboarding/types";
 import type { Assignment, KeyDate, Semester, TimetableEntry } from "../quests/types";
 import { QUEST_SETTING_LIMITS, questSettingsNow, type QuestSettings } from "../quests/config";
@@ -412,6 +413,20 @@ export function applyOps(
         if ((desk.draft.calendarLive !== false) === v) break;
         touch("calendarLive", v);
         lines.push(v ? "Calendar: followed live again, each day's quest is sized from it" : "Calendar: no longer followed day by day, quests go by the weekly timetable");
+        break;
+      }
+      case "tick_todo": {
+        const key = str(op.key);
+        const item = setupTodo(desk.draft).find((t) => t.key === key || t.title === key);
+        if (!item) {
+          errors.push(`tick_todo: no to-do "${key}"; use a key from openToDo.`);
+          break;
+        }
+        const on = !(op.done === false || op.done === "false");
+        if (item.done === on) break;
+        const list = desk.draft.todoDone ?? [];
+        touch("todoDone", on ? [...new Set([...list, item.key])] : list.filter((k) => k !== item.key));
+        lines.push(on ? `To do: ticked off "${item.title}"` : `To do: "${item.title}" is open again`);
         break;
       }
       case "set_nightly": {
