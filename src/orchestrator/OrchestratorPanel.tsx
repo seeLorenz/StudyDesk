@@ -15,7 +15,7 @@ import { IntakeCard } from "../chat/IntakeCard";
 import { toDay } from "../mastery/days";
 import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
 import { useSideNotes } from "../notes/useSideNotes";
-import { readCalendar, weeklyPattern, type CalendarError } from "../platform/calendar";
+import { calendarForClaude, readCalendar, type CalendarError } from "../platform/calendar";
 import { askClaude, canSendImages, canUseTools, claudeAvailable, errorCopy, type AskError } from "../platform/claude";
 import { publish, subscribe } from "../platform/deskBus";
 import { checkHandoff, type HandoffSetup } from "../platform/handoff";
@@ -568,15 +568,8 @@ export function OrchestratorPanel(props: Props) {
                 setBusy("Reading your calendar…");
                 try {
                   const events = await readCalendar(today, 120, cx.signal);
-                  const two = events.filter((e) => e.date < addDaysLocal(today, 14));
-                  const { weekly } = weeklyPattern(two);
-                  const rec = new Set(weekly.map((w) => `${w.title}|${w.weekday}|${w.start}`));
-                  const once = events.filter((e) => !e.recurring && !rec.has(`${e.title}|${e.weekday}|${e.start}`)).slice(0, 80);
                   await commitDesk({ draft: { ...draftRef.current!, calendarImportedAt: Date.now() }, profile: profileRef.current! });
-                  return {
-                    weekly: weekly.map((w) => `${DAY_SHORT[w.weekday]} ${w.start}-${w.end}: ${w.title}${w.location ? ` @ ${w.location}` : ""}`),
-                    upcomingOnce: once.map((e) => `${e.date}${e.start ? ` ${e.start}-${e.end}` : " (all day)"}: ${e.title}`),
-                  };
+                  return calendarForClaude(events, today);
                 } catch (e) {
                   throw new Error((e as CalendarError).message ?? "The calendar couldn't be read.");
                 } finally {
@@ -1057,11 +1050,6 @@ function lookUp(what: string, courseRef: unknown, draft: SemesterDraft, records:
   }
 }
 
-function addDaysLocal(day: string, n: number): string {
-  const d = new Date(`${day}T12:00`);
-  d.setDate(d.getDate() + n);
-  return toDay(d);
-}
 
 /** Local preview stand-in: understands "day off YYYY-MM-DD" so the change card can be tried. */
 async function localAnswer(

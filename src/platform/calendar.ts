@@ -18,12 +18,39 @@ export type CalendarEvent = {
   end: string | null;
   recurring: boolean;
   location: string;
+  /** The event's description, as plain text (it often holds the exam scope, the room or homework notes). */
+  description: string;
 };
 
 export type CalendarError = { code: string; message: string };
 
 type RawTime = { dateTime?: string; date?: string };
-type RawEvent = { summary?: string; start?: RawTime; end?: RawTime; recurringEventId?: string; location?: string; status?: string };
+type RawEvent = { summary?: string; description?: string; start?: RawTime; end?: RawTime; recurringEventId?: string; location?: string; status?: string };
+
+/** Longest description passed on per event; the rest is cut with "…". */
+export const DESCRIPTION_MAX = 600;
+
+/** Pure: an event description as plain text. Google sends HTML for some; links and entities are kept readable. */
+export function plainDescription(raw: string | undefined): string {
+  if (!raw) return "";
+  const t = raw
+    .replace(/<br\s*\/?>|<\/p>|<\/li>|<\/div>/gi, "\n")
+    .replace(/<a [^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/gi, (_m, href: string, text: string) => (text && text !== href ? `${text} (${href})` : href))
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&ndash;/g, "–")
+    .replace(/&mdash;/g, "—")
+    .replace(/&#(\d+);/g, (_m, n: string) => String.fromCharCode(Number(n)))
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n+/g, "\n")
+    .trim();
+  return t.length > DESCRIPTION_MAX ? `${t.slice(0, DESCRIPTION_MAX).trimEnd()}…` : t;
+}
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const localDay = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -41,10 +68,10 @@ export function toEvents(raw: RawEvent[]): CalendarEvent[] {
       const s = new Date(e.start.dateTime);
       const en = new Date(e.end.dateTime);
       if (isNaN(+s) || isNaN(+en)) continue;
-      out.push({ title, date: localDay(s), weekday: s.getDay(), start: localTime(s), end: localDay(en) === localDay(s) ? localTime(en) : "23:59", recurring: !!e.recurringEventId, location: e.location ?? "" });
+      out.push({ title, date: localDay(s), weekday: s.getDay(), start: localTime(s), end: localDay(en) === localDay(s) ? localTime(en) : "23:59", recurring: !!e.recurringEventId, location: e.location ?? "", description: plainDescription(e.description) });
     } else if (e.start?.date) {
       const s = new Date(`${e.start.date}T12:00`);
-      out.push({ title, date: e.start.date, weekday: s.getDay(), start: null, end: null, recurring: !!e.recurringEventId, location: e.location ?? "" });
+      out.push({ title, date: e.start.date, weekday: s.getDay(), start: null, end: null, recurring: !!e.recurringEventId, location: e.location ?? "", description: plainDescription(e.description) });
     }
   }
   return out.sort((a, b) => (a.date + (a.start ?? "") < b.date + (b.start ?? "") ? -1 : 1));
@@ -155,8 +182,10 @@ export function calendarErrorCopy(code: string | undefined): string {
  * Weekly patterns: events that repeat on the same weekday and time, merged
  * into one line each. One-off events are kept separately (exams, trips).
  */
-export function weeklyPattern(events: CalendarEvent[]): { weekly: Array<{ title: string; weekday: number; start: string; end: string; location: string; times: number }>; once: CalendarEvent[] } {
-  const groups = new Map<string, { title: string; weekday: number; start: string; end: string; location: string; times: number }>();
+export type WeeklySlot = { title: string; weekday: number; start: string; end: string; location: string; description: string; times: number };
+
+export function weeklyPattern(events: CalendarEvent[]): { weekly: WeeklySlot[]; once: CalendarEvent[] } {
+  const groups = new Map<string, WeeklySlot>();
   const once: CalendarEvent[] = [];
   for (const e of events) {
     if (!e.start || !e.end) {
@@ -165,12 +194,33 @@ export function weeklyPattern(events: CalendarEvent[]): { weekly: Array<{ title:
     }
     const k = `${e.title}|${e.weekday}|${e.start}|${e.end}`;
     const g = groups.get(k);
-    if (g) g.times++;
-    else groups.set(k, { title: e.title, weekday: e.weekday, start: e.start, end: e.end, location: e.location, times: 1 });
+    if (g) {
+      g.times++;
+      if (!g.description) g.description = e.description;
+    } else groups.set(k, { title: e.title, weekday: e.weekday, start: e.start, end: e.end, location: e.location, description: e.description, times: 1 });
   }
   const weekly = [...groups.values()].filter((g) => g.times > 1 || events.some((e) => e.recurring && e.title === g.title && e.weekday === g.weekday && e.start === g.start));
   for (const e of events) if (e.start && !weekly.some((w) => w.title === e.title && w.weekday === e.weekday && w.start === e.start)) once.push(e);
   return { weekly, once };
+}
+
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * Pure: what read_calendar hands Claude. Weekly slots from the next two weeks,
+ * one-off events of the whole read, each with its room and description, so
+ * notes like the exam scope or a homework hint reach the agent.
+ */
+export function calendarForClaude(events: CalendarEvent[], today: Day): { weekly: string[]; upcomingOnce: string[] } {
+  const twoWeeks = events.filter((e) => e.date < addDays(today, 14));
+  const { weekly } = weeklyPattern(twoWeeks);
+  const rec = new Set(weekly.map((w) => `${w.title}|${w.weekday}|${w.start}`));
+  const once = events.filter((e) => !e.recurring && !rec.has(`${e.title}|${e.weekday}|${e.start}`)).slice(0, 80);
+  const extra = (location: string, description: string) => `${location ? ` @ ${location}` : ""}${description ? `\n  Description: ${description.replace(/\n/g, "\n  ")}` : ""}`;
+  return {
+    weekly: weekly.map((w) => `${DAY_NAMES[w.weekday]} ${w.start}-${w.end}: ${w.title}${extra(w.location, w.description)}`),
+    upcomingOnce: once.map((e) => `${e.date}${e.start ? ` ${e.start}-${e.end}` : " (all day)"}: ${e.title}${extra(e.location, e.description)}`),
+  };
 }
 
 /** Minutes of timed events on one day (overlaps counted once). */

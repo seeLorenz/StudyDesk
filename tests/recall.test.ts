@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { earlierImageIds, readKeptFile, recallImages } from "../src/lib/keep";
-import { dedupe, pickCalendars, readCalendar } from "../src/platform/calendar";
+import { calendarForClaude, dedupe, pickCalendars, plainDescription, readCalendar, toEvents } from "../src/platform/calendar";
 import type { Upload } from "../src/onboarding/types";
 
 const up = (id: string, fileName: string, type: Upload["type"], extra: Partial<Upload> = {}): Upload => ({ id, courseId: null, fileName, type, studentNote: "", addedAt: 0, cataloguedAt: null, assetId: null, pages: null, state: "readable", ...extra });
@@ -50,8 +50,19 @@ describe("calendar reads every calendar", () => {
     expect(pickCalendars([])).toEqual(["primary"]);
   });
 
+  it("passes event descriptions on as plain text", () => {
+    expect(plainDescription('Stoff: <b>Kapitel 1&ndash;4</b><br>Raum &amp; Zeit')).toBe("Stoff: Kapitel 1–4\nRaum & Zeit");
+    expect(plainDescription("x".repeat(700))).toHaveLength(601);
+    const ev = toEvents([
+      { summary: "Math A Teilklausur", description: "Covers chapters 1-4. Bring a calculator.", start: { dateTime: "2026-11-27T10:00:00" }, end: { dateTime: "2026-11-27T12:00:00" }, location: "HS A" },
+    ]);
+    const out = calendarForClaude(ev, "2026-11-21");
+    expect(out.upcomingOnce[0]).toContain("@ HS A");
+    expect(out.upcomingOnce[0]).toContain("Description: Covers chapters 1-4. Bring a calculator.");
+  });
+
   it("drops the same event in two calendars", () => {
-    const e = { title: "Analysis VO", date: "2026-11-23", weekday: 1, start: "10:00", end: "11:30", recurring: true, location: "" };
+    const e = { title: "Analysis VO", date: "2026-11-23", weekday: 1, start: "10:00", end: "11:30", recurring: true, location: "", description: "" };
     expect(dedupe([e, { ...e }, { ...e, date: "2026-11-30" }])).toHaveLength(2);
   });
 
