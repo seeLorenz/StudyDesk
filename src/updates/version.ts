@@ -11,6 +11,13 @@
 export const APP_VERSION: string = (import.meta.env?.VITE_STUDYDESK_VERSION as string | undefined) || "dev";
 export const DATA_VERSION = 1;
 
+/** The commit the page was built from (set by the GitHub Action), or "" for a local build. */
+export const BUILD_COMMIT: string = ((import.meta.env?.VITE_STUDYDESK_COMMIT as string | undefined) || "").slice(0, 7);
+/** One exact build: the version plus its commit. Two dev builds differ only here. */
+export const BUILD_ID = BUILD_COMMIT ? `${APP_VERSION}@${BUILD_COMMIT}` : APP_VERSION;
+/** The folder on the releases branch with the newest build of main, for developers. */
+export const DEV_CHANNEL = "main";
+
 /** The public repository releases come from. A fork can build with its own (VITE_STUDYDESK_REPO). */
 export const RELEASE_REPO: string = (import.meta.env?.VITE_STUDYDESK_REPO as string | undefined) || "seeLorenz/studydesk";
 export const RELEASE_BRANCH = "releases";

@@ -6,7 +6,7 @@
 // They're separate from the profile on purpose: the profile is saved whole
 // from many screens, and update state must never be lost to a stale copy.
 
-import { compareVersions, DATA_VERSION, isRelease, RELEASE_BRANCH, RELEASE_REPO } from "./version";
+import { compareVersions, DATA_VERSION, DEV_CHANNEL, isRelease, RELEASE_BRANCH, RELEASE_REPO } from "./version";
 
 export type Backup = { assetId: string; appVersion: string; dataVersion: number; at: number; bytes: number };
 
@@ -14,6 +14,8 @@ export type Pending = {
   kind: "update" | "rollback";
   /** The version that was running when the student pressed the button. */
   from: string;
+  /** The exact build that was running (version@commit); tells two dev builds apart. */
+  fromBuild?: string;
   to: string;
   jobId: string | null;
   startedAt: number;
@@ -55,7 +57,10 @@ export type UpdatesDoc = {
 export type ReleaseInfo = { version: string; notes: string | null; dataVersion: number | null };
 
 /** What's known about releases: the newest one, and (when read) every release with its notes, for "What's new". */
-export type ReleaseDoc = { latest: string; notes: string | null; dataVersion: number | null; checkedAt: number; releases?: ReleaseInfo[] };
+export type ReleaseDoc = { latest: string; notes: string | null; dataVersion: number | null; checkedAt: number; releases?: ReleaseInfo[]; main?: MainBuild | null };
+
+/** The newest build of main (releases/main/), for developers. */
+export type MainBuild = { commit: string; builtAt: string | null; notes: string | null; dataVersion: number | null };
 
 /** A "Check for updates" session that's running (started from the version panel). */
 export type UpdateCheck = { jobId: string; startedAt: number };
@@ -96,11 +101,13 @@ export type LoadPlan =
   | { kind: "newer-data"; dataVersion: number };
 
 /** What the page does on load, before anything else opens. Pure. */
-export function planLoad(appVersion: string, doc: UpdatesDoc, dataVersion = DATA_VERSION): LoadPlan {
+export function planLoad(appVersion: string, doc: UpdatesDoc, dataVersion = DATA_VERSION, buildId = appVersion): LoadPlan {
   const p = doc.pending;
-  if (p?.kind === "rollback") return appVersion !== p.from ? { kind: "finish-rollback", pending: p } : { kind: "rolling-back", pending: p };
+  // A different build is running than when the button was pressed: the new one arrived.
+  const moved = (x: Pending) => (x.fromBuild ? x.fromBuild !== buildId : x.from !== appVersion);
+  if (p?.kind === "rollback") return moved(p) ? { kind: "finish-rollback", pending: p } : { kind: "rolling-back", pending: p };
   if (doc.dataVersion > dataVersion) return { kind: "newer-data", dataVersion: doc.dataVersion };
-  const arrived = p?.kind === "update" && appVersion !== p.from ? p : null;
+  const arrived = p?.kind === "update" && moved(p) ? p : null;
   // An upgrade that failed on this version is tried again on every load until it works or the student goes back.
   const retry = doc.failure && doc.failure.to === appVersion;
   if (doc.dataVersion < dataVersion || arrived || retry) return { kind: "upgrade", from: doc.dataVersion, pending: arrived };
@@ -134,8 +141,18 @@ export function keepBackups(list: Backup[], add: Backup): { keep: Backup[]; drop
 /** Release objects (from release.json / latest.json files) → a ReleaseDoc, or null when none is a release. Pure. */
 export function releaseDocFrom(list: unknown[], now: number): ReleaseDoc | null {
   const seen = new Map<string, ReleaseInfo>();
+  let main: MainBuild | null = null;
   for (const x of list) {
-    const o = (x && typeof x === "object" ? x : {}) as { version?: unknown; notes?: unknown; dataVersion?: unknown };
+    const o = (x && typeof x === "object" ? x : {}) as { version?: unknown; notes?: unknown; dataVersion?: unknown; commit?: unknown; builtAt?: unknown };
+    if (o.version === DEV_CHANNEL && typeof o.commit === "string") {
+      main = {
+        commit: o.commit.slice(0, 7),
+        builtAt: typeof o.builtAt === "string" ? o.builtAt : null,
+        notes: typeof o.notes === "string" && o.notes.trim() ? o.notes.trim().slice(0, 1000) : null,
+        dataVersion: Number.isInteger(o.dataVersion) ? (o.dataVersion as number) : null,
+      };
+      continue;
+    }
     if (typeof o.version !== "string" || !isRelease(o.version)) continue;
     seen.set(o.version, {
       version: o.version,
@@ -145,7 +162,16 @@ export function releaseDocFrom(list: unknown[], now: number): ReleaseDoc | null 
   }
   const releases = [...seen.values()].sort((a, b) => compareVersions(b.version, a.version)).slice(0, 30);
   const newest = releases[0];
-  return newest ? { latest: newest.version, notes: newest.notes, dataVersion: newest.dataVersion, checkedAt: now, releases } : null;
+  return newest ? { latest: newest.version, notes: newest.notes, dataVersion: newest.dataVersion, checkedAt: now, releases, main } : null;
+}
+
+/** The newest build of main to offer a developer, or null: none known, already running it, or it can't read this data. Pure. */
+export function devOffer(buildCommit: string, release: ReleaseDoc | null, doc: UpdatesDoc): MainBuild | null {
+  const m = release?.main;
+  if (!m) return null;
+  if (buildCommit && m.commit.slice(0, 7) === buildCommit.slice(0, 7)) return null;
+  if (m.dataVersion !== null && m.dataVersion < doc.dataVersion) return null;
+  return m;
 }
 
 /** "What's new": the installed release and every newer one, newest first. Pure. */
@@ -197,7 +223,8 @@ For this job you may clone into your scratchpad directory (nowhere else). Don't 
  */
 export function publishJobBody(tag: string, why: "update" | "rollback", repo = RELEASE_REPO): string {
   const dir = `<your scratchpad directory>/studydesk-releases`;
-  return `${why === "update" ? `The student pressed "Update to ${tag}".` : `The update didn't work, and the student pressed "Go back to ${tag}".`} Put StudyDesk ${tag} onto the student's own StudyDesk link. Their data stays where it is: publishing to the same link replaces only the page and its program.
+  const pressed = why === "rollback" ? `The update didn't work, and the student pressed "Go back to ${tag}".` : tag === DEV_CHANNEL ? `A developer pressed "Load the newest build from main".` : `The student pressed "Update to ${tag}".`;
+  return `${pressed} Put StudyDesk ${tag === DEV_CHANNEL ? "(the newest build of main, folder main/)" : tag} onto the student's own StudyDesk link. Their data stays where it is: publishing to the same link replaces only the page and its program.
 
 For this job you may clone into your scratchpad directory (nowhere else). Don't change the student's data except your job document.
 
