@@ -3269,21 +3269,30 @@ sup.sd-ref {
   font-weight: 500;
 }
 
+.organize-switch {
+  display: none;
+}
+/* Narrow: a switch between the chat and the semester data, so the chat box never scrolls out of reach. */
 @media (max-width: 1000px) {
   .organize {
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
+  }
+  .organize .organize-switch {
+    display: flex;
+    margin: 10px 16px 0;
   }
   .organize-chat {
-    flex: none;
-    height: min(70vh, 640px);
+    flex: 1;
     border-right: 0;
-    border-bottom: 1px solid var(--line);
   }
   .organize-data {
-    overflow: visible;
-    padding: 28px 16px 40px;
+    flex: 1;
+    padding: 20px 16px 40px;
+  }
+  .organize[data-narrow="chat"] > .organize-data,
+  .organize[data-narrow="data"] > .organize-chat {
+    display: none;
   }
 }
 
@@ -3920,3 +3929,38 @@ input::placeholder {
   margin-bottom: 12px;
 }
 .is-focus .version { display: none; }
+
+/* Narrow screens: the setup page switches between the chat and the sheet
+   instead of stacking them, so the chat box never ends up out of reach. */
+.setup-switch {
+  display: none;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--sunken);
+}
+.setup-switch button {
+  flex: 1;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: none;
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 500;
+}
+.setup-switch button.is-on {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 15%);
+}
+@media (max-width: 900px) {
+  .setup-page .setup-switch {
+    display: flex;
+    margin-bottom: 16px;
+  }
+  .setup-grid[data-narrow="chat"] > .setup-sheet,
+  .setup-grid[data-narrow="sheet"] > .setup-main {
+    display: none;
+  }
+}

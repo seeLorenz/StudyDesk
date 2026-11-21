@@ -106,6 +106,8 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const today = toDay();
   const scroller = useRef<HTMLDivElement>(null);
+  // Narrow screens show the chat or the sheet, never one under the other, so the chat box is always at hand.
+  const [narrowView, setNarrowView] = useState<"chat" | "sheet">("chat");
 
   useEffect(() => {
     (async () => {
@@ -399,7 +401,15 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
           {freshError && <p className="quest-error">{freshError}</p>}
         </div>
       )}
-      <div className="setup-grid">
+      <div className="setup-switch" role="tablist" aria-label="Show">
+        <button type="button" role="tab" aria-selected={narrowView === "chat"} className={narrowView === "chat" ? "is-on" : ""} onClick={() => setNarrowView("chat")}>
+          Chat
+        </button>
+        <button type="button" role="tab" aria-selected={narrowView === "sheet"} className={narrowView === "sheet" ? "is-on" : ""} onClick={() => setNarrowView("sheet")}>
+          Semester sheet
+        </button>
+      </div>
+      <div className="setup-grid" data-narrow={narrowView}>
         <section className="setup-main">
           {draft.setupStep !== "running" && <HandoffCard {...props} />}
           <SetupChat

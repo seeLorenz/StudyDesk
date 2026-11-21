@@ -55,6 +55,8 @@ export function App() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [current, setCurrent] = useState<Chat>(newChat);
+  // Narrow screens show Organize's chat or its data, not one under the other, so the chat box stays at hand.
+  const [orgView, setOrgView] = useState<"chat" | "data">("chat");
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -369,7 +371,15 @@ export function App() {
         )}
         {shown === "chat" && <ChatView key={current.id} initial={current} save={save} onSaveError={onSaveError} autoSend={askSeed?.chatId === current.id ? askSeed.question : undefined} />}
         {shown === "organize" && (
-          <div className="organize">
+          <div className="organize" data-narrow={orgView}>
+            <div className="setup-switch organize-switch" role="tablist" aria-label="Show">
+              <button type="button" role="tab" aria-selected={orgView === "chat"} className={orgView === "chat" ? "is-on" : ""} onClick={() => setOrgView("chat")}>
+                Chat
+              </button>
+              <button type="button" role="tab" aria-selected={orgView === "data"} className={orgView === "data" ? "is-on" : ""} onClick={() => setOrgView("data")}>
+                Your semester
+              </button>
+            </div>
             <div className="organize-chat" ref={setDock} />
             <div className="organize-data">
               <DeskPanel onOpenSetup={() => go("setup")} />
