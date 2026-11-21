@@ -394,7 +394,7 @@ describe("setup to-do list", () => {
     expect(setupTodo(r.draft).find((t) => t.key === "q-c1")?.done).toBe(true);
     expect(r.result).toContain("Ticked off: q-c1");
     expect(r.result).toContain('To-do "nope" not found');
-    expect(JSON.parse(sheetSnapshot(r.draft, profile)).toDo.find((t: { key: string }) => t.key === "q-c1").done).toBe(true);
+    expect(JSON.parse(sheetSnapshot(r.draft, profile, TODAY)).toDo.find((t: { key: string }) => t.key === "q-c1").done).toBe(true);
     const back = applySheetUpdate(r.draft, profile, { todoOpen: ["q-c1"] });
     expect(setupTodo(back.draft).find((t) => t.key === "q-c1")?.done).toBe(false);
   });
