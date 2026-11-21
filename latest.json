@@ -1,7 +1,7 @@
 {
-  "version": "v1.1.2",
-  "notes": "A version label with \"Check for updates\" and \"What's new\". Clearer import progress, and a \"Try again\" button on replies that didn't come through.",
+  "version": "v1.1.3",
+  "notes": "Full semesters save properly: big setups (many courses, hundreds of skills, large imports) no longer hit a size limit, and a failed final save now explains itself and has a \"Try again\" button. Developers can load the newest build from main in the version panel.",
   "dataVersion": 1,
-  "builtAt": "2026-11-20T23:31:30.678Z",
-  "commit": "57377664633f8baa99ee4fe598567101888dc9f6"
+  "builtAt": "2026-11-21T11:58:56.354Z",
+  "commit": "f8f6115753a2f4b35a01920f3a8ebb90edade369"
 }
