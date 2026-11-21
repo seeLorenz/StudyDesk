@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { SentFiles } from "../chat/SentFiles";
+import { useSentToTop } from "../chat/useSentToTop";
 import { ImportProgress } from "../chat/ImportProgress";
 import type { Note } from "../chat/types";
 import { uid } from "../chat/types";
@@ -105,6 +106,8 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const today = toDay();
   const scroller = useRef<HTMLDivElement>(null);
+  // Narrow screens show the chat or the sheet, never one under the other, so the chat box is always at hand.
+  const [narrowView, setNarrowView] = useState<"chat" | "sheet">("chat");
 
   useEffect(() => {
     (async () => {
@@ -398,11 +401,20 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
           {freshError && <p className="quest-error">{freshError}</p>}
         </div>
       )}
-      <div className="setup-grid">
+      <div className="setup-switch" role="tablist" aria-label="Show">
+        <button type="button" role="tab" aria-selected={narrowView === "chat"} className={narrowView === "chat" ? "is-on" : ""} onClick={() => setNarrowView("chat")}>
+          Chat
+        </button>
+        <button type="button" role="tab" aria-selected={narrowView === "sheet"} className={narrowView === "sheet" ? "is-on" : ""} onClick={() => setNarrowView("sheet")}>
+          Semester sheet
+        </button>
+      </div>
+      <div className="setup-grid" data-narrow={narrowView}>
         <section className="setup-main">
           {draft.setupStep !== "running" && <HandoffCard {...props} />}
           <SetupChat
             {...props}
+            scroller={scroller}
             below={draft.status === "setting_up" && !returning && env.current?.source !== "onboarding" && draft.courses.length === 0 ? <RestoreBackup /> : null}
           />
           {draft.setupStep === "running" && <Running {...props} />}
@@ -505,17 +517,15 @@ function HandoffCard({ handoff, recheckHandoff, draft, update }: StepProps) {
 // `below`: a quiet line under the input box ("Had StudyDesk before?"). It sits
 // there, not above the chat, so it never pushes the conversation around when
 // it appears or goes away.
-function SetupChat({ env, draft, update, updateProfile, today, flush, md, returning, draftRef, profileRef, handoff, below }: StepProps & { below?: ReactNode }) {
+function SetupChat({ env, draft, update, updateProfile, today, flush, md, returning, draftRef, profileRef, handoff, below, scroller }: StepProps & { below?: ReactNode; scroller: React.RefObject<HTMLDivElement> }) {
   const [busy, setBusy] = useState<string | null>(null);
   const ctl = useRef<AbortController | null>(null);
-  const endRef = useRef<HTMLDivElement>(null);
   const chat = draft.chat ?? [];
   // The chat stays open after setup, to work through the to-do list.
   const open = draft.setupStep !== "running";
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [chat.length]);
+  // A sent message moves to the top of the view, and the answer comes in below it.
+  const { tail, tailRef } = useSentToTop(scroller, [...chat].reverse().find((m) => m.role === "user")?.id);
 
   const patchMsg = (id: string, p: Partial<SetupMessage>) => update((d) => ({ ...d, chat: (d.chat ?? []).map((m) => (m.id === id ? { ...m, ...p } : m)) }));
 
@@ -652,11 +662,11 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
   }
 
   return (
-    <div className="setup-chat">
+    <div className={"setup-chat" + (open ? " has-composer" : "")}>
       <div className="setup-thread">
         {chat.map((m) =>
           m.role === "user" ? (
-            <div key={m.id} className="row-user">
+            <div key={m.id} className="row-user" data-msg={m.id}>
               <div className="bubble">
                 {m.text && <div className="bubble-text">{m.text}</div>}
                 {m.files && m.files.length > 0 && <SentFiles names={m.files} />}
@@ -693,7 +703,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
             </div>
           ),
         )}
-        <div ref={endRef} />
+        <div ref={tailRef} style={{ height: open ? tail : 0 }} aria-hidden="true" />
       </div>
       {open && (
         <div className="setup-composer">
@@ -715,6 +725,14 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
       )}
     </div>
   );
+}
+
+/** A set with one id added or taken out. Pure. */
+function toggled(s: Set<string>, id: string): Set<string> {
+  const n = new Set(s);
+  if (n.has(id)) n.delete(id);
+  else n.add(id);
+  return n;
 }
 
 const NOTHING_KEPT: KeptDrop = { uploads: [], zips: [], previews: [], images: [], failed: [], report: null };
@@ -969,24 +987,25 @@ function Running({ env, draft, profile, update, updateProfile, go, today, flush,
     }
   }, [pending, failed.length, doneCount, finish]);
 
+  // Which running courses show their whole log (each card shows only its latest step otherwise).
+  const [openLogs, setOpenLogs] = useState<Set<string>>(() => new Set());
   const reading = draft.courses.filter((c) => c.setupStatus === "reading");
   const next = draft.courses.filter((c) => c.setupStatus === "waiting");
   const finished = draft.courses.filter((c) => draft.results[c.id] && (c.setupStatus === "ready" || c.setupStatus === "needs_check"));
   /** The newest steps of a long log, with how many came before. */
   const recent = (lines: string[], n = 14) => (lines.length > n ? [`(${lines.length - n} earlier steps)`, ...lines.slice(-n)] : lines);
-  const nowText = (c: DraftCourse) => {
+  /** What a running course has done so far, and its status line. */
+  const nowLog = (c: DraftCourse): { lines: string[]; status: string } => {
     const fb = feed[c.id];
     if (c.job) {
-      const lines = [...(fb?.prep ?? ["Working in a cloud session"]), ...(fb?.log ?? [])];
       const mins = Math.max(1, Math.round((Date.now() - c.job.startedAt) / 60_000));
-      return [...recent(lines).map((l) => `- ${l}`), "", `*Working in a cloud session · ${mins} min so far*`].join("\n");
+      return { lines: [...(fb?.prep ?? ["Working in a cloud session"]), ...(fb?.log ?? [])], status: `Cloud session · ${mins} min so far` };
     }
-    if (!fb) return "*Opening the files…*";
-    return [
-      ...recent([...(c.cloudFailed && cloud ? [`Not in a cloud session: ${c.cloudFailed}`] : []), ...fb.prep, ...(fb.live?.log ?? [])]).map((l) => `- ${l}`),
-      "",
-      `*${!fb.live?.stage || fb.live.stage === "reading" ? "Reading…" : `Now ${fb.live.stage}`}${fb.live && fb.live.skills > 0 ? ` · ${fb.live.topics} topics, ${fb.live.skills} skills so far` : ""}*`,
-    ].join("\n");
+    if (!fb) return { lines: [], status: "Opening the files…" };
+    return {
+      lines: [...(c.cloudFailed && cloud ? [`Not in a cloud session: ${c.cloudFailed}`] : []), ...fb.prep, ...(fb.live?.log ?? [])],
+      status: `${!fb.live?.stage || fb.live.stage === "reading" ? "Reading" : `Now ${fb.live.stage}`}${fb.live && fb.live.skills > 0 ? ` · ${fb.live.topics} topics, ${fb.live.skills} skills so far` : ""}`,
+    };
   };
   const doneText = finished
     .map((c) => {
@@ -1014,19 +1033,35 @@ function Running({ env, draft, profile, update, updateProfile, go, today, flush,
       </p>
       {fallback && <p className="quest-muted">Opus wasn't available on your plan here, so the {fallback}.</p>}
 
-      {reading.map((c) => (
-        <div key={c.id} className="setup-now">
-          <h3>
-            <span className="setup-spin" aria-hidden="true" /> {c.name}
-            {c.job?.sessionId && (
-              <a className="setup-session-link" href={sessionUrl(c.job.sessionId)} target="_blank" rel="noreferrer">
-                Open the session
-              </a>
-            )}
-          </h3>
-          {md(`run-now-${c.id}`, nowText(c), `the live log of the setup run for ${c.name}`)}
-        </div>
-      ))}
+      {reading.map((c) => {
+        const { lines, status } = nowLog(c);
+        const latest = lines[lines.length - 1];
+        const open = openLogs.has(c.id);
+        return (
+          <div key={c.id} className={"setup-now" + (open ? " is-open" : "")}>
+            <div className="setup-now-head">
+              <span className="setup-spin" aria-hidden="true" />
+              <strong className="setup-now-name">{c.name}</strong>
+              {c.job?.sessionId && (
+                <a className="setup-session-link" href={sessionUrl(c.job.sessionId)} target="_blank" rel="noreferrer">
+                  Open the session
+                </a>
+              )}
+            </div>
+            {open
+              ? md(`run-now-${c.id}`, recent(lines, 40).map((l) => `- ${l}`).join("\n"), `the live log of the setup run for ${c.name}`)
+              : latest && <div className="setup-now-latest">{md(`run-latest-${c.id}`, latest, `the latest step of the setup run for ${c.name}`)}</div>}
+            <div className="setup-now-foot">
+              <span>{status}</span>
+              {lines.length > 1 && (
+                <button type="button" className="link-btn" aria-expanded={open} onClick={() => setOpenLogs((s) => toggled(s, c.id))}>
+                  {open ? "Show less" : `All ${lines.length} steps`}
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
 
       {failed.map((c) => (
         <p key={c.id} className="setup-failed">
@@ -1387,7 +1422,14 @@ function Sheet({ env, draft, profile, update, updateProfile, returning, editable
       })}
       {draft.uploads.some((u) => !u.courseId) && <p className="quest-muted">{draft.uploads.filter((u) => !u.courseId).length} files not sorted to a course yet.</p>}
 
-      <h3>Week {draft.calendarImportedAt ? <span className="setup-tag">from your calendar</span> : null}</h3>
+      <h3>
+        Week{" "}
+        {draft.calendarImportedAt && draft.calendarLive !== false ? (
+          <span className="setup-tag" title="Your calendar is read again whenever StudyDesk is open, and each day's quest is sized from it.">
+            live from your calendar
+          </span>
+        ) : null}
+      </h3>
       <table className="sheet-week">
         <tbody>
           {WEEK.map((wd) => {
@@ -1408,7 +1450,7 @@ function Sheet({ env, draft, profile, update, updateProfile, returning, editable
                   />{" "}
                   h
                 </td>
-                <td className="quest-muted">{busy ? `${hours(busy)} fixed` : ""}</td>
+                <td className="quest-muted">{busy ? `${hours(busy)} ${draft.timetable.some((t) => t.weekday === wd && t.kind === "fixed") ? "booked" : "in class"}` : ""}</td>
               </tr>
             );
           })}

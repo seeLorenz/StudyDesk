@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SentFiles } from "../chat/SentFiles";
+import { useSentToTop } from "../chat/useSentToTop";
 import { ImportProgress } from "../chat/ImportProgress";
 import { Logo } from "../shell/Logo";
 import { createPortal } from "react-dom";
@@ -762,9 +763,11 @@ export function OrchestratorPanel(props: Props) {
     void sendRef.current(`${p.text}\n\n(said in ${p.where})`, [], { fromTutor: true });
   }, [ready, busy, queued, saveState, today, open]);
 
+  // Opening the panel shows the end of the chat; a sent message moves to the top of the view, with the answer below it.
   useEffect(() => {
     if (open) endRef.current?.scrollIntoView({ block: "end" });
-  }, [open, messages.length]);
+  }, [open]);
+  const { tail, tailRef } = useSentToTop(scroller, [...messages].reverse().find((m) => m.role === "user")?.id, !!env);
 
   // ---------- select-to-reply on the chat ----------
   const blocks = useMemo(() => new Map(messages.filter((m) => m.role === "assistant").map((m) => [m.id, m.text])), [messages]);
@@ -847,7 +850,7 @@ export function OrchestratorPanel(props: Props) {
         {ready &&
           messages.map((m) =>
             m.role === "user" ? (
-              <div key={m.id} className="row-user">
+              <div key={m.id} className="row-user" data-msg={m.id}>
                 <div className="bubble">
                   {(m.quote || m.fromTutor) && <div className="orch-quote">{m.fromTutor ? "Passed on by the tutor" : `About: “${m.quote}”`}</div>}
                   {m.text && <div className="bubble-text">{m.text}</div>}
@@ -885,6 +888,7 @@ export function OrchestratorPanel(props: Props) {
               </div>
             ),
           )}
+        <div ref={tailRef} style={{ height: tail }} aria-hidden="true" />
         <div ref={endRef} />
       </div>
 

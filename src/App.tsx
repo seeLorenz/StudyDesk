@@ -7,6 +7,7 @@ import { openStore, type ChatStore } from "./platform/store";
 import { QuestPage, type QuestCommand } from "./quests/QuestPage";
 import { OnboardingPage } from "./onboarding/OnboardingPage";
 import { openQuestStore } from "./platform/questStore";
+import { aheadIsStale, readCalendarAhead } from "./platform/calendar";
 import { OrchestratorPanel, type OrchStatus } from "./orchestrator/OrchestratorPanel";
 import { subscribe } from "./platform/deskBus";
 import type { Semester } from "./quests/types";
@@ -55,6 +56,8 @@ export function App() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [current, setCurrent] = useState<Chat>(newChat);
+  // Narrow screens show Organize's chat or its data, not one under the other, so the chat box stays at hand.
+  const [orgView, setOrgView] = useState<"chat" | "data">("chat");
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -154,6 +157,33 @@ export function App() {
     // Read again on each screen change: the quest page can switch to sample data without telling anyone.
   }, [view]);
   useEffect(() => subscribe("semester", "app", (s) => setSemester(s)), []);
+
+  // The calendar is live data: while the page is open, the coming two weeks are
+  // read again every few hours, so the nightly run (which can't reach the
+  // calendar) sizes tomorrow's quest from the latest read, not from setup.
+  const calendarLive = semester && semester !== "none" && semester.calendarSync;
+  useEffect(() => {
+    if (!calendarLive) return;
+    let stopped = false;
+    const refresh = async () => {
+      try {
+        const qs = await openQuestStore();
+        if (qs.mode !== "cloud") return;
+        const today = toDay();
+        if (!aheadIsStale(await qs.loadCalendar(), today, Date.now())) return;
+        const ahead = await readCalendarAhead(today);
+        if (!stopped) await qs.saveCalendar(ahead);
+      } catch {
+        /* calendar not reachable right now: the last read stays */
+      }
+    };
+    void refresh();
+    const timer = setInterval(refresh, 30 * 60 * 1000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [calendarLive]);
 
   useEffect(() => {
     let stop = () => {};
@@ -369,7 +399,15 @@ export function App() {
         )}
         {shown === "chat" && <ChatView key={current.id} initial={current} save={save} onSaveError={onSaveError} autoSend={askSeed?.chatId === current.id ? askSeed.question : undefined} />}
         {shown === "organize" && (
-          <div className="organize">
+          <div className="organize" data-narrow={orgView}>
+            <div className="setup-switch organize-switch" role="tablist" aria-label="Show">
+              <button type="button" role="tab" aria-selected={orgView === "chat"} className={orgView === "chat" ? "is-on" : ""} onClick={() => setOrgView("chat")}>
+                Chat
+              </button>
+              <button type="button" role="tab" aria-selected={orgView === "data"} className={orgView === "data" ? "is-on" : ""} onClick={() => setOrgView("data")}>
+                Your semester
+              </button>
+            </div>
             <div className="organize-chat" ref={setDock} />
             <div className="organize-data">
               <DeskPanel onOpenSetup={() => go("setup")} />

@@ -33,6 +33,7 @@ Grouped by what happens behind the scenes. The lists are examples, not a fixed m
 - New homework, typed or as a photo of the sheet (the task text is kept word for word).
 - A result: "I got 18 of 24 on sheet 3" (an assessment result, as the grading spec defines it).
 - Weekly timetable and fixed commitments, or a fresh calendar import.
+- Whether the calendar is followed live (it is by default; only turned off when the student explicitly asks, `set_calendar_live`).
 - Quest settings: hints per task, lesson length, daily budget (`src/quests/config.ts`).
 - A course's teaching language. Profile details.
 - A fact to remember: "the professor said proofs from chapter 4 won't be in the exam" (kept word for word for the organization agent, and starts a job, see below).

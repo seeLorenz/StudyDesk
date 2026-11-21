@@ -399,6 +399,21 @@ export function applyOps(
         lines.push(`Noted${c ? ` for ${c.name}` : ""}: "${text}"`);
         break;
       }
+      case "set_calendar_live": {
+        const v = op.on === true || op.on === "true" ? true : op.on === false || op.on === "false" ? false : null;
+        if (v === null) {
+          errors.push("set_calendar_live: on must be true or false.");
+          break;
+        }
+        if (!desk.draft.calendarImportedAt) {
+          errors.push("set_calendar_live: no calendar was imported; use read_calendar first.");
+          break;
+        }
+        if ((desk.draft.calendarLive !== false) === v) break;
+        touch("calendarLive", v);
+        lines.push(v ? "Calendar: followed live again, each day's quest is sized from it" : "Calendar: no longer followed day by day, quests go by the weekly timetable");
+        break;
+      }
       case "set_nightly": {
         const cur = nightlySettings(desk.profile.nightly);
         const next = { ...cur };

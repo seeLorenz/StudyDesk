@@ -10,6 +10,7 @@
 // Order matters: tomorrow's quest is planned from tonight's grades and from
 // whatever the organization agent found, so it comes last.
 
+import { busyFromAhead, type CalendarAhead } from "../platform/calendar";
 import { addDays } from "../mastery/days";
 import { replay } from "../mastery/replay";
 import type { Attempt, Day, ReviewItem, Skill } from "../mastery/types";
@@ -82,6 +83,8 @@ export type NightInput = {
   profile: Profile | null;
   draft: SemesterDraft | null;
   semester: Semester | null;
+  /** The page's latest read of the calendar's coming days (the run itself can't reach the calendar). */
+  calendar?: CalendarAhead | null;
   records: QuestRecord[];
   mastery: MasteryData;
   outbox: OutboxDoc[];
@@ -182,7 +185,7 @@ export async function runNightly(input: NightInput, d: DeferredAsk): Promise<Nig
 
   // ---- 3. Tomorrow's quest ----
   let questId: string | null = null;
-  const q = settings.quest ? await writeTomorrow(semester, records, mastery, tomorrow, now, d, log) : { pending: false, record: null };
+  const q = settings.quest ? await writeTomorrow(semester, input.calendar ?? null, records, mastery, tomorrow, now, d, log) : { pending: false, record: null };
   if (!settings.quest) log.push("Writing the quest overnight is turned off; it's written when you open StudyDesk.");
   if (q.pending) return { kind: "pending", log };
   if (q.record) {
@@ -335,7 +338,15 @@ async function organize(input: NightInput, desk: Desk, org: OrgState, mastery: M
 
 // ---------- tomorrow's quest ----------
 
-async function writeTomorrow(semester: Semester | null, records: QuestRecord[], mastery: MasteryData, tomorrow: Day, now: number, d: DeferredAsk, log: string[]) {
+function sizedBy(semester: Semester, calendar: CalendarAhead | null, busy: number | undefined, now: number): string {
+  if (!semester.calendarSync) return "It goes by your weekly timetable.";
+  if (busy === undefined || !calendar) return "It goes by your weekly timetable: your calendar hasn't been read for tomorrow yet (it's read whenever StudyDesk is open).";
+  const h = Math.max(0, Math.round((now - calendar.readAt) / 3_600_000));
+  const ago = h < 1 ? "less than an hour ago" : h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
+  return `It's sized from your calendar, last read ${ago}.`;
+}
+
+async function writeTomorrow(semester: Semester | null, calendar: CalendarAhead | null, records: QuestRecord[], mastery: MasteryData, tomorrow: Day, now: number, d: DeferredAsk, log: string[]) {
   const out = { pending: false, record: null as QuestRecord | null };
   if (!semester) {
     log.push("No semester yet, so no quest was written.");
@@ -349,7 +360,10 @@ async function writeTomorrow(semester: Semester | null, records: QuestRecord[], 
     log.push("Tomorrow's quest already exists.");
     return out;
   }
+  // Calendar data is live: tomorrow is sized from the latest read of the calendar.
+  const calendarBusyMinutes = semester.calendarSync ? busyFromAhead(calendar, tomorrow) : undefined;
   const res = planQuest({
+    calendarBusyMinutes,
     semester,
     today: tomorrow,
     nowLocal: `${tomorrow}T00:00`,
@@ -375,7 +389,7 @@ async function writeTomorrow(semester: Semester | null, records: QuestRecord[], 
     const quest = await writeQuest(res.quest, writer, undefined, { concurrency: res.quest.parts.length });
     out.record = { quest, progress: emptyProgress(quest.id) };
     const minutes = quest.plannedMinutes;
-    log.push(`Wrote tomorrow's quest: ${course?.name ?? "quest"}, ${quest.parts.length} ${quest.parts.length === 1 ? "part" : "parts"}, about ${minutes} min. It goes by your weekly timetable; your calendar isn't read at night.`);
+    log.push(`Wrote tomorrow's quest: ${course?.name ?? "quest"}, ${quest.parts.length} ${quest.parts.length === 1 ? "part" : "parts"}, about ${minutes} min. ${sizedBy(semester, calendar, calendarBusyMinutes, now)}`);
   } catch (e) {
     if (isPending(e)) out.pending = true;
     else log.push(`Tomorrow's quest couldn't be written (${(e as Error)?.message ?? String(e)}). StudyDesk writes it when you open it.`);

@@ -79,7 +79,7 @@ The Orchestrator sees the run's status, its settings, each course's next sweep a
 
 ## Limits, for now
 
-- **No calendar at night.** Scheduled tasks can't use connectors, so the nightly quest is sized from the weekly timetable, not today's Google Calendar. (The page still uses the calendar when it writes a quest itself.)
+- **Calendar data is live, read by the page.** Scheduled tasks can't use connectors, so the nightly run can't read Google Calendar itself. Instead, whenever StudyDesk is open the page reads the next 14 days of the calendar again (at most every 3 hours, and on each new day) and saves the busy minutes per day in `data/users/<uid>/calendar`. The nightly run sizes tomorrow's quest from that latest read, with the weekly timetable as a floor, and its log says how old the read is. Only if tomorrow isn't covered by any read does it fall back to the weekly timetable alone. The page also reads today's calendar when it writes a quest itself.
 - **Files in deep sweeps** are opened by the session itself from the student's data and file store, like cloud setup runs (images and scans included).
 - **A new semester** creates no new task: the same one keeps running and reads whatever semester is current.
 - **Cost:** one Opus session a night on the student's own plan, longer on nights with a deep sweep.

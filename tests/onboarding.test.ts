@@ -4,7 +4,7 @@ import { setupTodo, staleCourses, asksForFiles } from "../src/onboarding/todo";
 import { planPlacement, recommendWorkload, studyDaysUntil } from "../src/onboarding/placement";
 import { gradeSteps } from "../src/onboarding/scales";
 import { applySheetUpdate, chatTurns, setupReady, sheetSnapshot } from "../src/onboarding/agent";
-import { busyMinutesFromEvents, toEvents, weeklyPattern } from "../src/platform/calendar";
+import { aheadFromEvents, aheadIsStale, busyFromAhead, busyMinutesFromEvents, toEvents, weeklyPattern } from "../src/platform/calendar";
 import type { DraftCourse, Profile, SemesterDraft } from "../src/onboarding/types";
 import { replay } from "../src/mastery/replay";
 import type { Attempt } from "../src/mastery/types";
@@ -330,6 +330,15 @@ describe("calendar", () => {
   });
   it("counts busy minutes once where events overlap", () => {
     expect(busyMinutesFromEvents(events, "2026-11-23")).toBe(120);
+  });
+  it("keeps the latest read of the coming days, which the nightly run sizes from", () => {
+    const ahead = aheadFromEvents(events, "2026-11-22", 14, 1000);
+    expect(busyFromAhead(ahead, "2026-11-23")).toBe(120);
+    expect(busyFromAhead(ahead, "2026-11-22")).toBe(0); // read, and free
+    expect(busyFromAhead(ahead, "2026-12-10")).toBeUndefined(); // not covered by the read
+    expect(aheadIsStale(ahead, "2026-11-22", 1000 + 60_000)).toBe(false);
+    expect(aheadIsStale(ahead, "2026-11-23", 1000 + 60_000)).toBe(true); // a new day
+    expect(aheadIsStale(ahead, "2026-11-22", 1000 + 4 * 3_600_000)).toBe(true);
   });
 });
 

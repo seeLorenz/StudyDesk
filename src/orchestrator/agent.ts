@@ -144,6 +144,7 @@ export const CHANGE_TOOL = {
 - {op:"set_study_goal", minutes:{Mon:120, Sat:0, ...}} (lectures included, only days that change)
 - {op:"set_day_off", date, reason?} / {op:"remove_day_off", date}
 - {op:"add_slot", weekday, start, end, kind:"lecture"|"exercise"|"fixed", title, course?} / {op:"remove_slot", weekday, start}
+- {op:"set_calendar_live", on: bool} (calendar data is live by default: it's read again whenever StudyDesk is open and each day's quest is sized from it. Only set on:false when the student explicitly asks to stop following their calendar)
 - {op:"set_language", course, language}
 - {op:"set_quest_settings", hints?: 0-5 (per homework task), lessonMinutes?: 2-15 (reading part of a lesson), newSkillsPerQuest?: 0-4}
 - {op:"set_nightly", time?: "HH:MM", paused?: bool, grading?: bool, check?: bool, quest?: bool} (the nightly run: when it runs, pause it, or turn off grading / the courses' check / writing tomorrow's quest)

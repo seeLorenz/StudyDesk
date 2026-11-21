@@ -158,6 +158,8 @@ export type SemesterDraft = {
   chat?: SetupMessage[];
   /** When lectures and commitments were last imported from Google Calendar. */
   calendarImportedAt?: number | null;
+  /** false once the student says their calendar shouldn't be followed day by day. Calendar data is live otherwise. */
+  calendarLive?: boolean;
   /** Side notes from select-to-reply on the chat and the setup report. */
   notes?: Note[];
   /** To-do items on the done screen the student ticked off ("upload", "q-<courseId>"). */

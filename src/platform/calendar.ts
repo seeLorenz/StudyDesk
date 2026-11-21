@@ -5,6 +5,7 @@
 
 import { host } from "./host";
 import type { Day } from "../mastery/types";
+import { addDays } from "../mastery/days";
 
 export const CALENDAR_SERVER = "Google Calendar";
 
@@ -190,6 +191,41 @@ export function busyMinutesFromEvents(events: CalendarEvent[], day: Day): number
   }
   if (curE > curS) total += curE - curS;
   return total;
+}
+
+/**
+ * The calendar is live data: whenever the page is open it reads the coming
+ * days again and keeps the busy minutes per day here. The nightly run can't
+ * reach the calendar (scheduled tasks have no connectors), so it sizes
+ * tomorrow's quest from this, the latest read, instead of a setup-time copy.
+ */
+export type CalendarAhead = { readAt: number; from: Day; days: number; busy: Record<Day, number> };
+export const CALENDAR_AHEAD_DAYS = 14;
+/** Read again when the last read is older than this. */
+export const CALENDAR_REFRESH_MS = 3 * 60 * 60 * 1000;
+
+/** Pure: busy minutes for each of `days` days from `from`. */
+export function aheadFromEvents(events: CalendarEvent[], from: Day, days: number, readAt: number): CalendarAhead {
+  const busy: Record<Day, number> = {};
+  for (let i = 0; i < days; i++) {
+    const d = addDays(from, i);
+    busy[d] = busyMinutesFromEvents(events, d);
+  }
+  return { readAt, from, days, busy };
+}
+
+/** Pure: the calendar's busy minutes on `day`, or undefined when the last read doesn't cover it. */
+export function busyFromAhead(ahead: CalendarAhead | null | undefined, day: Day): number | undefined {
+  return ahead?.busy && Object.prototype.hasOwnProperty.call(ahead.busy, day) ? ahead.busy[day] : undefined;
+}
+
+export function aheadIsStale(ahead: CalendarAhead | null | undefined, today: Day, now: number): boolean {
+  return !ahead || ahead.from !== today || now - ahead.readAt > CALENDAR_REFRESH_MS;
+}
+
+/** Reads the coming days again. Rejects with a CalendarError. */
+export async function readCalendarAhead(today: Day, now = Date.now()): Promise<CalendarAhead> {
+  return aheadFromEvents(await readCalendar(today, CALENDAR_AHEAD_DAYS), today, CALENDAR_AHEAD_DAYS, now);
 }
 
 const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
