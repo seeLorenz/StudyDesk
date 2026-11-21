@@ -320,6 +320,7 @@ async function main(): Promise<void> {
     profile,
     draft: doc(all, "onboarding"),
     semester: doc(all, "semester"),
+    calendar: doc(all, "calendar"),
     records: collection<NightInput["records"][number]>(all, "quests/records").map((x) => x.data),
     mastery,
     outbox: collection<OutboxDoc>(all, "routine/outbox").map((x) => x.data),

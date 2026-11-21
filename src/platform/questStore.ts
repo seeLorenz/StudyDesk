@@ -4,10 +4,12 @@
 //   data/users/<uid>/quests/records/<id>   one quest plus the student's work on it
 //   data/users/<uid>/quests/reviews/<id>   the mistake-review chat for that quest
 //   data/users/<uid>/quests/images/<id>    one answer photo
+//   data/users/<uid>/calendar              the latest read of the coming days' calendar
 // Elsewhere it falls back to this browser's localStorage.
 
 import { host } from "./host";
 import type { Chat } from "../chat/types";
+import type { CalendarAhead } from "./calendar";
 import type { QuestRecord, Semester } from "../quests/types";
 
 export interface QuestStore {
@@ -22,6 +24,9 @@ export interface QuestStore {
   /** Answer photos, as compressed JPEG data URLs, one per document. */
   saveImage(id: string, dataUrl: string): Promise<void>;
   loadImage(id: string): Promise<string | null>;
+  /** The latest read of the student's calendar for the coming days. */
+  loadCalendar(): Promise<CalendarAhead | null>;
+  saveCalendar(c: CalendarAhead): Promise<void>;
 }
 
 const plain = <T>(x: T) => JSON.parse(JSON.stringify(x)) as Record<string, unknown>;
@@ -38,6 +43,7 @@ export async function openQuestStore(): Promise<QuestStore> {
 
 function cloudQuestStore(db: DB, uid: string): QuestStore {
   const semester = db.doc(`data/users/${uid}/semester`);
+  const calendar = db.doc(`data/users/${uid}/calendar`);
   const records = db.doc(`data/users/${uid}/quests`).collection("records");
   const reviews = db.doc(`data/users/${uid}/quests`).collection("reviews");
   const images = db.doc(`data/users/${uid}/quests`).collection("images");
@@ -71,6 +77,13 @@ function cloudQuestStore(db: DB, uid: string): QuestStore {
     async saveSemester(s) {
       await semester.set(plain(s));
     },
+    async loadCalendar() {
+      const snap = await calendar.get();
+      return snap.exists ? (snap.data() as unknown as CalendarAhead) : null;
+    },
+    async saveCalendar(c) {
+      await calendar.set(plain(c));
+    },
     async loadRecords() {
       return (await records.get()).docs.filter((d) => d.exists).map((d) => d.data() as unknown as QuestRecord);
     },
@@ -103,7 +116,7 @@ function cloudQuestStore(db: DB, uid: string): QuestStore {
 
 function localQuestStore(): QuestStore {
   const KEY = "studydesk.quests.v1";
-  const mem: { semester: Semester | null; records: QuestRecord[]; reviews?: Record<string, Chat>; images: Map<string, string> } = {
+  const mem: { semester: Semester | null; records: QuestRecord[]; reviews?: Record<string, Chat>; calendar?: CalendarAhead | null; images: Map<string, string> } = {
     semester: null,
     records: [],
     images: new Map(),
@@ -120,6 +133,7 @@ function localQuestStore(): QuestStore {
     mem.semester = d.semester;
     mem.records = d.records;
     mem.reviews = d.reviews;
+    mem.calendar = d.calendar;
     try {
       localStorage.setItem(KEY, JSON.stringify(rest));
     } catch {
@@ -136,6 +150,12 @@ function localQuestStore(): QuestStore {
     },
     async loadRecords() {
       return read().records;
+    },
+    async loadCalendar() {
+      return read().calendar ?? null;
+    },
+    async saveCalendar(c) {
+      write({ ...read(), calendar: c });
     },
     async loadReviewChats() {
       return read().reviews ?? {};

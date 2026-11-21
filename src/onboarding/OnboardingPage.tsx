@@ -1415,7 +1415,14 @@ function Sheet({ env, draft, profile, update, updateProfile, returning, editable
       })}
       {draft.uploads.some((u) => !u.courseId) && <p className="quest-muted">{draft.uploads.filter((u) => !u.courseId).length} files not sorted to a course yet.</p>}
 
-      <h3>Week {draft.calendarImportedAt ? <span className="setup-tag">from your calendar</span> : null}</h3>
+      <h3>
+        Week{" "}
+        {draft.calendarImportedAt && draft.calendarLive !== false ? (
+          <span className="setup-tag" title="Your calendar is read again whenever StudyDesk is open, and each day's quest is sized from it.">
+            live from your calendar
+          </span>
+        ) : null}
+      </h3>
       <table className="sheet-week">
         <tbody>
           {WEEK.map((wd) => {
@@ -1436,7 +1443,7 @@ function Sheet({ env, draft, profile, update, updateProfile, returning, editable
                   />{" "}
                   h
                 </td>
-                <td className="quest-muted">{busy ? `${hours(busy)} fixed` : ""}</td>
+                <td className="quest-muted">{busy ? `${hours(busy)} ${draft.timetable.some((t) => t.weekday === wd && t.kind === "fixed") ? "booked" : "in class"}` : ""}</td>
               </tr>
             );
           })}

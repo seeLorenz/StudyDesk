@@ -301,6 +301,15 @@ describe("changing the nightly run through the StudyDesk chat", () => {
     expect(scheduleFits({ triggerId: "t", key: "k", timeZone: "Europe/Berlin", time: "22:00", createdAt: 0 }, "Europe/Berlin", "21:30")).toBe(false);
   });
 
+  it("treats the calendar as live unless the student says otherwise", () => {
+    const d = { ...draft(), calendarImportedAt: 1 };
+    const r = applyOps({ draft: d, profile }, [{ op: "set_calendar_live", on: false }], { studentWords: "stop following my calendar" });
+    expect(r.errors).toEqual([]);
+    expect(r.desk.draft.calendarLive).toBe(false);
+    expect(applyOps(r.desk, [{ op: "set_calendar_live", on: true }], { studentWords: "" }).desk.draft.calendarLive).toBe(true);
+    expect(applyOps({ draft: draft(), profile }, [{ op: "set_calendar_live", on: false }], { studentWords: "" }).errors[0]).toContain("no calendar");
+  });
+
   it("sets a course's deep sweep date, which wins over the agent's own", () => {
     const r = applyOps({ draft: draft(), profile }, [{ op: "set_sweep", course: "Calculus 1", date: "2026-11-05" }], { studentWords: "read calculus again on thursday" });
     expect(r.desk.draft.sweepDates).toEqual({ c1: "2026-11-05" });
