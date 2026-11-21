@@ -10,6 +10,7 @@ import { uid } from "../chat/types";
 import { assessmentAttempts } from "../mastery/grades";
 import type { AssessmentResult, Attempt, CourseTarget } from "../mastery/types";
 import { buildSemester } from "../onboarding/setup";
+import { setupTodo } from "../onboarding/todo";
 import type { CourseSetup, DraftCourse, Profile, SemesterDraft } from "../onboarding/types";
 import type { Assignment, KeyDate, Semester, TimetableEntry } from "../quests/types";
 import { QUEST_SETTING_LIMITS, questSettingsNow, type QuestSettings } from "../quests/config";
@@ -412,6 +413,25 @@ export function applyOps(
         if ((desk.draft.calendarLive !== false) === v) break;
         touch("calendarLive", v);
         lines.push(v ? "Calendar: followed live again, each day's quest is sized from it" : "Calendar: no longer followed day by day, quests go by the weekly timetable");
+        break;
+      }
+      case "tick_todo": {
+        const key = str(op.key);
+        const todo = setupTodo(desk.draft);
+        const item = todo.find((t) => t.key === key || t.title === key);
+        const sub = item ? undefined : todo.flatMap((t) => t.subs ?? []).find((x) => x.key === key);
+        if (!item && !sub) {
+          errors.push(`tick_todo: no to-do "${key}"; use a key from openToDo (an item or one of its parts).`);
+          break;
+        }
+        const target = item ? { key: item.key, label: item.title, done: item.done } : { key: sub!.key, label: sub!.text.replace(/\*\*/g, ""), done: sub!.done };
+        const on = !(op.done === false || op.done === "false");
+        if (target.done === on) break;
+        const list = desk.draft.todoDone ?? [];
+        // Opening a part again also opens its item when the whole item was ticked.
+        const parent = target.key.split(":")[0];
+        touch("todoDone", on ? [...new Set([...list, target.key])] : list.filter((k) => k !== target.key && k !== parent));
+        lines.push(on ? `To do: ticked off "${target.label}"` : `To do: "${target.label}" is open again`);
         break;
       }
       case "set_nightly": {

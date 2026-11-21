@@ -87,7 +87,7 @@ export function deskSnapshot(i: SnapshotInput): string {
       todaysQuest: quest ? { course: quest.quest.courseId, plannedMinutes: quest.quest.plannedMinutes, started: questStarted(quest) } : null,
       questSettings: questSettingsNow(draft.questSettings),
       speedLastQuests: sp.ratio === null ? "not measured yet" : `${sp.actual} min actual vs ${sp.planned} min planned over ${sp.quests} quests`,
-      openToDo: setupTodo(draft).filter((t) => !t.done).map((t) => t.title),
+      openToDo: setupTodo(draft).filter((t) => !t.done).map((t) => ({ key: t.key, title: t.title, ...(t.subs ? { parts: t.subs.map((x) => ({ key: x.key, text: x.text, done: x.done })) } : {}) })),
       jobs: i.state.jobs.filter((j) => j.status === "running" || (j.finishedAt ?? 0) > Date.now() - 86_400_000).map((j) => ({ id: j.id, kind: j.kind, courses: j.courseIds, status: j.status, result: j.result })),
       recentChanges: i.state.changes.slice(-6).map((c) => ({ id: c.id, lines: c.lines, status: c.status })),
       unsortedFiles: unsortedList(draft.uploads, draft.zips),
@@ -145,6 +145,7 @@ export const CHANGE_TOOL = {
 - {op:"set_day_off", date, reason?} / {op:"remove_day_off", date}
 - {op:"add_slot", weekday, start, end, kind:"lecture"|"exercise"|"fixed", title, course?} / {op:"remove_slot", weekday, start}
 - {op:"set_calendar_live", on: bool} (calendar data is live by default: it's read again whenever StudyDesk is open and each day's quest is sized from it. Only set on:false when the student explicitly asks to stop following their calendar)
+- {op:"tick_todo", key, done?: bool} (keep the to-do list current: tick each part of an openToDo item (parts[].key: one question, one date, one disagreement) as soon as it's answered or confirmed, even one of three, in the same change that records the answer; an item ticks itself off when all its parts are done. Tick an item's own key only when it has no parts (files: once dropped and assigned). Never ask the student to tick. done:false opens it again)
 - {op:"set_language", course, language}
 - {op:"set_quest_settings", hints?: 0-5 (per homework task), lessonMinutes?: 2-15 (reading part of a lesson), newSkillsPerQuest?: 0-4}
 - {op:"set_nightly", time?: "HH:MM", paused?: bool, grading?: bool, check?: bool, quest?: bool} (the nightly run: when it runs, pause it, or turn off grading / the courses' check / writing tomorrow's quest)
@@ -201,7 +202,7 @@ export const ASK_TOOL = {
 
 export const CALENDAR_TOOL = {
   name: "read_calendar",
-  description: "Reads the student's Google Calendar through their own connector: repeating weekly events of the next two weeks and one-off events of the next four months. Use when the student asks to import or update from their calendar, then add or remove weekly slots and exam dates with change. It reads every calendar the student has in Google Calendar, including subscribed ones (a university timetable added by URL, like TUGonline's iCal link). You can't open links yourself: if the student pastes an iCal link, tell them to add it in Google Calendar (Other calendars, +, From URL) and don't repeat the link, since it holds a private token; then read again. A newly added subscription can take a few minutes to fill.",
+  description: "Reads the student's Google Calendar through their own connector: repeating weekly events of the next two weeks and one-off events of the next four months. Use when the student asks to import or update from their calendar, then add or remove weekly slots and exam dates with change. It reads every calendar the student has in Google Calendar, including subscribed ones (a university timetable added by URL, like TUGonline's iCal link). You can't open links yourself: if the student pastes an iCal link, tell them to add it in Google Calendar (Other calendars, +, From URL) and don't repeat the link, since it holds a private token; then read again. A newly added subscription can take a few minutes to fill. Each event comes with its room and its description: read the descriptions, since they often say what an exam covers, where it is, or what to prepare or hand in, and record what matters as facts of the course (word for word) or as exam dates and homework.",
   inputSchema: { type: "object", properties: {} },
 } as const;
 

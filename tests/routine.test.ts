@@ -5,6 +5,7 @@ import { applyShallow, applySweep, mergeGrading, outboxOrder, type GradingOutbox
 import { clampSweep, nextOrgState, parseShallow, shallowTurns, sweepsDue } from "../src/routine/org";
 import { nightlyCron, scheduleFits, schedulePrompt } from "../src/platform/schedule";
 import { applyOps } from "../src/orchestrator/changes";
+import { setupTodo } from "../src/onboarding/todo";
 import { sampleGradingAsk, sampleSemester } from "../src/quests/seed";
 import { planQuest } from "../src/quests/plan";
 import { emptyProgress } from "../src/quests/handin";
@@ -299,6 +300,25 @@ describe("changing the nightly run through the StudyDesk chat", () => {
     expect(applyOps(r.desk, [{ op: "set_nightly", time: "25:00" }], { studentWords: "" }).errors[0]).toContain("HH:MM");
     // the new time needs a new scheduled task; the old one stops by its key
     expect(scheduleFits({ triggerId: "t", key: "k", timeZone: "Europe/Berlin", time: "22:00", createdAt: 0 }, "Europe/Berlin", "21:30")).toBe(false);
+  });
+
+  it("ticks a setup to-do item off itself", () => {
+    const d = draft();
+    const key = setupTodo(d)[0]?.key;
+    expect(key).toBeDefined();
+    const r = applyOps({ draft: d, profile }, [{ op: "tick_todo", key }], { studentWords: "here are the dates, they're right" });
+    expect(r.errors).toEqual([]);
+    expect(setupTodo(r.desk.draft).find((t) => t.key === key)?.done).toBe(true);
+    expect(r.change?.lines[0]).toMatch(/^To do: ticked off/);
+    expect(applyOps({ draft: d, profile }, [{ op: "tick_todo", key: "nope" }], { studentWords: "" }).errors[0]).toContain("no to-do");
+    const withParts = setupTodo(d).find((t) => t.subs && t.subs.length > 1);
+    if (withParts) {
+      const part = applyOps({ draft: d, profile }, [{ op: "tick_todo", key: withParts.subs![0].key }], { studentWords: "" });
+      expect(part.errors).toEqual([]);
+      const now = setupTodo(part.desk.draft).find((t) => t.key === withParts.key)!;
+      expect(now.subs![0].done).toBe(true);
+      expect(now.done).toBe(false);
+    }
   });
 
   it("treats the calendar as live unless the student says otherwise", () => {

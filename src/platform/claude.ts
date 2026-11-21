@@ -14,7 +14,27 @@ export type AskOptions = {
   tier?: "quick" | "default" | "complex";
   /** Page functions Claude may call while answering (never cached). */
   tools?: Claude.sample.SampleTool[];
+  /**
+   * Work nobody is waiting for (check-ins, memory summaries, update notes).
+   * It is skipped (rejects with code "skipped") while any other call is
+   * running, so it never competes with what the student asked.
+   */
+  background?: boolean;
 };
+
+/** Calls running right now; background work waits its turn. */
+let inFlight = 0;
+/** Waits before asking again after Claude said it's busy, in ms. */
+export const BUSY_RETRY_MS = [8_000, 20_000];
+
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(t);
+      reject({ code: "cancelled", message: "Stopped." });
+    });
+  });
 
 /**
  * Every agent in StudyDesk asks for Opus (the student's choice, 2026-11-20).
@@ -72,6 +92,27 @@ export async function canSendImages(): Promise<boolean> {
 export async function askClaude(turns: Turn[], opts: AskOptions = {}): Promise<string> {
   const sample = await getSample();
   if (!sample) return mockAnswer(turns, opts);
+  if (opts.background && inFlight > 0) throw { code: "skipped", message: "Another call is running." } satisfies AskError;
+  inFlight++;
+  try {
+    // A busy answer before anything was streamed is asked again a little later
+    // (twice) for what the student is waiting on, instead of failing at once.
+    for (let attempt = 0; ; attempt++) {
+      let streamed = false;
+      try {
+        return await askOnce(sample, turns, { ...opts, onText: opts.onText ? (t) => ((streamed = true), opts.onText!(t)) : undefined });
+      } catch (e) {
+        const err = e as AskError;
+        if (err.code !== "rate_limited" || streamed || opts.background || attempt >= BUSY_RETRY_MS.length || opts.signal?.aborted) throw err;
+        await sleep(BUSY_RETRY_MS[attempt], opts.signal);
+      }
+    }
+  } finally {
+    inFlight--;
+  }
+}
+
+async function askOnce(sample: NonNullable<Awaited<ReturnType<typeof getSample>>>, turns: Turn[], opts: AskOptions): Promise<string> {
   try {
     const res = await sample(turns, {
       ...(opts.tools ? { tools: opts.tools } : { cache: false }),
