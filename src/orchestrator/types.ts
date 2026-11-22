@@ -74,6 +74,8 @@ export type PendingConfirm = {
   studentWords: string;
   ops: Operation[];
   job?: JobRequest;
+  /** A new placement check, with or without deleting the past stats. */
+  placement?: { resetStats: boolean };
   status: "waiting" | "yes" | "no";
 };
 

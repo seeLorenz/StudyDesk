@@ -24,6 +24,8 @@ export interface MasteryStore {
   /** Adds attempts to the log. An id that already exists is left as it is. */
   appendAttempts(attempts: Attempt[]): Promise<void>;
   putReview(item: ReviewItem): Promise<void>;
+  /** Deletes the past stats (every attempt and the mistake review); skills and targets stay. Only on the student's confirmed request. */
+  clearStats(): Promise<void>;
 }
 
 const plain = <T>(x: T) => JSON.parse(JSON.stringify(x)) as Record<string, unknown>;
@@ -71,6 +73,12 @@ export function cloudMasteryStore(db: DB, uid: string): MasteryStore {
     },
     async putReview(item) {
       await col("reviews").doc(item.attemptId).set(plain(item));
+    },
+    async clearStats() {
+      for (const name of ["attempts", "reviews"] as const) {
+        const docs = (await col(name).get()).docs;
+        for (let i = 0; i < docs.length; i += 8) await Promise.all(docs.slice(i, i + 8).map((d) => col(name).doc(d.id).delete()));
+      }
     },
   };
 }
@@ -134,6 +142,9 @@ export function localMasteryStore(kv: KV): MasteryStore {
       const d = read();
       d.reviews = upsert(d.reviews, item, (x) => x.attemptId === item.attemptId);
       write(d);
+    },
+    async clearStats() {
+      write({ ...read(), attempts: [], reviews: [] });
     },
   };
 }

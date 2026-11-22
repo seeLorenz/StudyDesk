@@ -19,7 +19,7 @@ import { useSideNotes } from "../notes/useSideNotes";
 import { calendarForClaude, readCalendar, type CalendarError } from "../platform/calendar";
 import { askClaude, canSendImages, canUseTools, claudeAvailable, errorCopy, lastModel, type AskError } from "../platform/claude";
 import { openMasteryStore, type MasteryData, type MasteryStore } from "../platform/masteryStore";
-import { offerDownload, openOnboardingStore, saveErrorCopy, type OnboardingStore } from "../platform/onboardingStore";
+import { offerDownload, openOnboardingStore, saveErrorCopy, StaleDraft, type OnboardingStore } from "../platform/onboardingStore";
 import { openQuestStore, type QuestStore } from "../platform/questStore";
 import { emptyProgress } from "../quests/handin";
 import { compressImage, dataUrlToBlob } from "../quests/images";
@@ -34,6 +34,7 @@ import { setupTodo, staleCourses, type TodoItem } from "./todo";
 import { buildSemester, SCAN_WRITE_BACK, localSetup, parseSetup, runCourseSetup, setupTurns, type FileForSetup, type SetupInput, liveProgress, type LiveProgress } from "./setup";
 import { buildBackup, freshStart, saveBackup } from "../platform/backup";
 import { RestoreBackup } from "../updates/RestoreBackup";
+import { syncSemester } from "../orchestrator/changes";
 import { latestOf, publish, subscribe } from "../platform/deskBus";
 import { byteLength, checkHandoff, jobProgress, MAX_JOB_BYTES, readJobDoc, removeJob, sessionUrl, startJob, type HandoffSetup, type HandoffState } from "../platform/handoff";
 import type { CloudJob, CourseSetup, DraftCourse, Profile, SemesterDraft, SetupMessage, SetupStep, Upload } from "./types";
@@ -98,7 +99,54 @@ Your answer appears in a small side note right under that passage. So:
 - Don't restate the passage and don't greet.
 - Use Markdown; write math with $...$ inline.`;
 
-export function OnboardingPage({ onDone }: { onDone: () => void }) {
+/**
+ * Opens the setup chat at its latest message. The page may load hidden (kept
+ * mounted while a reading runs) and its content keeps growing for a moment
+ * (side panel, notes, the to-do list), so it stays pinned to the end for a
+ * short while after it shows, until the student scrolls themselves.
+ */
+function useStartAtEnd(scroller: React.RefObject<HTMLElement>, ready: boolean) {
+  useEffect(() => {
+    const s = scroller.current;
+    if (!s || !ready || typeof ResizeObserver === "undefined") return;
+    const SETTLE_MS = 1500;
+    let pinned = true;
+    let until = Date.now() + SETTLE_MS;
+    let hidden = s.clientHeight === 0;
+    const toEnd = () => {
+      if (pinned && Date.now() < until && s.clientHeight > 0) s.scrollTop = s.scrollHeight;
+    };
+    const takeOver = () => {
+      pinned = false;
+    };
+    const ro = new ResizeObserver(() => {
+      const now = s.clientHeight === 0;
+      if (hidden && !now) {
+        // Shown again: start at the end again.
+        pinned = true;
+        until = Date.now() + SETTLE_MS;
+      }
+      hidden = now;
+      toEnd();
+    });
+    ro.observe(s);
+    for (const c of Array.from(s.children)) ro.observe(c);
+    s.addEventListener("wheel", takeOver, { passive: true });
+    s.addEventListener("touchmove", takeOver, { passive: true });
+    s.addEventListener("keydown", takeOver);
+    s.addEventListener("pointerdown", takeOver);
+    toEnd();
+    return () => {
+      ro.disconnect();
+      s.removeEventListener("wheel", takeOver);
+      s.removeEventListener("touchmove", takeOver);
+      s.removeEventListener("keydown", takeOver);
+      s.removeEventListener("pointerdown", takeOver);
+    };
+  }, [scroller, ready]);
+}
+
+export function OnboardingPage({ onDone, askNewSemester = 0 }: { onDone: () => void; askNewSemester?: number }) {
   const [env, setEnv] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile>(emptyProfile);
@@ -106,6 +154,8 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const today = toDay();
   const scroller = useRef<HTMLDivElement>(null);
+  /** The setup changed on this screen since it was last saved. */
+  const dirtyDraft = useRef(false);
   // Narrow screens show the chat or the sheet, never one under the other, so the chat box is always at hand.
   const [narrowView, setNarrowView] = useState<"chat" | "sheet">("chat");
   // After setup, the side panel opens on the to-do list; the sheet is one tab away.
@@ -125,7 +175,12 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
       if (p) setProfile(p);
       const draft = usable ?? newDraft();
       const returning = current?.source === "onboarding" && current.id !== draft.id;
-      if (!draft.chat?.length) draft.chat = [{ id: uid(), role: "assistant", text: greeting(returning || !!p, null), createdAt: Date.now() }];
+      // Only a setup this page made or changed while loading needs saving; an untouched one is never written back.
+      dirtyDraft.current = draft !== d;
+      if (!draft.chat?.length) {
+        draft.chat = [{ id: uid(), role: "assistant", text: greeting(returning || !!p, null), createdAt: Date.now() }];
+        dirtyDraft.current = true;
+      }
       setDraft(draft);
       publish("draft", draft, "setup");
       if (p) publish("profile", p, "setup");
@@ -157,31 +212,58 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   }, []);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirtyProfile = useRef(false);
+  /** Takes over the setup as it's saved now (another tab or device saved a newer one). */
+  const adopt = useCallback((latest: SemesterDraft | null) => {
+    if (!latest) return;
+    draftRef.current = latest;
+    setDraft(latest);
+    publish("draft", latest, "setup");
+  }, []);
   const flush = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
     if (!env || !draftRef.current) return Promise.resolve();
-    const jobs = [env.os.saveDraft({ ...draftRef.current, updatedAt: Date.now() })];
+    // Saves only what changed on this screen: an unchanged copy may be older than the saved one.
+    const jobs: Promise<void>[] = [];
+    if (dirtyDraft.current) {
+      dirtyDraft.current = false;
+      jobs.push(env.os.saveDraft({ ...draftRef.current, updatedAt: Date.now() }));
+    }
     if (dirtyProfile.current) {
       dirtyProfile.current = false;
       jobs.push(env.os.saveProfile({ ...profileRef.current, updatedAt: Date.now() }));
     }
     return Promise.all(jobs)
       .then(() => setSaveError(null))
-      .catch((e) => setSaveError(`Your setup couldn't be saved: ${saveErrorCopy(e)}`));
-  }, [env]);
+      .catch((e) => {
+        if (e instanceof StaleDraft) {
+          adopt(e.latest);
+          setSaveError(e.message);
+        } else setSaveError(`Your setup couldn't be saved: ${saveErrorCopy(e)}`);
+      });
+  }, [env, adopt]);
   const schedule = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => void flush(), 800);
   }, [flush]);
   useEffect(() => {
-    const onHide = () => document.visibilityState === "hidden" && void flush();
+    const onHide = () => {
+      if (document.visibilityState === "hidden") void flush();
+      // Back in view: pick up what another tab or device saved meanwhile.
+      else if (env && !dirtyDraft.current)
+        void env.os
+          .loadDraft()
+          .then((d) => {
+            if (d && !dirtyDraft.current && d.updatedAt !== draftRef.current?.updatedAt) adopt(d);
+          })
+          .catch(() => undefined);
+    };
     document.addEventListener("visibilitychange", onHide);
     return () => {
       document.removeEventListener("visibilitychange", onHide);
       void flush();
     };
-  }, [flush]);
+  }, [flush, env, adopt]);
 
   const update = useCallback(
     (fn: (d: SemesterDraft) => SemesterDraft) => {
@@ -189,6 +271,7 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
       if (!cur) return;
       const next = fn(cur);
       draftRef.current = next;
+      dirtyDraft.current = true;
       setDraft(next);
       publish("draft", next, "setup");
       schedule();
@@ -212,7 +295,14 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
   // Opening Start New Semester while a semester is active asks first, then
   // saves a backup zip, then offers a fresh start (src/platform/backup.ts).
   type FreshStep = "ask" | "exporting" | "exported" | "declined" | "wiping" | null;
-  const [fresh, setFresh] = useState<FreshStep>("ask");
+  // Opens calm: "Are you sure?" only when the student chose "Start a new semester" (askNewSemester: when they pressed it).
+  const [fresh, setFresh] = useState<FreshStep>(askNewSemester ? "ask" : null);
+  const askedNew = useRef(askNewSemester);
+  useEffect(() => {
+    if (askNewSemester === askedNew.current) return;
+    askedNew.current = askNewSemester;
+    if (askNewSemester) setFresh("ask");
+  }, [askNewSemester]);
   const [freshLine, setFreshLine] = useState("");
   const [freshInfo, setFreshInfo] = useState<{ files: number; missing: string[] } | null>(null);
   const [wipeArmed, setWipeArmed] = useState(false);
@@ -255,9 +345,12 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
       } else {
         await flush();
       }
+      // A new semester deliberately replaces what's saved: read it once so the save below isn't taken for a stale tab.
+      await env.os.loadDraft().catch(() => null);
       const next = newDraft();
       next.chat = [{ id: uid(), role: "assistant", text: greeting(true, null), createdAt: Date.now() }];
       draftRef.current = next;
+      dirtyDraft.current = true;
       setDraft(next);
       publish("draft", next, "setup");
       setEnv({ ...env, current });
@@ -313,13 +406,16 @@ export function OnboardingPage({ onDone }: { onDone: () => void }) {
     return <AnnotatedMarkdown blockId={blockId} text={text} notes={notes.byBlock.get(blockId) ?? []} {...notes.handlers} />;
   };
 
+  useStartAtEnd(scroller, !!env && !!draft);
+
   if (loadError) return <div className="quest-page"><p className="quest-error">Setup couldn't be loaded: {loadError}</p></div>;
   // "Loading…" only fades in if loading is slow: a line that flashes and is replaced at once reads as lag.
   if (!env || !draft) return <div className="quest-page" aria-busy="true"><p className="quest-muted late-in">Loading…</p></div>;
 
   const returning = env.current?.source === "onboarding" && env.current.id !== draft.id;
   const props: StepProps = { env, draft, profile, update, updateProfile, go, today, flush, md, onDone, setEnv, returning, draftRef, profileRef, handoff, recheckHandoff };
-  const done = draft.setupStep === "done";
+  // The to-do list stays once the first setup finished, also while a course is being read again.
+  const done = draft.setupStep === "done" || draft.status === "active";
   const todoLeft = done ? setupTodo(draft).filter((t) => !t.done).length : 0;
 
   return (
@@ -676,6 +772,15 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
     const r = applySheetUpdate(draftRef.current!, profileRef.current, input);
     update(() => r.draft);
     if (r.profile !== profileRef.current) updateProfile(() => r.profile);
+    // After setup, changes here (a course's language, a target grade) reach the quests right away, not only tonight.
+    if (r.draft.status === "active")
+      void (async () => {
+        const current = await env.qs.loadSemester();
+        if (!current || current.id !== r.draft.id) return;
+        const semester = syncSemester(r.draft, r.profile, current);
+        await env.qs.saveSemester(semester);
+        publish("semester", semester, "setup");
+      })().catch(() => undefined);
     return r.result;
   }
 
@@ -1157,6 +1262,8 @@ function Done({ env, draft, onDone, setEnv, today, update }: StepProps) {
   useEffect(() => {
     env.qs.loadSemester().then(setSemester).catch((e) => setError(message(e)));
   }, [env]);
+  // A placement check redone through the Orchestrator shows up here at once.
+  useEffect(() => subscribe("semester", "setup-done", (s) => setSemester(s)), []);
 
   const start = async () => {
     if (!semester) return;

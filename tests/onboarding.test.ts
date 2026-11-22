@@ -285,6 +285,15 @@ describe("setup chat: update_sheet", () => {
     expect(setupReady(d).ok).toBe(true);
     expect(r.result).toContain("Ready to start");
   });
+  it("sets a course's language in the course and its result, so quests use it", () => {
+    const a = applySheetUpdate(emptyDraft(), profile, { addCourses: [{ name: "Chem" }] });
+    const id = a.draft.courses[0].id;
+    const read = { ...a.draft, results: { [id]: { teachingLanguage: "English" } } } as unknown as SemesterDraft;
+    const b = applySheetUpdate(read, profile, { updateCourses: [{ id, language: "German" }] });
+    expect(b.draft.courses[0].teachingLanguage).toBe("German");
+    expect(b.draft.results[id].teachingLanguage).toBe("German");
+    expect(JSON.parse(sheetSnapshot(b.draft, profile, TODAY)).courses[0].language).toBe("German");
+  });
   it("removes courses with their slots and facts, and frees their files", () => {
     const a = applySheetUpdate(emptyDraft(), profile, { addCourses: [{ name: "Chem" }], addSlots: [{ weekday: "Wed", start: "8:00", end: "9:00", kind: "lecture", title: "Chem", course: "Chem" }], facts: [{ course: "Chem", text: "x" }] });
     const id = a.draft.courses[0].id;

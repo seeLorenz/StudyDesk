@@ -42,6 +42,21 @@ export interface OnboardingStore {
 
 const plain = <T>(x: T) => JSON.parse(JSON.stringify(x)) as Record<string, unknown>;
 
+/**
+ * The saved setup changed since this page last read or wrote it: another tab
+ * or device saved a newer version. Nothing was written; `latest` is that newer
+ * version, for the page to take over instead of its own stale copy.
+ */
+export class StaleDraft extends Error {
+  constructor(public latest: SemesterDraft | null) {
+    super("Your setup was changed in another tab or on another device. StudyDesk loaded that newer version.");
+    this.name = "StaleDraft";
+  }
+}
+
+/** A fresh version mark for one write of the setup. */
+const newRev = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
 // One store per page, so every screen shares the same write queue.
 let shared: Promise<OnboardingStore> | null = null;
 
@@ -67,7 +82,8 @@ async function openStoreOnce(): Promise<OnboardingStore> {
   return localStore();
 }
 
-function cloudStore(db: DB, uid: string, assets: Claude.Assets | null): OnboardingStore {
+/** Exported for tests. */
+export function cloudStore(db: DB, uid: string, assets: Claude.Assets | null): OnboardingStore {
   const profile = db.doc(`data/users/${uid}/profile`);
   const draft = db.doc(`data/users/${uid}/onboarding`);
   const uploads = db.doc(`data/users/${uid}/files`).collection("uploads");
@@ -76,6 +92,17 @@ function cloudStore(db: DB, uid: string, assets: Claude.Assets | null): Onboardi
   const parts = db.doc(`data/users/${uid}/${PARTS_DOC}`).collection(PARTS_COL);
   const written: Written = new Map();
   let swept = false;
+  // The version mark (__rev) of the saved setup this page last read or wrote.
+  // undefined: not read yet. A write only goes through while the saved setup
+  // still carries this mark, so a stale tab can never write over newer work.
+  let seen: string | null | undefined;
+  const revOf = (x: Record<string, unknown> | null) => (x && typeof x.__rev === "string" ? x.__rev : null);
+  async function readDraft(): Promise<SemesterDraft | null> {
+    const d = await readBig(draft, parts);
+    seen = revOf(d);
+    if (d) delete d.__rev;
+    return d as unknown as SemesterDraft | null;
+  }
   // One draft write at a time; only the newest pending version is written.
   let running = false;
   let next: SemesterDraft | null = null;
@@ -90,7 +117,12 @@ function cloudStore(db: DB, uid: string, assets: Claude.Assets | null): Onboardi
       waiters = [];
       let err: unknown;
       try {
-        await writeBig("onboarding", plain(d), draft, parts, written);
+        if (seen === undefined) await readDraft();
+        const now = await draft.get();
+        if (revOf(now.exists ? (now.data() as Record<string, unknown>) : null) !== seen) throw new StaleDraft(await readDraft());
+        const rev = newRev();
+        await writeBig("onboarding", { ...plain(d), __rev: rev }, draft, parts, written);
+        seen = rev;
         if (!swept) {
           swept = true;
           void sweepParts(parts, async () => {
@@ -118,9 +150,7 @@ function cloudStore(db: DB, uid: string, assets: Claude.Assets | null): Onboardi
     async saveProfile(p) {
       await profile.set(plain(p));
     },
-    async loadDraft() {
-      return (await readBig(draft, parts)) as unknown as SemesterDraft | null;
-    },
+    loadDraft: readDraft,
     saveDraft(d) {
       next = d;
       const done = new Promise<void>((res, rej) => waiters.push((e) => (e ? rej(e) : res())));
