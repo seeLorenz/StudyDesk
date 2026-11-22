@@ -1,8 +1,8 @@
 {
   "version": "main",
   "branch": "main",
-  "notes": "Merge pull request #35 from seeLorenz/claude/project-thread-ovv3t5",
+  "notes": "Merge pull request #36 from seeLorenz/claude/fix-image-limit",
   "dataVersion": 1,
-  "builtAt": "2026-11-22T11:47:05.309Z",
-  "commit": "68f95ad3e0b544eaa2bcaa63169811f206499075"
+  "builtAt": "2026-11-22T20:18:02.591Z",
+  "commit": "a7eaac28283c3d29d42d0a246f784511e1867417"
 }

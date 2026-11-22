@@ -1544,6 +1544,28 @@ function getSample() {
   }
   return samplePromise;
 }
+function fitImages(now, earlier, limits) {
+  if (!limits) return { images: [], leftOutNow: now.length, leftOutEarlier: earlier.length };
+  const ok = (b) => (!limits.mediaTypes?.length || limits.mediaTypes.includes(b.type)) && (!limits.maxInputBytes || b.size <= limits.maxInputBytes);
+  const room = Math.max(0, limits.maxCount);
+  const n = now.filter(ok).slice(0, room);
+  const e = earlier.filter(ok).slice(0, room - n.length);
+  return { images: [...n, ...e], leftOutNow: now.length - n.length, leftOutEarlier: earlier.length - e.length };
+}
+function withNote(turns, note) {
+  if (!note) return turns;
+  const out = turns.map((t) => ({ ...t }));
+  out[out.length - 1].content += `
+
+${note}`;
+  return out;
+}
+function leftOutNote(leftOutNow, leftOutEarlier) {
+  return [
+    leftOutNow ? `(StudyDesk could attach only some of this turn's images: the last ${leftOutNow} ${leftOutNow === 1 ? "is" : "are"} missing. Tell the student which ones you can't see, and ask them to send those again in a later message.)` : "",
+    leftOutEarlier ? `(${leftOutEarlier} of the earlier images couldn't be attached again this turn. Go by what was already said about ${leftOutEarlier === 1 ? "it" : "them"}.)` : ""
+  ].filter(Boolean).join("\n");
+}
 async function askClaude(turns, opts = {}) {
   const sample = await getSample();
   if (!sample) return mockAnswer(turns, opts);
@@ -1565,13 +1587,29 @@ async function askClaude(turns, opts = {}) {
   }
 }
 async function askOnce(sample, turns, opts) {
+  const now = opts.images ?? [];
+  const earlier = opts.earlierImages ?? [];
+  if (!now.length && !earlier.length) return askWith(sample, turns, opts, []);
+  const limits = await sample.limits().catch(() => null);
+  const fit = fitImages(now, earlier, limits?.images);
+  try {
+    return await askWith(sample, withNote(turns, leftOutNote(fit.leftOutNow, fit.leftOutEarlier)), opts, fit.images);
+  } catch (e) {
+    const err = e;
+    const sentEarlier = fit.images.length - (now.length - fit.leftOutNow);
+    if (err?.code !== "image_rejected" || err.text || sentEarlier <= 0 || opts.signal?.aborted) throw err;
+    const onlyNow = fit.images.slice(0, fit.images.length - sentEarlier);
+    return askWith(sample, withNote(turns, leftOutNote(fit.leftOutNow, earlier.length)), opts, onlyNow);
+  }
+}
+async function askWith(sample, turns, opts, images) {
   try {
     const res = await sample(turns, {
       ...opts.tools ? { tools: opts.tools } : { cache: false },
       signal: opts.signal,
       model: MODEL,
       modelTier: FALLBACK_TIER,
-      images: opts.images && opts.images.length ? opts.images : void 0,
+      images: images.length ? images : void 0,
       onText: opts.onText ? ({ text: text2 }) => opts.onText(text2) : void 0
     });
     const { text, truncated } = res;
