@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-fix-image-limit",
   "branch": "claude/fix-image-limit",
-  "notes": "Chats: stay within the view's image limit, and never let an old image block every message",
+  "notes": "Merge pull request #37 from seeLorenz/claude/project-thread-ddliie",
   "dataVersion": 1,
-  "builtAt": "2026-11-22T20:11:56.911Z",
-  "commit": "072d14a6e650dd49652d8a8989ce268e2818aeb4"
+  "builtAt": "2026-11-22T20:18:20.328Z",
+  "commit": "d5a3c28d3aa7f7b09b6eea823fe5d21456ac850a"
 }

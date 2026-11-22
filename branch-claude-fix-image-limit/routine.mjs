@@ -1544,6 +1544,12 @@ function getSample() {
   }
   return samplePromise;
 }
+async function maxImages() {
+  const sample = await getSample();
+  if (!sample) return 0;
+  const limits = await sample.limits().catch(() => null);
+  return limits?.images ? Math.max(0, limits.images.maxCount) : 0;
+}
 function fitImages(now, earlier, limits) {
   if (!limits) return { images: [], leftOutNow: now.length, leftOutEarlier: earlier.length };
   const ok = (b) => (!limits.mediaTypes?.length || limits.mediaTypes.includes(b.type)) && (!limits.maxInputBytes || b.size <= limits.maxInputBytes);
@@ -1592,6 +1598,7 @@ async function askOnce(sample, turns, opts) {
   if (!now.length && !earlier.length) return askWith(sample, turns, opts, []);
   const limits = await sample.limits().catch(() => null);
   const fit = fitImages(now, earlier, limits?.images);
+  if (opts.strictImages && fit.leftOutNow) throw { code: "image_rejected", message: `${fit.leftOutNow} of ${now.length} images can't be sent in one question here.` };
   try {
     return await askWith(sample, withNote(turns, leftOutNote(fit.leftOutNow, fit.leftOutEarlier)), opts, fit.images);
   } catch (e) {
@@ -1741,10 +1748,36 @@ class GradingFailed extends Error {
     this.errors = errors;
   }
 }
-async function gradeProblems(problems, ask = askClaude, signal) {
+function imageGroups(problems, limit) {
+  if (!limit) return [problems];
+  const groups = [];
+  let group = [];
+  let count = 0;
+  for (const p of problems) {
+    const n = p.answerImages?.length ?? 0;
+    if (n > limit) throw { code: "image_rejected", message: `One answer has ${n} photos; at most ${limit} can be sent at once.` };
+    if (group.length && count + n > limit) {
+      groups.push(group);
+      group = [];
+      count = 0;
+    }
+    group.push(p);
+    count += n;
+  }
+  if (group.length) groups.push(group);
+  return groups;
+}
+async function gradeProblems(problems, ask = askClaude, signal, imageLimit) {
+  const hasImages = problems.some((p) => p.answerImages?.length);
+  const limit = hasImages ? await maxImages() : 0;
+  const results = [];
+  for (const group of imageGroups(problems, limit)) results.push(...await gradeGroup(group, ask, signal));
+  return results;
+}
+async function gradeGroup(problems, ask, signal) {
   const turns = gradingTurns(problems);
   const images = problems.flatMap((p) => p.answerImages ?? []);
-  const opts = { images: images.length ? images : void 0, signal, tier: "default" };
+  const opts = { images: images.length ? images : void 0, strictImages: true, signal, tier: "default" };
   const first = await ask(turns, opts);
   const parsed = parseGrading(first, problems);
   if (parsed.ok) return parsed.results;
