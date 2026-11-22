@@ -1,0 +1,8 @@
+{
+  "version": "branch-claude-project-thread-ovv3t5",
+  "branch": "claude/project-thread-ovv3t5",
+  "notes": "Fix setup being undone by a stale tab, export popup, and placement language",
+  "dataVersion": 1,
+  "builtAt": "2026-11-22T11:42:02.099Z",
+  "commit": "2a26a05d38f336d01342315cf325b15a0d6bf615"
+}
