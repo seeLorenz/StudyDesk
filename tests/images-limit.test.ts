@@ -74,4 +74,9 @@ describe("images within the view's limit", () => {
     expect(seen[0].images).toHaveLength(0);
     expect(lastTurn(seen[0].input)).toBe("plain");
   });
+
+  it("with strictImages, fails instead of leaving any of this turn's images out", async () => {
+    await expect(askClaude([{ role: "user", content: "grade" }], { images: [jpg("1"), jpg("2"), jpg("3")], strictImages: true })).rejects.toMatchObject({ code: "image_rejected" });
+    expect(seen).toHaveLength(0);
+  });
 });
