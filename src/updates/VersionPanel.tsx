@@ -192,9 +192,12 @@ function DevSection({ doc, release, reload }: { doc: UpdatesDoc; release: Releas
   return (
     <details className="version-dev">
       <summary>For developers</summary>
-      <p className="quest-muted">Switch to any version or branch, up or down. A backup is saved first every time. Branch builds are untested.</p>
+      <p className="quest-muted">Switch to any version or branch, up or down. A backup is saved first every time.</p>
       {going && <p className="quest-muted">Loading {going}. StudyDesk reloads by itself when it's there.</p>}
       <h4 className="version-dev-head">Branches</h4>
+      <p className="version-caution" role="note">
+        <strong>Caution:</strong> branch builds are work in progress. They haven't been reviewed or released, may be broken, and may change how your data is saved. Use them to try a change, not for real studying. If something goes wrong, load a release again. A backup of your data is saved before every switch.
+      </p>
       {builds.length === 0 ? (
         <p className="quest-muted">No branch builds known yet. Check for updates to look for them.</p>
       ) : (
