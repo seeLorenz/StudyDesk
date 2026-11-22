@@ -16,6 +16,13 @@ export type AskOptions = {
    * images, so one old image can never block every later message.
    */
   earlierImages?: Blob[];
+  /**
+   * Every one of `images` must reach Claude: if the view can't take them all
+   * (too many, or a type or size it refuses), the call fails with
+   * `image_rejected` instead of going ahead without some. Grading uses it, so
+   * a problem is never graded without the photo of its work.
+   */
+  strictImages?: boolean;
   signal?: AbortSignal;
   onText?: (text: string) => void;
   /** Kept for later token tuning; today every call asks for Opus (see MODEL). */
@@ -164,6 +171,7 @@ async function askOnce(sample: NonNullable<Awaited<ReturnType<typeof getSample>>
   if (!now.length && !earlier.length) return askWith(sample, turns, opts, []);
   const limits = await sample.limits().catch(() => null);
   const fit = fitImages(now, earlier, limits?.images);
+  if (opts.strictImages && fit.leftOutNow) throw { code: "image_rejected", message: `${fit.leftOutNow} of ${now.length} images can't be sent in one question here.` } satisfies AskError;
   try {
     return await askWith(sample, withNote(turns, leftOutNote(fit.leftOutNow, fit.leftOutEarlier)), opts, fit.images);
   } catch (e) {

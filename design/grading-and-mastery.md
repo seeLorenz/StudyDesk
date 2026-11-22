@@ -98,6 +98,8 @@ The grading agent judges one handed-in quest and returns plain data. It has no m
 
 **It receives**, per problem: the prompt, the answer key or rubric, the skill name and its fundamentals, the student's answer (text, photos or files), how many hints they used, and whether this is real homework not yet handed in to school.
 
+**Every photo reaches the grader.** One question to Claude can carry only so many images (the view says how many). A hand-in with more photos than that is graded in several calls, problems kept together with their photos. Photos are never left out to make a call fit: a problem graded without its photo could be marked wrong. A single answer with more photos than one call allows fails visibly, so the student can hand in fewer.
+
 **It returns**, per problem:
 
 ```json

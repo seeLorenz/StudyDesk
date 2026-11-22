@@ -2,7 +2,7 @@
 // It has no memory and never sees streaks or mastery; everything it needs is
 // in the call. design/grading-and-mastery.md, "Grading agent".
 
-import { askClaude, type AskOptions, type Turn } from "../platform/claude";
+import { askClaude, maxImages, type AskError, type AskOptions, type Turn } from "../platform/claude";
 import type { Attempt, AttemptPart, Day, ReviewItem, Verdict } from "./types";
 
 export type GradingProblem = {
@@ -156,11 +156,50 @@ export class GradingFailed extends Error {
 
 type Ask = (turns: Turn[], opts?: AskOptions) => Promise<string>;
 
-/** Grades a hand-in. A reply that fails the checks is retried once with the problems listed. */
-export async function gradeProblems(problems: GradingProblem[], ask: Ask = askClaude, signal?: AbortSignal): Promise<GradingResult[]> {
+/**
+ * Splits problems into groups that each carry at most `limit` images, in
+ * order, so every photo of a student's work reaches the grader. A limit of 0
+ * means unknown: one group. A single problem with more photos than the limit
+ * can't be graded here and fails visibly. Pure.
+ */
+export function imageGroups(problems: GradingProblem[], limit: number): GradingProblem[][] {
+  if (!limit) return [problems];
+  const groups: GradingProblem[][] = [];
+  let group: GradingProblem[] = [];
+  let count = 0;
+  for (const p of problems) {
+    const n = p.answerImages?.length ?? 0;
+    if (n > limit) throw { code: "image_rejected", message: `One answer has ${n} photos; at most ${limit} can be sent at once.` } satisfies AskError;
+    if (group.length && count + n > limit) {
+      groups.push(group);
+      group = [];
+      count = 0;
+    }
+    group.push(p);
+    count += n;
+  }
+  if (group.length) groups.push(group);
+  return groups;
+}
+
+/**
+ * Grades a hand-in. A reply that fails the checks is retried once with the
+ * problems listed. Photos are never left out: a hand-in with more photos than
+ * one question can carry is graded in several calls (`imageLimit`, read from
+ * the view by default).
+ */
+export async function gradeProblems(problems: GradingProblem[], ask: Ask = askClaude, signal?: AbortSignal, imageLimit?: number): Promise<GradingResult[]> {
+  const hasImages = problems.some((p) => p.answerImages?.length);
+  const limit = hasImages ? (imageLimit ?? (await maxImages())) : 0;
+  const results: GradingResult[] = [];
+  for (const group of imageGroups(problems, limit)) results.push(...(await gradeGroup(group, ask, signal)));
+  return results;
+}
+
+async function gradeGroup(problems: GradingProblem[], ask: Ask, signal?: AbortSignal): Promise<GradingResult[]> {
   const turns = gradingTurns(problems);
   const images = problems.flatMap((p) => p.answerImages ?? []);
-  const opts: AskOptions = { images: images.length ? images : undefined, signal, tier: "default" };
+  const opts: AskOptions = { images: images.length ? images : undefined, strictImages: true, signal, tier: "default" };
 
   const first = await ask(turns, opts);
   const parsed = parseGrading(first, problems);
