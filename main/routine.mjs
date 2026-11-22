@@ -695,7 +695,7 @@ Skills are the unit of mastery: one kind of problem the student must be able to 
 - A topic is "taught" if, judging by the syllabus schedule, homework sheets or the student's words, it has already been covered in class by today. Otherwise "upcoming".
 - Homework: only real sheets with a hand-in date that hasn't passed. Copy each task's text word for word (TeX for math: $...$). Give each task the one skill it practices.
 - Catalog: for every skill, where the files cover it (file key and pages "p. 3-5" or lines "l. 40-80"). Several lines per skill are fine. Skills with no coverage get no line.
-- Teaching language: the language the course is taught and examined in.
+- Teaching language: the language the course is taught and examined in. Without files, judge it from the school and country (a school in Germany teaches in German), except for language courses.
 
 Reply with exactly these sections, in this order, and nothing else. Use "|" between fields. Leave a section empty if there's nothing for it.
 
@@ -855,7 +855,8 @@ function parseSetup(reply, input, fileKeys, now = Date.now()) {
   return {
     courseId: cid,
     summary: (sec.get("SUMMARY") ?? "").replace(new RegExp(`\\*?\\(?${CUT_SHORT}[\\s\\S]*$`), "").trim(),
-    teachingLanguage: language && language.length < 30 ? language : course.teachingLanguage || "English",
+    // A language the student chose for the course wins over what the reading found.
+    teachingLanguage: course.teachingLanguage || (language && language.length < 30 ? language : "") || "English",
     topics,
     skills,
     gradeRules,
