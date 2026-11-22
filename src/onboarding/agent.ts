@@ -36,6 +36,7 @@ export function sheetSnapshot(d: SemesterDraft, p: Profile, today: string, cloud
         short: c.short,
         credits: c.credits,
         targetGrade: c.targetGrade,
+        language: d.results[c.id]?.teachingLanguage || c.teachingLanguage || null,
         facts: d.facts.filter((f) => f.courseId === c.id).map((f) => f.text),
         files: courseFileList(d.uploads, d.zips, c.id),
       })),
@@ -76,6 +77,7 @@ How to talk:
 How to use update_sheet:
 - Record what you learn right away, in the same reply, before you answer. Several changes go in one call.
 - Things the student says about a course (dates, how it's graded, what a file is) go into facts, word for word as they said them.
+- Language: lessons, problems and the placement check are written in each course's language (in the sheet). When the student says which language they want their tasks in, set language on every course it applies to with updateCourses, in the same reply (a language course such as English stays in its own language unless they say otherwise). A fact alone doesn't change the language.
 - Files the student drops are saved by the page as unsortedFiles. Assign each one to its course with a short note on what it is (from what they said, or what you can see).
 - The sheet below each message is the current state: trust it over your memory, the student may have edited it.
 
@@ -102,7 +104,7 @@ const SHEET_SCHEMA = {
     },
     semester: { type: "object", properties: { name: { type: "string" }, startDate: { type: "string", description: "YYYY-MM-DD" }, endDate: { type: "string", description: "YYYY-MM-DD" } } },
     addCourses: { type: "array", items: { type: "object", properties: { name: { type: "string" }, short: { type: "string" }, credits: { type: "number" }, targetGrade: { type: "number" } }, required: ["name"] } },
-    updateCourses: { type: "array", items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" }, short: { type: "string" }, credits: { type: "number" }, targetGrade: { type: "number" } }, required: ["id"] } },
+    updateCourses: { type: "array", items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" }, short: { type: "string" }, credits: { type: "number" }, targetGrade: { type: "number" }, language: { type: "string", description: "The language this course's lessons, problems and placement check are written in, e.g. German." } }, required: ["id"] } },
     removeCourseIds: { type: "array", items: { type: "string" } },
     addSlots: {
       type: "array",
@@ -196,6 +198,12 @@ export function applySheetUpdate(d: SemesterDraft, p: Profile, input: Record<str
     if (str(u.short)) next.short = str(u.short).slice(0, 8);
     if (u.credits !== undefined) next.credits = num(u.credits);
     if (u.targetGrade !== undefined) next.targetGrade = inScale(num(u.targetGrade)) ?? c.targetGrade;
+    const lang = str(u.language);
+    if (lang && lang.length < 30) {
+      next.teachingLanguage = lang;
+      // A course that was already read keeps its language in its result too: that's what quests are written from.
+      if (draft.results[c.id]) draft.results = { ...draft.results, [c.id]: { ...draft.results[c.id], teachingLanguage: lang } };
+    }
     draft.courses = draft.courses.map((x) => (x.id === c.id ? next : x));
   }
   for (const id of (input.removeCourseIds as unknown[]) ?? []) {

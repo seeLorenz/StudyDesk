@@ -152,6 +152,7 @@ This stays small. Anything detailed is fetched with a look-up tool only when the
 | `read_calendar` | Imports from the student's Google Calendar, as in onboarding | Same rules as onboarding |
 | `open_ask` | Opens an Ask note or chat with a learning question already filled in | None |
 | `rebuild_quest` | Asks the quest code to write today's quest again from the new records | Only when today's quest hasn't been started |
+| `redo_placement` | A new placement check; `resetStats` also deletes past attempts, mastery progress and the mistake review | Asks first whether to reset the stats; a yes/no card, only on yes |
 
 `change` takes typed operations (for example `set_target_grade`, `move_date`, `add_homework`, `set_day_off`), not free text. Claude decides what the student meant; code decides whether it's valid and saves it. When the student's message finishes an item of the setup to-do list, the same change includes `tick_todo` for it: StudyDesk ticks items off itself and never asks the student to.
 
@@ -242,6 +243,7 @@ The code lives in `src/orchestrator/`, storage in `src/platform/orchestratorStor
 - **One version everywhere** (`src/platform/deskBus.ts`): the setup screen, the quest page and the panel publish every change they make, and the others take it over, so no screen saves an older copy on top.
 
 - **Rebuild today's quest** (`rebuild_quest`, and a button on change cards): while today's quest isn't started, it's marked replaced and the quest page writes a new one from the current desk. A started quest is never rewritten.
+- **Redo the placement check** (`redo_placement`): when the student asks, the Orchestrator first asks whether to also delete their past stats (attempts, mastery progress, mistake review) or keep them, then shows a yes/no card. On yes: the stats are deleted if chosen (skills and targets stay), the old placement and today's unstarted quest are set aside, and Today offers "Start the placement check", written from the current desk (so in each course's current language).
 - **Quest settings by talking** (`set_quest_settings`): hints per homework task (0 to 5), lesson reading minutes (2 to 15) and new skills per quest (0 to 4), stored per student and used from the next quest (`applyQuestSettings` in `src/quests/config.ts`).
 - **The tutor passes remarks on** (`src/orchestrator/passOn.ts`): every tutor call (Ask chats, side notes, the mistake review) has a `pass_to_studydesk` tool. The remark arrives in the StudyDesk chat word for word, marked "Passed on by the tutor", with where it was said; it's handled one at a time and shows on the badge.
 

@@ -75,7 +75,7 @@ App code builds the first quest from what the setup session wrote.
 
 ## Language
 
-The app itself stays in English. Explanations and quests use each course's teaching language, because learning a course in a different language than its exam is a disadvantage. The setup session guesses it from the materials, and the student can change it by telling the Orchestrator.
+The app itself stays in English. Explanations and quests use each course's teaching language, because learning a course in a different language than its exam is a disadvantage. The setup session guesses it from the materials, and the student can change it by telling the Orchestrator. Without materials it judges from the school and country (a German school teaches in German), not English by default. The student can also say it in the setup chat ("my tasks should be in German"): Claude then sets the language on each course (update_sheet `updateCourses[].language`), not only a fact, and the change reaches the semester at once, so a rewritten placement check uses it. A language the student chose wins over what a later re-reading finds.
 
 ## Notes for the other modules
 
@@ -120,7 +120,11 @@ The flow lives in `src/onboarding/`. A new student lands in it automatically; a 
 
 ## Starting the next semester (built)
 
-Opening Start New Semester while a semester is active asks "Are you sure?" first (and says so when the semester's end date is still ahead). Then:
+Choosing "Start a new semester" (⋯ menu) while a semester is active asks "Are you sure?" first (and says so when the semester's end date is still ahead). Opening the same page any other way (Organize's "Setup sheet", "Watch it live") never asks: it opens on the chat, at the latest message, with the to-do list beside it. The to-do list stays visible once the first setup finished, also while a course is being read again.
+
+Saving: the setup is one document that several tabs or devices may hold. Each screen saves only what changed on it, and a save only goes through while the saved setup is still the version that tab last read (a version mark, `__rev`). A stale tab's save is refused and the tab takes over the newer setup instead; a tab coming back into view reloads it. Before this, a tab left open from before setup ran wrote its old copy back when hidden, which undid setup and wiped the to-do list.
+
+After "Are you sure?":
 
 1. **Backup.** StudyDesk saves one zip: every original file the student imported, by course, plus `studydesk-data.json` with everything it keeps for them (profile, semester and setup with chat and to-do list, archived semesters, quests with answers and reviews, Ask chats, mastery and stats). `src/platform/backup.ts`.
 2. **Keep or start fresh.** Only once the zip is saved, the student chooses. "Keep old data" (the default) starts the new setup and archives the old semester when the new one is saved; current quests keep working until then. "Delete old data and start fresh" (two clicks) deletes courses and semester, setup chat and to-do list, quests, imported files and archived semesters, and keeps mastery, stats and profile; Ask chats only if the student ticks the box. If the download is declined, nothing can be deleted.

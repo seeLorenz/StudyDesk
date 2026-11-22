@@ -107,6 +107,7 @@ What you do:
 - Start a job with start_job for bigger work: new material (files the student drops: assign them to their course in the same call), a new course (add_course first, then start_job), or re-mapping a course when the student says something that changes what the course needs ("chapter 7 isn't in the exam", "the exam is oral now"); record that statement as a fact too. New files start a job automatically; re-reading everything a course already has asks the student first (the tool shows them a yes/no card).
 - Dropping a course always needs the student's yes: call change with drop_course, and the student gets a yes/no card.
 - After a change that affects today (todaysQuest exists and started is false), you may rebuild today's quest with rebuild_quest; the change card also offers it.
+- When the student asks to redo or regenerate their placement check, first ask once whether they also want to delete their past stats (mastery progress, past attempts and the mistake review) for a clean start, or keep them. Only after they answer, call redo_placement with resetStats. It shows a yes/no card; nothing happens before their yes. If the placement came out in the wrong language, fix the courses' language with the change tool first.
 - The nightly run (nightlyRun in the snapshot) grades at its time, runs the organization agent's check and deep sweeps, and writes tomorrow's quest. Change it with set_nightly (time, pause, turn parts off) and set_sweep (when a course is read again completely); start it at once with run_nightly_now only when the student asks.
 - StudyDesk's own updates: update_studydesk. "check" answers questions about the version and what's new; when the student wants the new version, "update" shows the button card (never claim it's updating before they press it); "go_back" only when they ask to undo an update.
 - Learning questions ("how does the chain rule work?", explaining a problem) belong to the tutor: call open_ask with the question and say in one line that you opened it there. Don't teach here.
@@ -318,6 +319,12 @@ export const UPDATE_TOOL = {
   description:
     'StudyDesk\'s own version and updates. action "check": the installed version, the newest release and its notes. action "update": shows the student a card with the release notes and the "Update to vX" button (nothing starts until they press it; their data stays). action "go_back": shows a card to return to the version before the last update, which loses everything done since that update; only when the student asks to undo an update.',
   inputSchema: { type: "object", properties: { action: { type: "string", enum: ["check", "update", "go_back"] } }, required: ["action"] },
+} as const;
+
+export const PLACEMENT_TOOL = {
+  name: "redo_placement",
+  description: "Writes a new placement check (it replaces the current one). resetStats: true also deletes the student's past stats (every attempt, mastery progress and the mistake review) for a clean start; false keeps them. Ask the student which they want before calling. Shows a yes/no card; it only happens on their yes.",
+  inputSchema: { type: "object", properties: { resetStats: { type: "boolean" } }, required: ["resetStats"] },
 } as const;
 
 export const REBUILD_TOOL = {

@@ -99,10 +99,13 @@ export function App() {
   const [command, setCommand] = useState<QuestCommand | null>(null);
   // A reading started from Organize runs in the setup screen's runner, kept mounted (hidden) while it works.
   const [runPending, setRunPending] = useState(false);
+  // When "Start a new semester" was pressed (0: it wasn't): opens the setup page on its "Are you sure?" step.
+  const [newSemesterAsk, setNewSemesterAsk] = useState(0);
   useEffect(() => subscribe("draft", "app", (d) => setRunPending(d.status === "active" && d.setupStep === "running")), []);
 
   const go = useCallback((v: View) => {
     setView(v);
+    setNewSemesterAsk(0);
     setMenuOpen(false);
     setToolsOpen(false);
     if (v === "organize") setOrchOpen(false);
@@ -342,7 +345,15 @@ export function App() {
           </button>
           {toolsOpen && (
             <div className="tools-menu" role="menu">
-              <button type="button" role="menuitem" onClick={() => go("setup")}>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  // Only this way in asks "Are you sure?"; the setup sheet and its to-do list open without it.
+                  go("setup");
+                  if (sem && sem.source !== "sample") setNewSemesterAsk(Date.now());
+                }}
+              >
                 {sem && sem.source !== "sample" ? "Start a new semester" : "Set up your semester"}
               </button>
               <p className="tools-label">Testing tools</p>
@@ -421,7 +432,7 @@ export function App() {
                 ← Back to Organize
               </button>
             )}
-            <OnboardingPage onDone={() => go("today")} />
+            <OnboardingPage onDone={() => go("today")} askNewSemester={newSemesterAsk} />
           </div>
         )}
 

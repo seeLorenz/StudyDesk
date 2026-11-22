@@ -24,13 +24,13 @@ import { createSchedule, runScheduleNow, scheduleFits, studentTimeZone } from ".
 import { nightlySettings, type RoutineDoc } from "../routine/nightly";
 import { applyShallow, applySweep, outboxOrder } from "../routine/apply";
 import { openMasteryStore, type MasteryData, type MasteryStore } from "../platform/masteryStore";
-import { openOnboardingStore, type OnboardingStore } from "../platform/onboardingStore";
+import { openOnboardingStore, StaleDraft, type OnboardingStore } from "../platform/onboardingStore";
 import { openOrchestratorStore, type OrchestratorStore } from "../platform/orchestratorStore";
 import { openQuestStore, type QuestStore } from "../platform/questStore";
 import { compressImage } from "../quests/images";
 import type { QuestRecord, Semester } from "../quests/types";
 import type { Profile, SemesterDraft, Upload } from "../onboarding/types";
-import { NIGHTLY_TOOL, UPDATE_TOOL, ASK_TOOL, CALENDAR_TOOL, CHANGE_TOOL, checkinTurns, deskSnapshot, JOB_TOOL, jobTitle, localCheckin, LOOKUP_TOOL, needsSummary, orchTurns, questStarted, REBUILD_TOOL, summaryTurns, todaysQuest } from "./agent";
+import { NIGHTLY_TOOL, UPDATE_TOOL, ASK_TOOL, CALENDAR_TOOL, CHANGE_TOOL, checkinTurns, deskSnapshot, JOB_TOOL, jobTitle, localCheckin, LOOKUP_TOOL, needsSummary, orchTurns, questStarted, PLACEMENT_TOOL, REBUILD_TOOL, summaryTurns, todaysQuest } from "./agent";
 import { PASS_ON_EVENT, type PassOn } from "./passOn";
 import { applyOps, canUndo, findCourse, syncSemester, undoChange, type Desk } from "./changes";
 import { advanceJobs, startJob, type JobFile } from "./jobs";
@@ -230,7 +230,17 @@ export function OrchestratorPanel(props: Props) {
       setProfile(desk.profile);
       publish("draft", desk.draft, "orch");
       if (profileChanged) publish("profile", desk.profile, "orch");
-      await env.os.saveDraft(desk.draft);
+      try {
+        await env.os.saveDraft(desk.draft);
+      } catch (e) {
+        // Another tab or device saved a newer setup: take it over, and don't build the semester from the stale one.
+        if (e instanceof StaleDraft && e.latest) {
+          draftRef.current = e.latest;
+          setDraft(e.latest);
+          publish("draft", e.latest, "orch");
+        }
+        throw e;
+      }
       if (profileChanged) {
         await env.os.saveProfile(desk.profile);
         // A new time for the nightly run needs a new scheduled task.
@@ -246,6 +256,25 @@ export function OrchestratorPanel(props: Props) {
     },
     [env, ensureNightly],
   );
+
+  // Back in view: pick up what another tab or device saved meanwhile (every screen here gets it).
+  useEffect(() => {
+    if (!env) return;
+    const onShow = () => {
+      if (document.visibilityState !== "visible") return;
+      void env.os
+        .loadDraft()
+        .then((d) => {
+          if (!d || d.updatedAt === draftRef.current?.updatedAt) return;
+          draftRef.current = d;
+          setDraft(d);
+          publish("draft", d, "orch");
+        })
+        .catch(() => undefined);
+    };
+    document.addEventListener("visibilitychange", onShow);
+    return () => document.removeEventListener("visibilitychange", onShow);
+  }, [env]);
 
   // Other screens' changes (setup run, quest page) replace what's held here.
   useEffect(() => {
@@ -358,6 +387,33 @@ export function OrchestratorPanel(props: Props) {
     window.dispatchEvent(new CustomEvent("studydesk:quest-replaced"));
     return "Today's quest is being written again from the current desk; it shows on Today's quest in a minute.";
   }, [env, today]);
+
+  /**
+   * A new placement check: the old one is set aside (today's quest too, if it
+   * is the placement), optionally with the past stats deleted, and Today
+   * offers to start the new one, written from the current desk.
+   */
+  const redoPlacement = useCallback(
+    async (resetStats: boolean) => {
+      if (!env) throw new Error("StudyDesk isn't loaded yet.");
+      const semester = semesterRef.current ?? (await env.qs.loadSemester());
+      if (!semester || semester.source !== "onboarding") throw new Error("There's no set-up semester to write a placement check for.");
+      if (resetStats) await env.ms.clearStats();
+      recordsRef.current = await env.qs.loadRecords();
+      for (const r of recordsRef.current) {
+        // The old placement check goes, and today's quest while it isn't started: the new placement comes first.
+        if (r.progress.replacedAt || (r.quest.id !== semester.placementQuestId && !(r.quest.date === today && !questStarted(r)))) continue;
+        await env.qs.saveRecord({ ...r, progress: { ...r.progress, replacedAt: Date.now(), updatedAt: Date.now() } });
+      }
+      const next = { ...semester, placementQuestId: undefined };
+      semesterRef.current = next;
+      await env.qs.saveSemester(next);
+      publish("semester", next, "orch");
+      await loadData(env);
+      window.dispatchEvent(new CustomEvent("studydesk:quest-replaced"));
+    },
+    [env, today, loadData],
+  );
 
   const addCard = (messageId: string, card: ChatCard) =>
     saveMessages((ms) => ms.map((m) => (m.id === messageId ? { ...m, cards: [...(m.cards ?? []), card] } : m)));
@@ -562,6 +618,27 @@ export function OrchestratorPanel(props: Props) {
               execute: () => rebuildQuest(),
             },
             {
+              ...PLACEMENT_TOOL,
+              inputSchema: PLACEMENT_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema,
+              execute: (input) => {
+                const resetStats = input.resetStats === true;
+                const pc: PendingConfirm = {
+                  id: `cf_${uid()}`,
+                  at: Date.now(),
+                  question: resetStats
+                    ? "Write a new placement check and delete your past stats (mastery progress, past attempts and the mistake review)? The stats can't be brought back."
+                    : "Write a new placement check? Your past stats are kept.",
+                  studentWords: text,
+                  ops: [],
+                  placement: { resetStats },
+                  status: "waiting",
+                };
+                saveState((s) => ({ ...s, confirms: [...s.confirms, pc] }));
+                addCard(reply.id, { kind: "confirm", confirmId: pc.id });
+                return "Shown to the student as a yes/no card; it happens only on their yes. Don't ask again in text.";
+              },
+            },
+            {
               ...CALENDAR_TOOL,
               inputSchema: CALENDAR_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema,
               execute: async (_input, cx) => {
@@ -608,7 +685,10 @@ export function OrchestratorPanel(props: Props) {
     if (!yes) return;
     const msg: OrchMessage = { id: uid(), role: "assistant", text: "", createdAt: Date.now() };
     try {
-      if (pc.job) {
+      if (pc.placement) {
+        await redoPlacement(pc.placement.resetStats);
+        saveMessages((ms) => [...ms, { ...msg, text: pc.placement!.resetStats ? "Done: your past stats are deleted. Your new placement check is ready to start on Today." : "Done: your new placement check is ready to start on Today." }]);
+      } else if (pc.job) {
         const r = await launchJob({ kind: pc.job.kind, courses: pc.job.courseIds, studentWords: pc.studentWords });
         if (!r.ok) throw new Error(r.reason);
         saveMessages((ms) => [...ms, { ...msg, text: "Started: I'm reading everything again.", cards: [{ kind: "job", jobId: r.job.id }] }]);
