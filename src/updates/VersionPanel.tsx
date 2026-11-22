@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Markdown } from "../chat/Markdown";
-import { followUpdateCheck, startDevUpdate, startUpdateCheck } from "../platform/updateStore";
+import { followUpdateCheck, startSwitch, startUpdateCheck, type SwitchTarget } from "../platform/updateStore";
 import { UpdateNotice, useUpdateState } from "./UpdateCards";
-import { devOffer, whatsNewList, type MainBuild, type ReleaseDoc, type UpdateCheck, type UpdatesDoc } from "./plan";
-import { APP_VERSION, BUILD_COMMIT, DEV_CHANNEL } from "./version";
+import { devBuilds, switchPlan, whatsNewList, type ReleaseDoc, type UpdateCheck, type UpdatesDoc } from "./plan";
+import { APP_VERSION, BUILD_BRANCH, BUILD_COMMIT } from "./version";
 
 // The small version label next to "StudyDesk" in the sidebar, and the panel it
 // opens: check for updates right now (a quick cloud session instead of
@@ -96,6 +96,7 @@ function VersionPanel() {
     <div className="version-panel" role="dialog" aria-label="StudyDesk version">
       <p className="version-title">
         StudyDesk <strong>{label}</strong>
+        {BUILD_BRANCH && <span className="quest-muted"> from {BUILD_BRANCH}</span>}
       </p>
       <UpdateNotice md={md} always notes={false} />
       <div className="version-check">
@@ -128,55 +129,95 @@ function VersionPanel() {
 }
 
 /**
- * For developers: load the newest build of main (every merge is built into
- * releases/main/), not only tagged releases. Folded away so students don't
- * trip over it. The same hand-off as an update: backup first, same link.
+ * For developers (folded away so students don't trip over it): switch to any
+ * release, higher or lower, or to the newest build of any branch. Every push
+ * to a branch is built into the releases branch (design/updates.md). The same
+ * hand-off as an update: a backup first, the same link. A target that expects
+ * older data puts back an old enough backup, after a warning (switchPlan).
  */
 function DevSection({ doc, release, reload }: { doc: UpdatesDoc; release: ReleaseDoc | null; reload: () => Promise<void> }) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [armed, setArmed] = useState<string | null>(null);
   const [line, setLine] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const main = release?.main ?? null;
-  const next = devOffer(BUILD_COMMIT, release, doc);
-  const running = doc.pending?.kind === "update" && doc.pending.to === DEV_CHANNEL;
-  const press = async (m: MainBuild) => {
-    setBusy(true);
+  const builds = devBuilds(release);
+  const releases = release?.releases ?? [];
+  const going = doc.pending ? (doc.pending.label ?? doc.pending.to) : null;
+
+  const press = async (t: SwitchTarget) => {
+    setBusy(t.folder);
+    setArmed(null);
     setError(null);
     try {
-      await startDevUpdate(m, setLine);
+      await startSwitch(t, setLine);
       await reload();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLine(null);
-      setBusy(false);
+      setBusy(null);
     }
   };
-  const built = main?.builtAt ? new Date(main.builtAt).toLocaleString("en", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : null;
+
+  const row = (t: SwitchTarget, name: JSX.Element, meta: string | null, current: boolean) => {
+    const plan = switchPlan(t.dataVersion, doc);
+    const restoreDay = plan.kind === "restore" ? new Date(plan.backup.at).toLocaleDateString("en", { day: "numeric", month: "short" }) : null;
+    return (
+      <li key={t.folder} className="version-dev-row">
+        <div className="version-dev-name">
+          {name}
+          {meta && <span className="quest-muted"> {meta}</span>}
+          {plan.kind === "restore" && !current && armed === t.folder && (
+            <p className="quest-error">This expects older data: your data goes back to the backup from {restoreDay}. Anything done since is lost.</p>
+          )}
+          {plan.kind === "blocked" && !current && <p className="quest-muted">{plan.reason}</p>}
+        </div>
+        {current ? (
+          <span className="version-installed">running</span>
+        ) : plan.kind === "blocked" ? null : (
+          <button
+            type="button"
+            className={`mini-btn${plan.kind === "restore" ? " danger" : ""}${armed === t.folder ? " is-armed" : ""}`}
+            disabled={!!busy || !!going}
+            onClick={() => (plan.kind === "restore" && armed !== t.folder ? setArmed(t.folder) : void press(t))}
+          >
+            {busy === t.folder ? "Starting…" : armed === t.folder ? "Click again to load" : "Load"}
+          </button>
+        )}
+      </li>
+    );
+  };
+
+  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : null);
   return (
     <details className="version-dev">
       <summary>For developers</summary>
-      {!main ? (
-        <p className="quest-muted">No build of main is known yet. Check for updates to look for one.</p>
+      <p className="quest-muted">Switch to any version or branch, up or down. A backup is saved first every time. Branch builds are untested.</p>
+      {going && <p className="quest-muted">Loading {going}. StudyDesk reloads by itself when it's there.</p>}
+      <h4 className="version-dev-head">Branches</h4>
+      {builds.length === 0 ? (
+        <p className="quest-muted">No branch builds known yet. Check for updates to look for them.</p>
       ) : (
-        <>
-          <p className="quest-muted">
-            Newest build of main: <code>{main.commit}</code>
-            {built ? `, built ${built}` : ""}.{main.notes ? ` ${main.notes.split("\n")[0]}` : ""}
-          </p>
-          {running ? null : next ? (
-            <>
-              <p className="quest-muted">These are merged but untested changes, not a release. Your data stays, and a backup is saved first.</p>
-              <button type="button" className="mini-btn" disabled={busy} onClick={() => void press(next)}>
-                Load the newest build from main
-              </button>
-            </>
-          ) : main.dataVersion !== null && main.dataVersion < doc.dataVersion ? (
-            <p className="quest-muted">This build can't read your data (it's older than your data), so it isn't offered.</p>
-          ) : (
-            <p className="quest-muted">You're on the newest build of main.</p>
+        <ul className="version-dev-list">
+          {builds.map((b) =>
+            row(
+              { folder: b.folder, branch: b.branch, dataVersion: b.dataVersion, notes: b.notes },
+              <>
+                <strong>{b.branch}</strong> <code>{b.commit}</code>
+              </>,
+              [when(b.builtAt), b.notes?.split("\n")[0]].filter(Boolean).join(" · ") || null,
+              !!BUILD_COMMIT && BUILD_COMMIT === b.commit,
+            ),
           )}
-        </>
+        </ul>
+      )}
+      <h4 className="version-dev-head">Releases</h4>
+      {releases.length === 0 ? (
+        <p className="quest-muted">No releases known yet. Check for updates to look for them.</p>
+      ) : (
+        <ul className="version-dev-list">
+          {releases.map((r) => row({ folder: r.version, dataVersion: r.dataVersion, notes: r.notes }, <strong>{r.version}</strong>, null, APP_VERSION === r.version))}
+        </ul>
       )}
       {line && <p className="quest-muted">{line}</p>}
       {error && <p className="quest-error">{error}</p>}

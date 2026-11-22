@@ -13,6 +13,8 @@ export const DATA_VERSION = 1;
 
 /** The commit the page was built from (set by the GitHub Action), or "" for a local build. */
 export const BUILD_COMMIT: string = ((import.meta.env?.VITE_STUDYDESK_COMMIT as string | undefined) || "").slice(0, 7);
+/** The branch a dev build was built from (set by the GitHub Action), or "". */
+export const BUILD_BRANCH: string = (import.meta.env?.VITE_STUDYDESK_BRANCH as string | undefined) || "";
 /** One exact build: the version plus its commit. Two dev builds differ only here. */
 export const BUILD_ID = BUILD_COMMIT ? `${APP_VERSION}@${BUILD_COMMIT}` : APP_VERSION;
 /** The folder on the releases branch with the newest build of main, for developers. */

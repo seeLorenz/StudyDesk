@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { checkPublishJob, loadRelease, loadUpdates, RELEASE_EVENT, startGoBack, startUpdate, updateEnv } from "../platform/updateStore";
 import { goBackTarget, offer, type Pending, type ReleaseDoc, type UpdatesDoc } from "./plan";
-import { APP_VERSION, BUILD_ID, DEV_CHANNEL } from "./version";
+import { APP_VERSION, BUILD_ID } from "./version";
 
 // The update notice in the StudyDesk chat (Organize) and the "go back" card.
 // design/updates.md: nothing updates until the student presses the button.
@@ -85,7 +85,7 @@ export function UpdateNotice({ md, always = false, notes = true }: { md: Md; alw
     return (
       <div className="update-card" role="status">
         <p>
-          <strong>Updating to {pending.to === DEV_CHANNEL ? "the newest build of main" : pending.to}.</strong> {published ? "It's published. StudyDesk reloads by itself; if it doesn't, reload now." : "Your data stays as it is, and a backup was saved first. StudyDesk reloads by itself when the new version is there."}
+          <strong>Updating to {pending.label ?? pending.to}.</strong> {published ? "It's published. StudyDesk reloads by itself; if it doesn't, reload now." : "Your data stays as it is, and a backup was saved first. StudyDesk reloads by itself when the new version is there."}
         </p>
         {line && <p className="quest-muted">{line}</p>}
         {published && (

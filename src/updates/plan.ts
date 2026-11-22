@@ -24,6 +24,8 @@ export type Pending = {
   /** Rollback only: put the backup's data back once the old version runs. */
   restore?: boolean;
   notes?: string | null;
+  /** How to name the target to a person, when it isn't a release ("branch fix-grading"). */
+  label?: string;
 };
 
 export type LastUpdate = {
@@ -57,10 +59,27 @@ export type UpdatesDoc = {
 export type ReleaseInfo = { version: string; notes: string | null; dataVersion: number | null };
 
 /** What's known about releases: the newest one, and (when read) every release with its notes, for "What's new". */
-export type ReleaseDoc = { latest: string; notes: string | null; dataVersion: number | null; checkedAt: number; releases?: ReleaseInfo[]; main?: MainBuild | null };
+export type ReleaseDoc = { latest: string; notes: string | null; dataVersion: number | null; checkedAt: number; releases?: ReleaseInfo[]; main?: MainBuild | null; builds?: DevBuild[] };
 
-/** The newest build of main (releases/main/), for developers. */
+/**
+ * The newest build of one branch, for developers: releases/main/ for main,
+ * releases/branch-<name>/ for any other branch. `folder` is what gets published.
+ */
+export type DevBuild = { folder: string; branch: string; commit: string; builtAt: string | null; notes: string | null; dataVersion: number | null };
+/** The newest build of main (kept as its own field for older release docs). */
 export type MainBuild = { commit: string; builtAt: string | null; notes: string | null; dataVersion: number | null };
+
+/** The releases folder a branch is built into. Same rule as the release action. Pure. */
+export function branchFolder(branch: string): string {
+  return branch === DEV_CHANNEL ? DEV_CHANNEL : `branch-${branch.replace(/[^A-Za-z0-9._-]+/g, "-")}`;
+}
+
+/** How a person names a publish target: "v1.1", "the newest build of main", "branch fix-grading". Pure. */
+export function targetLabel(folder: string, branch?: string): string {
+  if (isRelease(folder)) return folder;
+  if (folder === DEV_CHANNEL) return "the newest build of main";
+  return `branch ${branch ?? folder.replace(/^branch-/, "")}`;
+}
 
 /** A "Check for updates" session that's running (started from the version panel). */
 export type UpdateCheck = { jobId: string; startedAt: number };
@@ -141,16 +160,19 @@ export function keepBackups(list: Backup[], add: Backup): { keep: Backup[]; drop
 /** Release objects (from release.json / latest.json files) → a ReleaseDoc, or null when none is a release. Pure. */
 export function releaseDocFrom(list: unknown[], now: number): ReleaseDoc | null {
   const seen = new Map<string, ReleaseInfo>();
-  let main: MainBuild | null = null;
+  const builds: DevBuild[] = [];
   for (const x of list) {
-    const o = (x && typeof x === "object" ? x : {}) as { version?: unknown; notes?: unknown; dataVersion?: unknown; commit?: unknown; builtAt?: unknown };
-    if (o.version === DEV_CHANNEL && typeof o.commit === "string") {
-      main = {
-        commit: o.commit.slice(0, 7),
+    const o = (x && typeof x === "object" ? x : {}) as { version?: unknown; branch?: unknown; notes?: unknown; dataVersion?: unknown; commit?: unknown; builtAt?: unknown };
+    const isBuild = typeof o.commit === "string" && (o.version === DEV_CHANNEL || (typeof o.version === "string" && o.version.startsWith("branch-") && typeof o.branch === "string"));
+    if (isBuild) {
+      builds.push({
+        folder: o.version as string,
+        branch: o.version === DEV_CHANNEL ? DEV_CHANNEL : (o.branch as string),
+        commit: (o.commit as string).slice(0, 7),
         builtAt: typeof o.builtAt === "string" ? o.builtAt : null,
-        notes: typeof o.notes === "string" && o.notes.trim() ? o.notes.trim().slice(0, 1000) : null,
+        notes: typeof o.notes === "string" && o.notes.trim() ? o.notes.trim().slice(0, 300) : null,
         dataVersion: Number.isInteger(o.dataVersion) ? (o.dataVersion as number) : null,
-      };
+      });
       continue;
     }
     if (typeof o.version !== "string" || !isRelease(o.version)) continue;
@@ -162,16 +184,32 @@ export function releaseDocFrom(list: unknown[], now: number): ReleaseDoc | null 
   }
   const releases = [...seen.values()].sort((a, b) => compareVersions(b.version, a.version)).slice(0, 30);
   const newest = releases[0];
-  return newest ? { latest: newest.version, notes: newest.notes, dataVersion: newest.dataVersion, checkedAt: now, releases, main } : null;
+  // main first, then the most recently built branches.
+  const sorted = builds.sort((a, b) => Number(b.folder === DEV_CHANNEL) - Number(a.folder === DEV_CHANNEL) || String(b.builtAt).localeCompare(String(a.builtAt))).slice(0, 20);
+  const m = sorted.find((b) => b.folder === DEV_CHANNEL);
+  const main: MainBuild | null = m ? { commit: m.commit, builtAt: m.builtAt, notes: m.notes, dataVersion: m.dataVersion } : null;
+  return newest ? { latest: newest.version, notes: newest.notes, dataVersion: newest.dataVersion, checkedAt: now, releases, main, builds: sorted } : null;
 }
 
-/** The newest build of main to offer a developer, or null: none known, already running it, or it can't read this data. Pure. */
-export function devOffer(buildCommit: string, release: ReleaseDoc | null, doc: UpdatesDoc): MainBuild | null {
-  const m = release?.main;
-  if (!m) return null;
-  if (buildCommit && m.commit.slice(0, 7) === buildCommit.slice(0, 7)) return null;
-  if (m.dataVersion !== null && m.dataVersion < doc.dataVersion) return null;
-  return m;
+/** Every branch build known, also from an older release doc that only had `main`. Pure. */
+export function devBuilds(release: ReleaseDoc | null): DevBuild[] {
+  if (release?.builds) return release.builds;
+  return release?.main ? [{ folder: DEV_CHANNEL, branch: DEV_CHANNEL, ...release.main }] : [];
+}
+
+/**
+ * How a developer switches to another build or release, up or down, without
+ * losing data. Every switch saves a backup first. A target that can read the
+ * data as it is just gets published ("plain"). One that expects older data
+ * ("restore") needs the newest backup old enough for it, put back when it
+ * arrives: anything done since that backup is lost, so the page warns first.
+ * Without such a backup the switch is refused. Pure.
+ */
+export type SwitchPlan = { kind: "plain" } | { kind: "restore"; backup: Backup } | { kind: "blocked"; reason: string };
+export function switchPlan(targetDataVersion: number | null, doc: UpdatesDoc): SwitchPlan {
+  if (targetDataVersion === null || targetDataVersion >= doc.dataVersion) return { kind: "plain" };
+  const backup = [...doc.backups].filter((b) => b.dataVersion <= targetDataVersion).sort((a, b) => b.at - a.at)[0];
+  return backup ? { kind: "restore", backup } : { kind: "blocked", reason: `It expects older data (version ${targetDataVersion}, yours is ${doc.dataVersion}), and there's no backup that old to put back.` };
 }
 
 /** "What's new": the installed release and every newer one, newest first. Pure. */
@@ -223,8 +261,9 @@ For this job you may clone into your scratchpad directory (nowhere else). Don't 
  */
 export function publishJobBody(tag: string, why: "update" | "rollback", repo = RELEASE_REPO): string {
   const dir = `<your scratchpad directory>/studydesk-releases`;
-  const pressed = why === "rollback" ? `The update didn't work, and the student pressed "Go back to ${tag}".` : tag === DEV_CHANNEL ? `A developer pressed "Load the newest build from main".` : `The student pressed "Update to ${tag}".`;
-  return `${pressed} Put StudyDesk ${tag === DEV_CHANNEL ? "(the newest build of main, folder main/)" : tag} onto the student's own StudyDesk link. Their data stays where it is: publishing to the same link replaces only the page and its program.
+  const dev = !isRelease(tag);
+  const pressed = dev ? `A developer chose to load ${targetLabel(tag)} in the version panel.` : why === "rollback" ? `The student pressed "Go back to ${tag}".` : `The student pressed "Update to ${tag}".`;
+  return `${pressed} Put StudyDesk ${dev ? `(${targetLabel(tag)}, folder ${tag}/)` : tag} onto the student's own StudyDesk link. Their data stays where it is: publishing to the same link replaces only the page and its program.
 
 For this job you may clone into your scratchpad directory (nowhere else). Don't change the student's data except your job document.
 
