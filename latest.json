@@ -1,7 +1,7 @@
 {
-  "version": "v1.1.3",
-  "notes": "Full semesters save properly: big setups (many courses, hundreds of skills, large imports) no longer hit a size limit, and a failed final save now explains itself and has a \"Try again\" button. Developers can load the newest build from main in the version panel.",
+  "version": "v1.1.4",
+  "notes": "On narrow screens you can switch between the chat and the sheet, so the chat box stays reachable. After setup the chat box stays docked next to a \"To do | Semester\" side panel, and StudyDesk ticks off setup to-dos by itself. Calendar events are read live, including their descriptions, and class times are labelled more clearly on the semester sheet. iPhone photos (HEIC) open in every chat box and course zip. The sheet scrolls on its own, setup progress is more compact, and sent messages move to the top. Developers can load any branch build or release.",
   "dataVersion": 1,
-  "builtAt": "2026-11-21T11:58:56.354Z",
-  "commit": "f8f6115753a2f4b35a01920f3a8ebb90edade369"
+  "builtAt": "2026-11-22T10:06:28.182Z",
+  "commit": "7fde07f5c3dc6ea6657568d49a0c65d0cb5b439c"
 }
