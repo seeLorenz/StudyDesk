@@ -182,3 +182,5 @@ This repository is public. Never commit personal data, secrets or real student i
 ## License
 
 StudyDesk is open source under the [MIT License](LICENSE).
+
+The built page bundles [heic-to](https://github.com/hoppergee/heic-to) (libheif and libde265, LGPL-3.0, unmodified from npm) to open iPhone photos. Its source and license are in that repository; to use another build, change its version in `package.json` and rebuild.

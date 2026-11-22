@@ -2,6 +2,7 @@ import type { Attachment } from "../chat/types";
 import { uid } from "../chat/types";
 import { classify, type FileClass } from "./intake";
 import { officeText } from "./office";
+import { asJpegIfHeic, isHeic } from "./heic";
 
 export const MAX_TEXT_CHARS = 60_000;
 
@@ -123,6 +124,14 @@ async function pdfText(file: File, limit = MAX_TEXT_CHARS): Promise<string> {
  * accepted as they are and opened when the message is sent.
  */
 export async function readAttachment(file: File, opts: { keepAll?: boolean } = {}): Promise<PendingAttachment> {
+  // iPhone photos become JPEGs first, so Claude can see them (src/lib/heic.ts).
+  if (isHeic(file.name, file.type)) {
+    try {
+      file = await asJpegIfHeic(file);
+    } catch (e) {
+      return { id: uid(), name: file.name || "photo", kind: "image", status: "error", error: e instanceof Error ? e.message : "This photo couldn't be opened." };
+    }
+  }
   const kind = kindOf(file);
   const cls = classify(file.name || "file", file.type);
   const base = { id: uid(), name: file.name || (kind === "image" ? "pasted image" : "file"), status: "ready" as const, file };

@@ -12,6 +12,7 @@ import type { StorageUsage, UploadContent } from "../platform/onboardingStore";
 import { compressImage, dataUrlToBlob } from "../quests/images";
 import type { PendingAttachment } from "./files";
 import { readPdf } from "./files";
+import { heicToJpeg, isHeic, jpegName } from "./heic";
 import { breathe, buildOutline, classify, selectPart, walkZip, zipEntries, type FileClass, type IntakeFile, type ZipEntry } from "./intake";
 import { officeText } from "./office";
 
@@ -58,6 +59,11 @@ type One = { upload: Upload; content: UploadContent | null; image: Blob | null; 
 
 /** Keeps one file: its readable content and outline in the student's data, the original in the file store. */
 async function keepOne(f: IntakeFile, zipId: string | null, store: KeepStore, now: number, room: Room = null): Promise<One> {
+  // An iPhone photo is kept as a JPEG: Claude and the file store can't take HEIC (src/lib/heic.ts).
+  if (f.cls === "image" && f.blob && isHeic(f.name)) {
+    const jpeg = await heicToJpeg(f.blob);
+    f = { ...f, name: jpegName(f.name), blob: jpeg, size: jpeg.size };
+  }
   const id = `up_${uid()}`;
   const upload: Upload = {
     id,

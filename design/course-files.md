@@ -30,6 +30,7 @@ This part has one right answer, so it is code (guideline 3).
 | File | What StudyDesk does |
 | --- | --- |
 | PDF with text, image, text or code file | Original kept in the file store; outline built |
+| iPhone photo (HEIC/HEIF) | Turned into a JPEG in the page (`IMG_5334.HEIC` becomes `IMG_5334.jpg`), then kept like any image |
 | Word, PowerPoint, Excel, OpenDocument | Text pulled out in the page (they are zips of text inside), one marker per slide or sheet, stored as text; outline built. The file store can't keep these originals, so the text version is what's kept |
 | PDF without text (a scan), handwritten notes | Original kept; marked "needs reading by the agent" (see section 3) |
 | Video and audio | Listed in the inventory by name, not stored (too big for the file store, and Claude can't watch or hear them). The agent goes by the title, or by the student's description (see "Videos" below) |
