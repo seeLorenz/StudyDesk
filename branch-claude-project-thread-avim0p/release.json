@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-avim0p",
   "branch": "claude/project-thread-avim0p",
-  "notes": "Developers: load any branch build or release, up or down",
+  "notes": "Version panel: caution note for branch builds",
   "dataVersion": 1,
-  "builtAt": "2026-11-22T09:44:43.978Z",
-  "commit": "8dbd08e94cb4808c1d95c1046eaec6425dc77b33"
+  "builtAt": "2026-11-22T09:46:36.658Z",
+  "commit": "4f95a2dc108a1bdd1c44e8197931c09813c83fa4"
 }
