@@ -24,7 +24,7 @@ function deferredAsk(answers) {
   return {
     pending,
     used,
-    ask: (label, web = false) => async (turns, opts) => {
+    ask: (label2, web = false) => async (turns, opts) => {
       const images = opts?.images ?? [];
       const id = callId(turns, images.length);
       const answer = answers.get(id);
@@ -32,7 +32,7 @@ function deferredAsk(answers) {
         used.add(id);
         return answer;
       }
-      if (!pending.some((p) => p.id === id)) pending.push({ id, label, turns, images, web });
+      if (!pending.some((p) => p.id === id)) pending.push({ id, label: label2, turns, images, web });
       throw new AnswerPending(id);
     }
   };
@@ -835,12 +835,12 @@ function parseSetup(reply, input, fileKeys, now = Date.now()) {
     const tasks = [];
     for (const tb of rest.join("\n").split(/^####\s*/m).slice(1)) {
       const [th, ...body] = tb.split("\n");
-      const [label, sk, pts] = th.split("|").map((x) => x.trim());
+      const [label2, sk, pts] = th.split("|").map((x) => x.trim());
       const sid = skillId(sk ?? "");
       const prompt = body.join("\n").trim();
-      if (!label || !prompt || !skills.some((s) => s.id === sid)) continue;
+      if (!label2 || !prompt || !skills.some((s) => s.id === sid)) continue;
       const p = Number((pts ?? "").replace(",", "."));
-      tasks.push({ id: `${aid}-${slug(label)}`, label, skillId: sid, prompt, maxPoints: Number.isFinite(p) && p > 0 ? p : 1 });
+      tasks.push({ id: `${aid}-${slug(label2)}`, label: label2, skillId: sid, prompt, maxPoints: Number.isFinite(p) && p > 0 ? p : 1 });
     }
     if (tasks.length) assignments.push({ id: aid, courseId: cid, title, dueAt: dueAt2, tasks });
   }
@@ -930,6 +930,85 @@ function assessmentAttempts(r, now) {
     startedAt: now,
     gradedAt: now
   }));
+}
+function subId(text) {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = (h << 5) + h + text.charCodeAt(i) | 0;
+  return (h >>> 0).toString(36);
+}
+function withSubs(done, key, lines, make) {
+  const subs = lines.map((text) => {
+    const k = `${key}:${subId(text)}`;
+    return { key: k, text, done: done.has(k) || done.has(key) };
+  });
+  const open = subs.filter((x) => !x.done).map((x) => x.text);
+  return { key, ...make(open.length ? open : lines, lines.length), done: done.has(key) || open.length === 0, subs };
+}
+const asksForFiles = (q) => /\b(upload|share|send)\b|\bsyllabus\b|LV-Beschreibung/i.test(q);
+const label = (c) => (c.short || c.name).trim();
+function dayLabel(when) {
+  const d = new Date(/T/.test(when) ? when : `${when}T12:00`);
+  return isNaN(+d) ? when : d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+function setupTodo(draft) {
+  const done = new Set(draft.todoDone ?? []);
+  const items = [];
+  const results = draft.courses.filter((c) => draft.results[c.id]);
+  const needFiles = results.filter((c) => {
+    const r = draft.results[c.id];
+    return r.basis === "general" || r.questions.some(asksForFiles);
+  });
+  if (needFiles.length) {
+    const names = needFiles.map(label).join(", ");
+    items.push({
+      key: "upload",
+      title: `Add materials for ${needFiles.length} ${needFiles.length === 1 ? "course" : "courses"}`,
+      body: `StudyDesk only guessed what **${names}** ${needFiles.length === 1 ? "covers" : "cover"}, or is missing sheets. Drop the course description with the weekly schedule and any current exercise sheets into the chat, and say which course each is for.`,
+      chatPrompt: `Next on your list: materials. I only guessed what ${names} ${needFiles.length === 1 ? "covers" : "cover"}, or I'm missing sheets. Drop the course description (with the weekly schedule) and any current exercise sheets here, one course at a time, and tell me which course each file is for.`,
+      done: done.has("upload")
+    });
+  }
+  const dates = results.flatMap((c) => [
+    ...draft.results[c.id].keyDates.map((k) => ({ sort: k.date, line: `**${dayLabel(k.date)}** · ${label(c)}: ${k.title}` })),
+    ...draft.results[c.id].assignments.map((a) => ({ sort: a.dueAt, line: `**${dayLabel(a.dueAt)}** · ${label(c)}: ${a.title} due` }))
+  ]).sort((a, b) => a.sort < b.sort ? -1 : 1);
+  if (dates.length) {
+    items.push(
+      withSubs(done, "dates", dates.map((d) => d.line), (open, total) => ({
+        title: open.length === total ? `Check ${total} important ${total === 1 ? "date" : "dates"}` : `Check ${open.length} of ${total} important dates`,
+        body: "StudyDesk plans around these. Say if any is wrong or missing.",
+        chatPrompt: `Next on your list: the important dates I found. Tell me if any is wrong or missing:
+
+${open.map((l) => `- ${l}`).join("\n")}`
+      }))
+    );
+  }
+  const conflicts = results.flatMap((c) => draft.results[c.id].conflicts.map((t) => `**${label(c)}:** ${t}`));
+  if (conflicts.length) {
+    items.push(
+      withSubs(done, "conflicts", conflicts, (open) => ({
+        title: `${open.length} ${open.length === 1 ? "place where your files disagree" : "places where your files disagree"} with you`,
+        body: "Your word was used. Say if the file was right instead.",
+        chatPrompt: `Next on your list: where your files disagree with what you told me. I went with your word; tell me if a file was right instead:
+
+${open.map((l) => `- ${l}`).join("\n")}`
+      }))
+    );
+  }
+  for (const c of results) {
+    const qs = draft.results[c.id].questions.filter((q) => !asksForFiles(q)).slice(0, MAX_QUESTIONS);
+    if (!qs.length) continue;
+    items.push(
+      withSubs(done, `q-${c.id}`, qs, (open, total) => ({
+        title: `${label(c)}: ${open.length === total ? `${total} ${total === 1 ? "question" : "questions"}` : `${open.length} of ${total} questions left`}`,
+        body: "Answer whatever you know, skip the rest.",
+        chatPrompt: `Next on your list: ${c.name}. ${open.length === 1 ? "One question" : `${open.length} quick questions`}. Answer whatever you know, skip the rest:
+
+${open.map((q, i) => `${i + 1}. ${q}`).join("\n")}`
+      }))
+    );
+  }
+  return items;
 }
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const CONFIRM_FIRST = /* @__PURE__ */ new Set(["drop_course"]);
@@ -1278,6 +1357,24 @@ function applyOps(desk0, ops, o) {
         lines.push(v ? "Calendar: followed live again, each day's quest is sized from it" : "Calendar: no longer followed day by day, quests go by the weekly timetable");
         break;
       }
+      case "tick_todo": {
+        const key = str(op.key);
+        const todo = setupTodo(desk.draft);
+        const item = todo.find((t) => t.key === key || t.title === key);
+        const sub = item ? void 0 : todo.flatMap((t) => t.subs ?? []).find((x) => x.key === key);
+        if (!item && !sub) {
+          errors.push(`tick_todo: no to-do "${key}"; use a key from openToDo (an item or one of its parts).`);
+          break;
+        }
+        const target = item ? { key: item.key, label: item.title, done: item.done } : { key: sub.key, label: sub.text.replace(/\*\*/g, ""), done: sub.done };
+        const on = !(op.done === false || op.done === "false");
+        if (target.done === on) break;
+        const list = desk.draft.todoDone ?? [];
+        const parent = target.key.split(":")[0];
+        touch("todoDone", on ? [.../* @__PURE__ */ new Set([...list, target.key])] : list.filter((k) => k !== target.key && k !== parent));
+        lines.push(on ? `To do: ticked off "${target.label}"` : `To do: "${target.label}" is open again`);
+        break;
+      }
       case "set_nightly": {
         const cur = nightlySettings(desk.profile.nightly);
         const next = { ...cur };
@@ -1426,6 +1523,15 @@ function syncSemester(draft, profile, current, now = Date.now()) {
     studyGoalDecidedAt: current.studyGoalDecidedAt ?? (goalChanged ? now : void 0)
   };
 }
+let inFlight = 0;
+const BUSY_RETRY_MS = [8e3, 2e4];
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  const t = setTimeout(resolve, ms);
+  signal?.addEventListener("abort", () => {
+    clearTimeout(t);
+    reject({ code: "cancelled", message: "Stopped." });
+  });
+});
 const MODEL = "claude-opus-5-5";
 const FALLBACK_TIER = "complex";
 let lastUsed = null;
@@ -1440,6 +1546,24 @@ function getSample() {
 async function askClaude(turns, opts = {}) {
   const sample = await getSample();
   if (!sample) return mockAnswer(turns, opts);
+  if (opts.background && inFlight > 0) throw { code: "skipped", message: "Another call is running." };
+  inFlight++;
+  try {
+    for (let attempt = 0; ; attempt++) {
+      let streamed = false;
+      try {
+        return await askOnce(sample, turns, { ...opts, onText: opts.onText ? (t) => (streamed = true, opts.onText(t)) : void 0 });
+      } catch (e) {
+        const err = e;
+        if (err.code !== "rate_limited" || streamed || opts.background || attempt >= BUSY_RETRY_MS.length || opts.signal?.aborted) throw err;
+        await sleep(BUSY_RETRY_MS[attempt], opts.signal);
+      }
+    }
+  } finally {
+    inFlight--;
+  }
+}
+async function askOnce(sample, turns, opts) {
   try {
     const res = await sample(turns, {
       ...opts.tools ? { tools: opts.tools } : { cache: false },
