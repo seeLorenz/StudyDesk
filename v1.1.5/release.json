@@ -1,0 +1,7 @@
+{
+  "version": "v1.1.5",
+  "notes": "A finished setup is no longer undone by an older StudyDesk tab, and your to-do list stays put. The \"Export everything\" check only appears when you start a new semester, the setup chat opens at the latest message, and the To do tab stays once setup is done. You can set a course's language in the setup chat, and it sticks. Redoing placement asks whether to also delete your past stats.",
+  "dataVersion": 1,
+  "builtAt": "2026-11-22T11:47:53.833Z",
+  "commit": "68f95ad3e0b544eaa2bcaa63169811f206499075"
+}

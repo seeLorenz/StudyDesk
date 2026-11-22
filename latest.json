@@ -1,7 +1,7 @@
 {
-  "version": "v1.1.4",
-  "notes": "On narrow screens you can switch between the chat and the sheet, so the chat box stays reachable. After setup the chat box stays docked next to a \"To do | Semester\" side panel, and StudyDesk ticks off setup to-dos by itself. Calendar events are read live, including their descriptions, and class times are labelled more clearly on the semester sheet. iPhone photos (HEIC) open in every chat box and course zip. The sheet scrolls on its own, setup progress is more compact, and sent messages move to the top. Developers can load any branch build or release.",
+  "version": "v1.1.5",
+  "notes": "A finished setup is no longer undone by an older StudyDesk tab, and your to-do list stays put. The \"Export everything\" check only appears when you start a new semester, the setup chat opens at the latest message, and the To do tab stays once setup is done. You can set a course's language in the setup chat, and it sticks. Redoing placement asks whether to also delete your past stats.",
   "dataVersion": 1,
-  "builtAt": "2026-11-22T10:06:28.182Z",
-  "commit": "7fde07f5c3dc6ea6657568d49a0c65d0cb5b439c"
+  "builtAt": "2026-11-22T11:47:53.833Z",
+  "commit": "68f95ad3e0b544eaa2bcaa63169811f206499075"
 }
