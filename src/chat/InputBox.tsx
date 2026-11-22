@@ -133,7 +133,7 @@ export function InputBox({
           type="file"
           multiple
           hidden
-          accept={keepAll ? undefined : "image/png,image/jpeg,image/webp,image/gif,application/pdf,text/*,.md,.csv,.json,.tex,.py,.js,.ts,.java,.c,.cpp,.docx,.pptx,.xlsx,.odt,.odp,.ods"}
+          accept={keepAll ? undefined : "image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,.heic,.heif,application/pdf,text/*,.md,.csv,.json,.tex,.py,.js,.ts,.java,.c,.cpp,.docx,.pptx,.xlsx,.odt,.odp,.ods"}
           onChange={(e) => {
             addFiles(Array.from(e.target.files ?? []));
             e.target.value = "";

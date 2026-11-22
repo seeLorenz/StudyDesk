@@ -102,7 +102,7 @@ export function AnswerBox({ id, text, files, disabled, onText, onAddFile, onRemo
           type="file"
           multiple
           hidden
-          accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/*,.md,.tex"
+          accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,.heic,.heif,application/pdf,text/*,.md,.tex"
           onChange={(e) => {
             add(Array.from(e.target.files ?? []));
             e.target.value = "";

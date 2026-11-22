@@ -18,6 +18,8 @@ Any box where the student writes to Claude or hands in work accepts:
 
 No box is text-only. A student should never have to save a screenshot to disk just to share it.
 
+iPhone photos (HEIC/HEIF) work everywhere too, also inside course zips: the page turns each one into a JPEG before Claude sees it or it is kept, because Claude and the file store only take PNG, JPEG, WebP and GIF. Safari does this with its own decoder; other browsers use a bundled libheif decoder (src/lib/heic.ts). If a photo still can't be read, the box says how to send it as a JPEG instead.
+
 ## 3. Build it smart: Claude for what varies, code for the mechanics
 
 Nothing about a student, a course or a school is hardcoded. Course names, grading scales, languages, subjects, materials and study habits all differ, so Claude reads and adapts to them instead of the app assuming one kind of student.

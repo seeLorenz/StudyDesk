@@ -11,7 +11,7 @@ export type FileClass = "pdf" | "image" | "text" | "office" | "zip" | "video" | 
 
 const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|xml|html?|css|js|ts|tsx|jsx|py|java|c|cpp|h|hpp|cs|go|rs|rb|php|sql|tex|bib|yaml|yml|ini|log|m|r|jl|ipynb|sh|bat|vhd|vhdl|v|sv|asm|s|kt|swift|scala|lua|pl|toml|cfg|conf|rst|org|srt|vtt)$/i;
 const VIDEO_EXT = /\.(mp4|m4v|mov|avi|mkv|webm|wmv|flv|mpe?g|3gp|mp3|m4a|wav|ogg|oga|flac|aac|wma|opus)$/i;
-const IMAGE_EXT = /\.(png|jpe?g|webp|gif)$/i;
+const IMAGE_EXT = /\.(png|jpe?g|webp|gif|heic|heif|hif)$/i;
 
 /** What kind of file this is, from its name (and type when there is one). Pure. */
 export function classify(name: string, type = ""): FileClass {
@@ -20,7 +20,7 @@ export function classify(name: string, type = ""): FileClass {
   if (/\.zip$/i.test(base) || type === "application/zip" || type === "application/x-zip-compressed") return "zip";
   if (/\.pdf$/i.test(base) || type === "application/pdf") return "pdf";
   if (OFFICE_EXT.test(base)) return "office";
-  if (IMAGE_EXT.test(base) || /^image\/(png|jpe?g|webp|gif)$/.test(type)) return "image";
+  if (IMAGE_EXT.test(base) || /^image\/(png|jpe?g|webp|gif|heic|heif)$/.test(type)) return "image";
   if (VIDEO_EXT.test(base) || type.startsWith("video/") || type.startsWith("audio/")) return "video";
   if (TEXT_EXT.test(base) || type.startsWith("text/")) return "text";
   return "other";
