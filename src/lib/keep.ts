@@ -114,7 +114,9 @@ async function keepOne(f: IntakeFile, zipId: string | null, store: KeepStore, no
     const small = await compressImage(f.blob);
     if (!small) throw new Error("couldn't be read");
     content = { image: small, outline: "(an image)" };
-    image = f.blob;
+    // Claude gets the shrunk JPEG it will also see in later turns, not the
+    // original: a huge PNG or an odd format would make it refuse the question.
+    image = dataUrlToBlob(small);
   } else if (f.cls === "office") {
     const text = officeText(f.name, new Uint8Array(await f.blob.arrayBuffer()));
     content = { text: clip(text), outline: buildOutline(text) };
@@ -419,6 +421,9 @@ export async function readKeptFile(input: Record<string, unknown>, uploads: Uplo
   return selectPart(c.text, part, 30_000).text;
 }
 
+/** Most images one question carries, this turn's and earlier ones together (fewer where the view allows fewer). */
+export const RECALL_IMAGES = 5;
+
 /**
  * Loads the earlier images to send again this turn, with a line telling
  * Claude which attached image is which file. Images sent this turn come first
@@ -430,7 +435,7 @@ export async function recallImages(
   sentNow: number,
   exclude: Set<string>,
   load: (id: string) => Promise<UploadContent | null>,
-  max = 5,
+  max = RECALL_IMAGES,
 ): Promise<{ images: Blob[]; note: string }> {
   const room = Math.max(0, max - sentNow);
   if (!room) return { images: [], note: "" };

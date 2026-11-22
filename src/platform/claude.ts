@@ -7,7 +7,15 @@ import { host } from "./host";
 export type Turn = { role: "user" | "assistant"; content: string };
 
 export type AskOptions = {
+  /** Images for this turn, most important first: past the view's limit the last ones are left out. */
   images?: Blob[];
+  /**
+   * Images from earlier turns, attached again so Claude can still see them.
+   * They come after `images`, are left out first when the view allows fewer,
+   * and are dropped (with a line telling Claude) when Claude can't take the
+   * images, so one old image can never block every later message.
+   */
+  earlierImages?: Blob[];
   signal?: AbortSignal;
   onText?: (text: string) => void;
   /** Kept for later token tuning; today every call asks for Opus (see MODEL). */
@@ -79,10 +87,48 @@ export async function canUseTools(): Promise<boolean> {
 }
 
 export async function canSendImages(): Promise<boolean> {
+  return (await maxImages()) > 0;
+}
+
+/** How many images one question may carry in this view (0: none). */
+export async function maxImages(): Promise<number> {
   const sample = await getSample();
-  if (!sample) return false;
+  if (!sample) return 0;
   const limits = await sample.limits().catch(() => null);
-  return !!limits?.images;
+  return limits?.images ? Math.max(0, limits.images.maxCount) : 0;
+}
+
+type ImageLimits = { maxCount: number; maxInputBytes: number; mediaTypes: string[] };
+
+/**
+ * Picks the images one call may carry: only accepted types and sizes, this
+ * turn's first, then earlier ones, up to the view's count. Says what was left
+ * out, for a line to Claude. Pure.
+ */
+export function fitImages(now: Blob[], earlier: Blob[], limits: ImageLimits | null | undefined): { images: Blob[]; leftOutNow: number; leftOutEarlier: number } {
+  if (!limits) return { images: [], leftOutNow: now.length, leftOutEarlier: earlier.length };
+  const ok = (b: Blob) => (!limits.mediaTypes?.length || limits.mediaTypes.includes(b.type)) && (!limits.maxInputBytes || b.size <= limits.maxInputBytes);
+  const room = Math.max(0, limits.maxCount);
+  const n = now.filter(ok).slice(0, room);
+  const e = earlier.filter(ok).slice(0, room - n.length);
+  return { images: [...n, ...e], leftOutNow: now.length - n.length, leftOutEarlier: earlier.length - e.length };
+}
+
+/** Adds a line for Claude to the last (user) turn. */
+function withNote(turns: Turn[], note: string): Turn[] {
+  if (!note) return turns;
+  const out = turns.map((t) => ({ ...t }));
+  out[out.length - 1].content += `\n\n${note}`;
+  return out;
+}
+
+function leftOutNote(leftOutNow: number, leftOutEarlier: number): string {
+  return [
+    leftOutNow ? `(StudyDesk could attach only some of this turn's images: the last ${leftOutNow} ${leftOutNow === 1 ? "is" : "are"} missing. Tell the student which ones you can't see, and ask them to send those again in a later message.)` : "",
+    leftOutEarlier ? `(${leftOutEarlier} of the earlier images couldn't be attached again this turn. Go by what was already said about ${leftOutEarlier === 1 ? "it" : "them"}.)` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /**
@@ -113,13 +159,33 @@ export async function askClaude(turns: Turn[], opts: AskOptions = {}): Promise<s
 }
 
 async function askOnce(sample: NonNullable<Awaited<ReturnType<typeof getSample>>>, turns: Turn[], opts: AskOptions): Promise<string> {
+  const now = opts.images ?? [];
+  const earlier = opts.earlierImages ?? [];
+  if (!now.length && !earlier.length) return askWith(sample, turns, opts, []);
+  const limits = await sample.limits().catch(() => null);
+  const fit = fitImages(now, earlier, limits?.images);
+  try {
+    return await askWith(sample, withNote(turns, leftOutNote(fit.leftOutNow, fit.leftOutEarlier)), opts, fit.images);
+  } catch (e) {
+    // Claude couldn't take the images: ask once more without the earlier ones,
+    // which the student didn't just send. This turn's own images still fail
+    // visibly, so the student knows to send another file.
+    const err = e as AskError;
+    const sentEarlier = fit.images.length - (now.length - fit.leftOutNow);
+    if (err?.code !== "image_rejected" || err.text || sentEarlier <= 0 || opts.signal?.aborted) throw err;
+    const onlyNow = fit.images.slice(0, fit.images.length - sentEarlier);
+    return askWith(sample, withNote(turns, leftOutNote(fit.leftOutNow, earlier.length)), opts, onlyNow);
+  }
+}
+
+async function askWith(sample: NonNullable<Awaited<ReturnType<typeof getSample>>>, turns: Turn[], opts: AskOptions, images: Blob[]): Promise<string> {
   try {
     const res = await sample(turns, {
       ...(opts.tools ? { tools: opts.tools } : { cache: false }),
       signal: opts.signal,
       model: MODEL,
       modelTier: FALLBACK_TIER,
-      images: opts.images && opts.images.length ? opts.images : undefined,
+      images: images.length ? images : undefined,
       onText: opts.onText ? ({ text }) => opts.onText!(text) : undefined,
     });
     const { text, truncated } = res;
@@ -150,7 +216,7 @@ export function errorCopy(e: AskError): string {
     case "prompt_too_large":
       return "That's too much text for one question. Start a new chat or attach a smaller file.";
     case "image_rejected":
-      return "One of the images couldn't be used. Try a JPEG or PNG under 20 MB.";
+      return "Claude couldn't take one of the images you just sent (an unsupported type, a damaged file, or too many at once). Send fewer images at a time, or a screenshot or JPEG instead.";
     case "images_unavailable":
       return "Images can't be sent from this view. Describe the image in text instead.";
     case "refused":

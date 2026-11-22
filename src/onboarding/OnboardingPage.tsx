@@ -8,7 +8,7 @@ import { InputBox } from "../chat/InputBox";
 import { SelectionReply } from "../chat/SelectionReply";
 import { passageNoteTurns } from "../chat/prompts";
 import type { PendingAttachment } from "../lib/files";
-import { describedVideos, describeVideo, keepDrop, READ_FILE_TOOL, readKeptFile, recallImages, type KeepProgress, type KeptDrop } from "../lib/keep";
+import { describedVideos, describeVideo, keepDrop, READ_FILE_TOOL, readKeptFile, recallImages, RECALL_IMAGES, type KeepProgress, type KeptDrop } from "../lib/keep";
 import { IntakeCard } from "../chat/IntakeCard";
 import { LeftoversNotice } from "../shell/LeftoversNotice";
 import { toDay } from "../mastery/days";
@@ -17,7 +17,7 @@ import type { Skill } from "../mastery/types";
 import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
 import { useSideNotes } from "../notes/useSideNotes";
 import { calendarForClaude, readCalendar, type CalendarError } from "../platform/calendar";
-import { askClaude, canSendImages, canUseTools, claudeAvailable, errorCopy, lastModel, type AskError } from "../platform/claude";
+import { askClaude, canSendImages, maxImages, canUseTools, claudeAvailable, errorCopy, lastModel, type AskError } from "../platform/claude";
 import { openMasteryStore, type MasteryData, type MasteryStore } from "../platform/masteryStore";
 import { offerDownload, openOnboardingStore, saveErrorCopy, StaleDraft, type OnboardingStore } from "../platform/onboardingStore";
 import { openQuestStore, type QuestStore } from "../platform/questStore";
@@ -700,10 +700,11 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
         patchMsg(reply.id, { text: r.reply });
       } else {
         if (!(await canUseTools())) throw new Error("This view can't let Claude fill in the sheet. Open StudyDesk on claude.ai in a browser or the desktop app.");
-        const imagesOk = await canSendImages();
+        // As many images as this view allows per question: this turn's first, then earlier ones again.
+        const imageRoom = await maxImages();
+        const imagesOk = imageRoom > 0;
         const nowIds = new Set(kept.uploads.map((u) => u.id));
-        const earlier = imagesOk ? await recallImages(draftRef.current!.chat ?? [], draftRef.current!.uploads, kept.images.length, nowIds, (id) => env.os.loadUploadContent(id)) : { images: [], note: "" };
-        const sendImages = imagesOk ? [...kept.images, ...earlier.images] : [];
+        const earlier = imagesOk ? await recallImages(draftRef.current!.chat ?? [], draftRef.current!.uploads, kept.images.length, nowIds, (id) => env.os.loadUploadContent(id), Math.min(RECALL_IMAGES, imageRoom)) : { images: [], note: "" };
         const extra = [
           kept.previews.length ? `The student just dropped these files (saved as unsortedFiles; assign each to a course, and a zip as a whole by its zip id unless its folders clearly hold several courses):\n${kept.previews.join("\n\n")}` : "",
           kept.images.length && !imagesOk ? "Images can't be sent in this view; ask the student what the images show." : "",
@@ -717,7 +718,8 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
         const turns = chatTurns(draftRef.current!.chat!.filter((m) => m.id !== reply.id), sheetSnapshot(draftRef.current!, profileRef.current, today, handoff?.kind === "ready" ? "on" : handoff && handoff.kind !== "unavailable" ? "off" : "unknown"), returning, extra);
         const answer = await askClaude(turns, {
           signal: c.signal,
-          images: sendImages,
+          images: imagesOk ? kept.images : [],
+          earlierImages: earlier.images,
           tier: "default",
           onText: (t) => patchMsg(reply.id, { text: t }),
           tools: [
