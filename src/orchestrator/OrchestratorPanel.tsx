@@ -10,13 +10,13 @@ import { InputBox } from "../chat/InputBox";
 import { SelectionReply } from "../chat/SelectionReply";
 import { passageNoteTurns } from "../chat/prompts";
 import type { PendingAttachment } from "../lib/files";
-import { describedVideos, describeVideo, keepDrop, READ_FILE_TOOL, readKeptFile, recallImages, type KeepProgress, type KeptDrop } from "../lib/keep";
+import { describedVideos, describeVideo, keepDrop, READ_FILE_TOOL, readKeptFile, recallImages, RECALL_IMAGES, type KeepProgress, type KeptDrop } from "../lib/keep";
 import { IntakeCard } from "../chat/IntakeCard";
 import { toDay } from "../mastery/days";
 import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
 import { useSideNotes } from "../notes/useSideNotes";
 import { calendarForClaude, readCalendar, type CalendarError } from "../platform/calendar";
-import { askClaude, canSendImages, canUseTools, claudeAvailable, errorCopy, type AskError } from "../platform/claude";
+import { askClaude, canUseTools, claudeAvailable, errorCopy, maxImages, type AskError } from "../platform/claude";
 import { publish, subscribe } from "../platform/deskBus";
 import { checkHandoff, type HandoffSetup } from "../platform/handoff";
 import { openRoutineStore } from "../platform/routineStore";
@@ -488,10 +488,11 @@ export function OrchestratorPanel(props: Props) {
         patch({ text: await localAnswer(text, applyChange, launchJob, (c) => addCard(reply.id, c)) });
       } else {
         if (!(await canUseTools())) throw new Error("This view can't let StudyDesk make changes. Open StudyDesk on claude.ai in a browser or the desktop app.");
-        const imagesOk = await canSendImages();
+        // As many images as this view allows per question: this turn's first, then earlier ones again.
+        const imageRoom = await maxImages();
+        const imagesOk = imageRoom > 0;
         const nowIds = new Set(kept.uploads.map((u) => u.id));
-        const earlier = imagesOk ? await recallImages(messagesRef.current, draftRef.current!.uploads, kept.images.length, nowIds, (id) => env.os.loadUploadContent(id)) : { images: [], note: "" };
-        const sendImages = imagesOk ? [...kept.images, ...earlier.images] : [];
+        const earlier = imagesOk ? await recallImages(messagesRef.current, draftRef.current!.uploads, kept.images.length, nowIds, (id) => env.os.loadUploadContent(id), Math.min(RECALL_IMAGES, imageRoom)) : { images: [], note: "" };
         const extra = [
           kept.previews.length ? `The student just dropped these files (saved as unsortedFiles). New files start a job: assign each to its course in start_job; a zip as a whole by its zip id, unless its folders clearly hold several courses.\n${kept.previews.join("\n\n")}` : "",
           kept.images.length && !imagesOk ? "Images can't be sent in this view; ask the student what the images show." : "",
@@ -505,7 +506,8 @@ export function OrchestratorPanel(props: Props) {
         const turns = orchTurns(stateRef.current.memory, messagesRef.current.filter((m) => m.id !== reply.id), snapshot(), extra);
         const answer = await askClaude(turns, {
           signal: c.signal,
-          images: sendImages,
+          images: imagesOk ? kept.images : [],
+          earlierImages: earlier.images,
           onText: (t) => patch({ text: t }),
           tools: [
             {
