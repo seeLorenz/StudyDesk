@@ -1,0 +1,7 @@
+{
+  "version": "v1.1.6",
+  "notes": "Chats with images work again: an earlier photo can no longer make every following message fail with \"One of the images couldn't be used\". StudyDesk now sends only as many images as Claude accepts, and tells it which earlier ones were left out.",
+  "dataVersion": 1,
+  "builtAt": "2026-11-22T20:19:04.342Z",
+  "commit": "a7eaac28283c3d29d42d0a246f784511e1867417"
+}
