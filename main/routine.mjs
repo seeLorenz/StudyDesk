@@ -2540,16 +2540,19 @@ function newestRelease(tags) {
 }
 function releaseDocFrom(list, now) {
   const seen = /* @__PURE__ */ new Map();
-  let main2 = null;
+  const builds = [];
   for (const x of list) {
     const o = x && typeof x === "object" ? x : {};
-    if (o.version === DEV_CHANNEL && typeof o.commit === "string") {
-      main2 = {
+    const isBuild = typeof o.commit === "string" && (o.version === DEV_CHANNEL || typeof o.version === "string" && o.version.startsWith("branch-") && typeof o.branch === "string");
+    if (isBuild) {
+      builds.push({
+        folder: o.version,
+        branch: o.version === DEV_CHANNEL ? DEV_CHANNEL : o.branch,
         commit: o.commit.slice(0, 7),
         builtAt: typeof o.builtAt === "string" ? o.builtAt : null,
-        notes: typeof o.notes === "string" && o.notes.trim() ? o.notes.trim().slice(0, 1e3) : null,
+        notes: typeof o.notes === "string" && o.notes.trim() ? o.notes.trim().slice(0, 300) : null,
         dataVersion: Number.isInteger(o.dataVersion) ? o.dataVersion : null
-      };
+      });
       continue;
     }
     if (typeof o.version !== "string" || !isRelease(o.version)) continue;
@@ -2561,7 +2564,10 @@ function releaseDocFrom(list, now) {
   }
   const releases = [...seen.values()].sort((a, b) => compareVersions(b.version, a.version)).slice(0, 30);
   const newest = releases[0];
-  return newest ? { latest: newest.version, notes: newest.notes, dataVersion: newest.dataVersion, checkedAt: now, releases, main: main2 } : null;
+  const sorted = builds.sort((a, b) => Number(b.folder === DEV_CHANNEL) - Number(a.folder === DEV_CHANNEL) || String(b.builtAt).localeCompare(String(a.builtAt))).slice(0, 20);
+  const m = sorted.find((b) => b.folder === DEV_CHANNEL);
+  const main2 = m ? { commit: m.commit, builtAt: m.builtAt, notes: m.notes, dataVersion: m.dataVersion } : null;
+  return newest ? { latest: newest.version, notes: newest.notes, dataVersion: newest.dataVersion, checkedAt: now, releases, main: main2, builds: sorted } : null;
 }
 const git = (args) => execFileSync("git", args, { encoding: "utf8", timeout: 9e4, stdio: ["ignore", "pipe", "ignore"] });
 function parseLatest(text, now) {
