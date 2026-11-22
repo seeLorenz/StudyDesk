@@ -16,7 +16,7 @@ import { replay } from "../mastery/replay";
 import type { Skill } from "../mastery/types";
 import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
 import { useSideNotes } from "../notes/useSideNotes";
-import { readCalendar, weeklyPattern, type CalendarError } from "../platform/calendar";
+import { calendarForClaude, readCalendar, type CalendarError } from "../platform/calendar";
 import { askClaude, canSendImages, canUseTools, claudeAvailable, errorCopy, lastModel, type AskError } from "../platform/claude";
 import { openMasteryStore, type MasteryData, type MasteryStore } from "../platform/masteryStore";
 import { offerDownload, openOnboardingStore, saveErrorCopy, type OnboardingStore } from "../platform/onboardingStore";
@@ -630,20 +630,13 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
             {
               name: "read_calendar",
               description:
-                "Reads the student's Google Calendar (through their own connector): repeating weekly events of the next two weeks, and one-off events of the next four months (exams, trips). Returns plain lists. Use it when the student agrees or asks to import their calendar. It reads every calendar the student has in Google Calendar, including subscribed ones (a university timetable added by URL, like TUGonline's iCal link). You can't open links yourself: if the student pastes an iCal link, tell them to add it in Google Calendar (Other calendars, +, From URL) and don't repeat the link, since it holds a private token; then read again. A newly added subscription can take a few minutes to fill.",
+                "Reads the student's Google Calendar (through their own connector): repeating weekly events of the next two weeks, and one-off events of the next four months (exams, trips). Returns plain lists. Use it when the student agrees or asks to import their calendar. It reads every calendar the student has in Google Calendar, including subscribed ones (a university timetable added by URL, like TUGonline's iCal link). You can't open links yourself: if the student pastes an iCal link, tell them to add it in Google Calendar (Other calendars, +, From URL) and don't repeat the link, since it holds a private token; then read again. A newly added subscription can take a few minutes to fill. Each event comes with its room and its description: read the descriptions, since they often say what an exam covers, where it is, or what to prepare or hand in, and record what matters as facts of the course (word for word) or as exam dates and homework.",
               execute: async (_input, ctx) => {
                 setBusy("Reading your calendar…");
                 try {
                   const events = await readCalendar(today, 120, ctx.signal);
-                  const twoWeeks = events.filter((e) => e.date < addDaysLocal(today, 14));
-                  const { weekly } = weeklyPattern(twoWeeks);
-                  const recurringTitles = new Set(weekly.map((w) => `${w.title}|${w.weekday}|${w.start}`));
-                  const once = events.filter((e) => !e.recurring && !recurringTitles.has(`${e.title}|${e.weekday}|${e.start}`)).slice(0, 80);
                   update((d) => ({ ...d, calendarImportedAt: Date.now() }));
-                  return {
-                    weekly: weekly.map((w) => `${DAY_SHORT[w.weekday]} ${w.start}-${w.end}: ${w.title}${w.location ? ` @ ${w.location}` : ""}`),
-                    upcomingOnce: once.map((e) => `${e.date}${e.start ? ` ${e.start}-${e.end}` : " (all day)"}: ${e.title}`),
-                  };
+                  return calendarForClaude(events, today);
                 } catch (e) {
                   throw new Error((e as CalendarError).message ?? "The calendar couldn't be read.");
                 } finally {
@@ -770,11 +763,6 @@ function answeredLater(chat: SetupMessage[], id: string): boolean {
   return chat.slice(at + 1).some((m) => m.role === "assistant" && !m.error && !!m.text);
 }
 
-function addDaysLocal(day: string, n: number): string {
-  const d = new Date(`${day}T12:00`);
-  d.setDate(d.getDate() + n);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
 
 // ---------- 6b. the setup run ----------
 
@@ -1265,8 +1253,12 @@ function TodoList({ draft, md, update, onStart }: StepProps & { onStart: () => v
   const left = todo.filter((t) => !t.done);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const shownKey = openKey ?? left[0]?.key ?? null;
+  // Unticking an item opens all its parts; unticking a part opens its item.
   const tick = (key: string, on: boolean) =>
-    update((d) => ({ ...d, todoDone: on ? [...new Set([...(d.todoDone ?? []), key])] : (d.todoDone ?? []).filter((k) => k !== key) }));
+    update((d) => ({
+      ...d,
+      todoDone: on ? [...new Set([...(d.todoDone ?? []), key])] : (d.todoDone ?? []).filter((k) => k !== key && k !== key.split(":")[0] && !k.startsWith(`${key}:`)),
+    }));
   const startInChat = (item: TodoItem) => {
     const msg: SetupMessage = { id: uid(), role: "assistant", text: item.chatPrompt, createdAt: Date.now() };
     update((d) => ({ ...d, chat: [...(d.chat ?? []), msg] }));
@@ -1290,6 +1282,16 @@ function TodoList({ draft, md, update, onStart }: StepProps & { onStart: () => v
             {shownKey === t.key && (
               <div className="setup-todo-body">
                 {md(`todo-${t.key}`, t.body, `the to-do list after setup ("${t.title}")`)}
+                {t.subs && (
+                  <ul className="setup-todo-subs">
+                    {t.subs.map((x) => (
+                      <li key={x.key} className={x.done ? "is-done" : ""}>
+                        <input type="checkbox" checked={x.done} aria-label={x.done ? "Done" : "Mark done"} onChange={(e) => tick(x.key, e.target.checked)} />
+                        <div className="setup-todo-sub">{md(`todo-${x.key}`, x.text, `the to-do list after setup ("${t.title}")`)}</div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <button type="button" className="mini-btn" onClick={() => startInChat(t)}>
                   {t.key === "upload" ? "Add files in the chat" : "Answer in the chat"}
                 </button>

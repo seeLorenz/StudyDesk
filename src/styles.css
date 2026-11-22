@@ -4088,3 +4088,31 @@ input::placeholder {
     display: none;
   }
 }
+
+/* The single questions, dates or disagreements of a to-do item, ticked off one by one. */
+.setup-todo-subs {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 10px;
+}
+.setup-todo-subs > li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 5px 0;
+}
+.setup-todo-subs input {
+  margin-top: 4px;
+  flex: none;
+}
+.setup-todo-sub {
+  min-width: 0;
+  font-size: 14px;
+}
+.setup-todo-sub .md p {
+  margin: 0;
+}
+.setup-todo-subs > li.is-done .setup-todo-sub {
+  color: var(--ink-2);
+  text-decoration: line-through;
+}

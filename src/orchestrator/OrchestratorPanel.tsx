@@ -15,7 +15,7 @@ import { IntakeCard } from "../chat/IntakeCard";
 import { toDay } from "../mastery/days";
 import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
 import { useSideNotes } from "../notes/useSideNotes";
-import { readCalendar, weeklyPattern, type CalendarError } from "../platform/calendar";
+import { calendarForClaude, readCalendar, type CalendarError } from "../platform/calendar";
 import { askClaude, canSendImages, canUseTools, claudeAvailable, errorCopy, type AskError } from "../platform/claude";
 import { publish, subscribe } from "../platform/deskBus";
 import { checkHandoff, type HandoffSetup } from "../platform/handoff";
@@ -383,7 +383,7 @@ export function OrchestratorPanel(props: Props) {
     if (!seed && !needsSummary(messagesRef.current, mem, today)) return;
     summarizing.current = true;
     try {
-      const text = await askClaude(summaryTurns(mem, fresh, seed), { tier: "default" });
+      const text = await askClaude(summaryTurns(mem, fresh, seed), { tier: "default", background: true });
       const last = fresh[fresh.length - 1]?.createdAt ?? mem.coversUpTo;
       saveState((s) => ({ ...s, memory: { text: text.trim(), updatedAt: Date.now(), coversUpTo: last, day: today } }));
     } catch {
@@ -568,15 +568,8 @@ export function OrchestratorPanel(props: Props) {
                 setBusy("Reading your calendar…");
                 try {
                   const events = await readCalendar(today, 120, cx.signal);
-                  const two = events.filter((e) => e.date < addDaysLocal(today, 14));
-                  const { weekly } = weeklyPattern(two);
-                  const rec = new Set(weekly.map((w) => `${w.title}|${w.weekday}|${w.start}`));
-                  const once = events.filter((e) => !e.recurring && !rec.has(`${e.title}|${e.weekday}|${e.start}`)).slice(0, 80);
                   await commitDesk({ draft: { ...draftRef.current!, calendarImportedAt: Date.now() }, profile: profileRef.current! });
-                  return {
-                    weekly: weekly.map((w) => `${DAY_SHORT[w.weekday]} ${w.start}-${w.end}: ${w.title}${w.location ? ` @ ${w.location}` : ""}`),
-                    upcomingOnce: once.map((e) => `${e.date}${e.start ? ` ${e.start}-${e.end}` : " (all day)"}: ${e.title}`),
-                  };
+                  return calendarForClaude(events, today);
                 } catch (e) {
                   throw new Error((e as CalendarError).message ?? "The calendar couldn't be read.");
                 } finally {
@@ -679,7 +672,7 @@ export function OrchestratorPanel(props: Props) {
       });
       if (!triggers.length) return;
       const facts = triggers.map((t) => t.facts);
-      const text = env.live ? await askClaude(checkinTurns(stateRef.current.memory, facts, snapshot()), {}) : localCheckin(facts);
+      const text = env.live ? await askClaude(checkinTurns(stateRef.current.memory, facts, snapshot()), { background: true }) : localCheckin(facts);
       const msg: OrchMessage = { id: uid(), role: "assistant", text: text.trim(), createdAt: Date.now(), checkin: true };
       saveMessages((ms) => [...ms, msg]);
       const sent: Notification[] = triggers.map((t) => ({ ...t, day: today, at: Date.now(), messageId: msg.id, seenAt: open ? Date.now() : null }));
@@ -713,7 +706,7 @@ export function OrchestratorPanel(props: Props) {
       if (!last || last.announced || last.to !== APP_VERSION) return;
       let text = plainNote(last);
       if (env.live && last.kind === "update" && last.notes?.trim()) {
-        const note = await askClaude(whatsNewTurns(last, stateRef.current.memory.text), {}).catch(() => "");
+        const note = await askClaude(whatsNewTurns(last, stateRef.current.memory.text), { background: true }).catch(() => "");
         if (note.trim()) text = `**StudyDesk is updated to ${last.to}.** All your data came along.\n\n${note.trim()}`;
       }
       await markAnnounced();
@@ -1057,11 +1050,6 @@ function lookUp(what: string, courseRef: unknown, draft: SemesterDraft, records:
   }
 }
 
-function addDaysLocal(day: string, n: number): string {
-  const d = new Date(`${day}T12:00`);
-  d.setDate(d.getDate() + n);
-  return toDay(d);
-}
 
 /** Local preview stand-in: understands "day off YYYY-MM-DD" so the change card can be tried. */
 async function localAnswer(
