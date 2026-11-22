@@ -3,24 +3,32 @@
 # own Claude session publishes from there when they press "Update".
 # design/updates.md, "Releases". Release notes are the tag's message:
 #   git tag -a v1.1 -m "Grading now shows ..." && git push origin v1.1
-# Every push to main is built too, into main/, for developers ("Load the newest
-# build from main" in the version panel). It never touches latest.json.
+# Every push to a branch is built too, for developers (the version panel's
+# "For developers" list): main into main/, any other branch into
+# branch-<name>/. Those never touch latest.json, so students never see them.
+# Deleting a branch removes its folder.
 name: Build release
 
 on:
   push:
     tags: ["v*"]
-    branches: [main]
+    branches-ignore: [releases]
+  delete:
 
 permissions:
   contents: write
 
+# One run per ref at a time; a newer push to the same branch replaces an older
+# pending one. Runs for different refs write different folders, so they push
+# one after another with a rebase (below) instead of waiting in one queue, where
+# GitHub would drop all but the newest pending run (a tag could be lost).
 concurrency:
-  group: releases-branch
+  group: releases-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,10 +45,13 @@ jobs:
           git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
           git tag -l --format='%(contents)' "$TAG" | sed '/^-----BEGIN PGP/,$d' > "$RUNNER_TEMP/notes.md"
 
-      - name: Newest build of main
+      - name: Newest build of a branch
         if: github.ref_type == 'branch'
         run: |
-          echo "TAG=main" >> "$GITHUB_ENV"
+          BRANCH="${GITHUB_REF_NAME}"
+          if [ "$BRANCH" = main ]; then TAG=main; else TAG="branch-$(echo "$BRANCH" | sed -E 's/[^A-Za-z0-9._-]+/-/g')"; fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
           echo "BUILD_VERSION=dev" >> "$GITHUB_ENV"
           git log -1 --format=%s > "$RUNNER_TEMP/notes.md"
 
@@ -57,6 +68,7 @@ jobs:
         env:
           VITE_STUDYDESK_VERSION: ${{ env.BUILD_VERSION }}
           VITE_STUDYDESK_COMMIT: ${{ github.sha }}
+          VITE_STUDYDESK_BRANCH: ${{ env.BRANCH }}
           VITE_STUDYDESK_REPO: ${{ github.repository }}
 
       - name: Put the build on the releases branch
@@ -76,9 +88,38 @@ jobs:
           rm -rf "$RUNNER_TEMP/releases/$TAG"
           mkdir -p "$RUNNER_TEMP/releases/$TAG"
           cp artifact/index.html artifact/routine.mjs artifact/capabilities.json "$RUNNER_TEMP/releases/$TAG/"
-          node scripts/release-info.mjs "$TAG" "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/releases"
+          node scripts/release-info.mjs "$TAG" "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/releases" "$BRANCH"
           cd "$RUNNER_TEMP/releases"
           git add -A
           if git diff --cached --quiet; then echo "Nothing changed"; exit 0; fi
-          if [ "$TAG" = main ]; then git commit -m "Build main ${GITHUB_SHA::7}"; else git commit -m "Release $TAG"; fi
-          git push origin releases
+          if [ -n "$BRANCH" ]; then git commit -m "Build $BRANCH ${GITHUB_SHA::7}"; else git commit -m "Release $TAG"; fi
+          for i in 1 2 3 4 5; do
+            git push origin releases && exit 0
+            sleep $((i * 3))
+            git pull --rebase origin releases
+          done
+          exit 1
+
+  remove-branch:
+    if: github.event_name == 'delete' && github.event.ref_type == 'branch' && github.event.ref != 'main' && github.event.ref != 'releases'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: releases
+      - name: Remove the deleted branch's build
+        env:
+          BRANCH: ${{ github.event.ref }}
+        run: |
+          TAG="branch-$(echo "$BRANCH" | sed -E 's/[^A-Za-z0-9._-]+/-/g')"
+          [ -d "$TAG" ] || { echo "No build for $BRANCH"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -rq "$TAG"
+          git commit -m "Remove build of deleted branch $BRANCH"
+          for i in 1 2 3 4 5; do
+            git push origin HEAD:releases && exit 0
+            sleep $((i * 3))
+            git pull --rebase origin releases
+          done
+          exit 1

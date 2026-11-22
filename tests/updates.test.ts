@@ -6,7 +6,7 @@ import { compareVersions, newestRelease, parseVersion } from "../src/updates/ver
 import { countDocs, diffSnapshots, docPath, emptySnapshot, kindOf, toSnapshot, type Snapshot } from "../src/updates/layout";
 import { dataVersionOf, mapDocs, upgrade, type Step } from "../src/updates/migrations";
 import { validateSnapshot } from "../src/updates/validate";
-import { checkJobBody, devOffer, emptyUpdates, goBackTarget, keepBackups, LIST_RELEASES_SCRIPT, offer, parseCheckAnswer, planLoad, publishJobBody, readUpdates, releaseDocFrom, whatsNewList, type Pending, type UpdatesDoc } from "../src/updates/plan";
+import { branchFolder, checkJobBody, devBuilds, emptyUpdates, switchPlan, targetLabel, goBackTarget, keepBackups, LIST_RELEASES_SCRIPT, offer, parseCheckAnswer, planLoad, publishJobBody, readUpdates, releaseDocFrom, whatsNewList, type Pending, type UpdatesDoc } from "../src/updates/plan";
 import { contentTypeOf, parseBackupZip, prepareImport, relink } from "../src/updates/importZip";
 import { parseLatest, tagsFromLsRemote } from "../src/routine/release";
 import { whatsNewTurns, plainNote } from "../src/updates/whatsNew";
@@ -335,14 +335,34 @@ describe("the newest build of main, for developers", () => {
     expect(releaseDocFrom([list[0]], 5)!.main).toBeNull();
   });
 
-  it("offers it unless that build is running or it can't read the data", () => {
-    const r = releaseDocFrom(list, 5)!;
-    const doc = emptyUpdates();
-    expect(devOffer("", r, doc)?.commit).toBe("abcdef1");
-    expect(devOffer("1234567", r, doc)?.commit).toBe("abcdef1");
-    expect(devOffer("abcdef1", r, doc)).toBeNull();
-    expect(devOffer("", r, { ...doc, dataVersion: 2 })).toBeNull();
-    expect(devOffer("", null, doc)).toBeNull();
+  it("lists every branch build, main first, and reads older docs with only main", () => {
+    const r = releaseDocFrom(
+      [
+        ...list,
+        { version: "branch-claude-x", branch: "claude/x", commit: "1111111aaa", builtAt: "2026-11-21T09:00:00Z", notes: "Old", dataVersion: 1 },
+        { version: "branch-fix", branch: "fix", commit: "2222222bbb", builtAt: "2026-11-22T09:00:00Z", notes: "New", dataVersion: 2 },
+        { version: "branch-nobranch", commit: "333" },
+      ],
+      5,
+    )!;
+    expect(devBuilds(r).map((b) => b.branch)).toEqual(["main", "fix", "claude/x"]);
+    expect(devBuilds({ ...r, builds: undefined })).toEqual([{ folder: "main", branch: "main", ...r.main! }]);
+    expect(devBuilds(null)).toEqual([]);
+    expect(branchFolder("claude/project thread")).toBe("branch-claude-project-thread");
+    expect(branchFolder("main")).toBe("main");
+    expect(targetLabel("v1.1")).toBe("v1.1");
+    expect(targetLabel("branch-fix", "fix")).toBe("branch fix");
+  });
+
+  it("switches up or down without losing data", () => {
+    const b = (assetId: string, dataVersion: number, at: number) => ({ assetId, appVersion: "v1", dataVersion, at, bytes: 1 });
+    const doc: UpdatesDoc = { ...emptyUpdates(), dataVersion: 3, backups: [b("old1", 1, 1), b("v2a", 2, 2), b("v2b", 2, 3), b("v3", 3, 4)] };
+    expect(switchPlan(3, doc)).toEqual({ kind: "plain" });
+    expect(switchPlan(4, doc)).toEqual({ kind: "plain" });
+    expect(switchPlan(null, doc)).toEqual({ kind: "plain" });
+    expect(switchPlan(2, doc)).toEqual({ kind: "restore", backup: b("v2b", 2, 3) });
+    expect(switchPlan(1, doc)).toEqual({ kind: "restore", backup: b("old1", 1, 1) });
+    expect(switchPlan(1, { ...doc, backups: [b("v3", 3, 4)] }).kind).toBe("blocked");
   });
 
   it("tells two dev builds apart on load by their commit", () => {
@@ -358,7 +378,10 @@ describe("the newest build of main, for developers", () => {
 
   it("asks the session for the main/ folder", () => {
     const body = publishJobBody("main", "update");
-    expect(body).toContain("Load the newest build from main");
+    expect(body).toContain("the newest build of main");
     expect(body).toContain("/main/");
+    const branch = publishJobBody("branch-fix", "rollback");
+    expect(branch).toContain("branch fix");
+    expect(branch).toContain("/branch-fix/index.html");
   });
 });

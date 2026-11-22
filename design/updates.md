@@ -41,12 +41,18 @@ The page has no internet, so it can't look. The **nightly run** already starts a
 
 ### Checking by hand
 
-The version shows as a small grey label next to "StudyDesk" in the sidebar (`v1.1.1`, or `dev · 1a2b3c4` for a build of main). Clicking it opens a small panel that works any time, also during setup:
+The version shows as a small grey label next to "StudyDesk" in the sidebar (`v1.1.1`, or `dev · 1a2b3c4` for a branch build; the panel names the branch). Clicking it opens a small panel that works any time, also during setup:
 
 - **Check for updates** starts a quick cloud session (the same "StudyDesk agent" task) that reads every `release.json` on the `releases` branch and answers with the list. Code reads the answer and saves it as the `release` document, so "Update to vX" shows within a minute or two instead of after the next nightly run.
 - **Update to vX** (the same button as in Organize) when a newer release can read the data.
 - **What's new**: the notes of the installed release and every newer one, newest first, from the tags' messages. The nightly run saves the same list.
-- **For developers** (folded away): every push to main is also built, into `main/` on the releases branch, with the commit and the commit's first line as its note. It never changes `latest.json`, so students are never offered it. The panel shows the newest build of main and a "Load the newest build from main" button, the same hand-off as an update: backup first, same link, the upgrade steps run on arrival. It isn't offered when that commit is already running, or when its data version is older than the data. Two dev builds are told apart by their commit (`fromBuild`, version@commit), so the page knows the new build has arrived.
+- **For developers** (folded away): switch to any build, up or down.
+  - Every push to a branch is built too: main into `main/`, any other branch into `branch-<name>/` (characters other than letters, digits, `.`, `_`, `-` become `-`). Each gets a `release.json` with the branch, commit, build time and the commit's first line as its note. Deleting a branch removes its folder. These never change `latest.json`, so students are never offered them.
+  - The panel lists the branch builds (main first, then the most recently built, at most 20) and every tagged release, each with "Load". The running one is marked.
+  - Every switch saves a backup first and uses the same hand-off as an update, onto the same link.
+  - Going to a build that can read the data as it is (its data version is the data's or higher) just publishes it; the upgrade steps run on arrival.
+  - Going to a build that expects older data puts back the newest backup old enough for it, the same way "Go back" does. Anything done since that backup is lost, so the button asks twice and says from which day the data comes. Without a backup that old, the switch isn't offered.
+  - Builds are told apart by their commit (`fromBuild`, version@commit), so the page knows the new build has arrived even when both are "dev".
 
 ### Where the update state lives
 

@@ -11,8 +11,8 @@ import { contentTypeOf, ImportError, parseBackupZip, prepareImport, relink } fro
 import { countDocs, diffSnapshots, splitWrites, toSnapshot, type Snapshot, type SnapshotWrite } from "../updates/layout";
 import { dataVersionOf, upgrade } from "../updates/migrations";
 import { validateSnapshot } from "../updates/validate";
-import { checkJobBody, emptyUpdates, keepBackups, parseCheckAnswer, planLoad, publishJobBody, type UpdateCheck, type MainBuild, UPDATE_TIMEOUT_MS, readUpdates, type Backup, type Failure, type Pending, type ReleaseDoc, type UpdatesDoc } from "../updates/plan";
-import { APP_VERSION, BUILD_ID, DATA_VERSION, DEV_CHANNEL } from "../updates/version";
+import { checkJobBody, emptyUpdates, keepBackups, parseCheckAnswer, planLoad, publishJobBody, type UpdateCheck, switchPlan, targetLabel, UPDATE_TIMEOUT_MS, readUpdates, type Backup, type Failure, type Pending, type ReleaseDoc, type UpdatesDoc } from "../updates/plan";
+import { APP_VERSION, BUILD_ID, DATA_VERSION } from "../updates/version";
 
 export type UpdateEnv = { db: DB; uid: string; assets: Claude.Assets | null };
 
@@ -50,7 +50,7 @@ export async function loadRelease(e: UpdateEnv): Promise<ReleaseDoc | null> {
   const s = await ref(e, "release").get();
   const d = s.exists ? (s.data() as Partial<ReleaseDoc>) : null;
   return d && typeof d.latest === "string"
-    ? { latest: d.latest, notes: typeof d.notes === "string" ? d.notes : null, dataVersion: typeof d.dataVersion === "number" ? d.dataVersion : null, checkedAt: Number(d.checkedAt) || 0, ...(Array.isArray(d.releases) ? { releases: d.releases } : {}), ...(d.main && typeof d.main === "object" ? { main: d.main } : {}) }
+    ? { latest: d.latest, notes: typeof d.notes === "string" ? d.notes : null, dataVersion: typeof d.dataVersion === "number" ? d.dataVersion : null, checkedAt: Number(d.checkedAt) || 0, ...(Array.isArray(d.releases) ? { releases: d.releases } : {}), ...(d.main && typeof d.main === "object" ? { main: d.main } : {}), ...(Array.isArray(d.builds) ? { builds: d.builds } : {}) }
     : null;
 }
 
@@ -136,7 +136,7 @@ export async function prepareOnLoad(onProgress: (line: string) => void): Promise
   if (plan.kind === "ok") return { kind: "ok" };
 
   if (plan.kind === "rolling-back")
-    return { kind: "read-only", reason: "rolling-back", message: `Going back to ${plan.pending.to}. Your StudyDesk reloads by itself when it's there.`, goBack: plan.pending.to, pending: plan.pending };
+    return { kind: "read-only", reason: "rolling-back", message: `Going back to ${plan.pending.label ?? plan.pending.to}. Your StudyDesk reloads by itself when it's there.`, goBack: plan.pending.to, pending: plan.pending };
 
   if (plan.kind === "newer-data")
     return { kind: "read-only", reason: "newer-data", message: `Your data was saved by a newer StudyDesk (data version ${plan.dataVersion}) than this one (${APP_VERSION}). You can look around, but nothing is saved until StudyDesk is updated again.`, goBack: null, pending: null };
@@ -242,14 +242,28 @@ export async function startUpdate(release: ReleaseDoc, onProgress: (line: string
   return fire(e, setup, { kind: "update", from: APP_VERSION, to: release.latest, jobId: null, startedAt: Date.now(), backupId: backup.assetId, notes: release.notes }, onProgress);
 }
 
-/** For developers: the newest build of main onto this same link (backup first, like an update). */
-export async function startDevUpdate(main: MainBuild, onProgress: (line: string) => void): Promise<Pending> {
+/** Where a developer can switch to: a release (higher or lower) or a branch build. */
+export type SwitchTarget = { folder: string; branch?: string; dataVersion: number | null; notes: string | null };
+
+/**
+ * For developers: put any release or branch build onto this same link, up or
+ * down. A backup is saved first every time. A target that expects older data
+ * also puts back the newest backup old enough for it (plan.ts switchPlan);
+ * the panel warns before that, because anything done since is lost.
+ */
+export async function startSwitch(target: SwitchTarget, onProgress: (line: string) => void): Promise<Pending> {
   const e = await updateEnv();
   if (!e) throw new Error("Updates only work inside StudyDesk on claude.ai.");
   onProgress("Checking that Claude sessions can start…");
   const setup = await readyHandoff(e);
+  const plan = switchPlan(target.dataVersion, await loadUpdates(e));
+  if (plan.kind === "blocked") throw new Error(plan.reason);
   const backup = await makeBackup(e, onProgress);
-  return fire(e, setup, { kind: "update", from: APP_VERSION, to: DEV_CHANNEL, jobId: null, startedAt: Date.now(), backupId: backup.assetId, notes: main.notes }, onProgress);
+  const label = targetLabel(target.folder, target.branch);
+  const base = { from: APP_VERSION, to: target.folder, jobId: null, startedAt: Date.now(), label, notes: target.notes };
+  return plan.kind === "restore"
+    ? fire(e, setup, { ...base, kind: "rollback", backupId: plan.backup.assetId, restore: true }, onProgress)
+    : fire(e, setup, { ...base, kind: "update", backupId: backup.assetId }, onProgress);
 }
 
 /**
@@ -271,7 +285,7 @@ async function fire(e: UpdateEnv, setup: HandoffSetup, start: Pending, onProgres
   await changeUpdates(e, (d) => ({ ...d, pending }));
   onProgress("Starting a Claude session for the update…");
   try {
-    const title = pending.kind === "rollback" ? `Put StudyDesk back to ${pending.to}` : pending.to === DEV_CHANNEL ? "Load StudyDesk's newest build from main" : `Update StudyDesk to ${pending.to}`;
+    const title = pending.label ? `Load ${pending.label} into StudyDesk` : pending.kind === "rollback" ? `Put StudyDesk back to ${pending.to}` : `Update StudyDesk to ${pending.to}`;
     const job = await startJob(setup, title, publishJobBody(pending.to, pending.kind));
     const next = { ...pending, jobId: job.jobId };
     await changeUpdates(e, (d) => ({ ...d, pending: next }));
