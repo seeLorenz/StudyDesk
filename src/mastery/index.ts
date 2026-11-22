@@ -10,6 +10,7 @@ export { slownessFactor, expectedMinutes, questBudget, activeMinutesByDay, type 
 export { gradeStanding, gradeFor, assessmentAttempts, type GradeRules, type GradeStanding } from "./grades";
 export {
   gradeProblems,
+  imageGroups,
   parseGrading,
   gradingTurns,
   recordResult,

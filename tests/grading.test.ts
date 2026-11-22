@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { GradingFailed, gradeProblems, gradingTurns, parseGrading, recordResult, type GradingProblem } from "../src/mastery";
+import { GradingFailed, gradeProblems, imageGroups, gradingTurns, parseGrading, recordResult, type GradingProblem } from "../src/mastery";
 import { localMasteryStore } from "../src/platform/masteryStore";
 
 const problem = (over: Partial<GradingProblem> = {}): GradingProblem => ({
@@ -87,5 +87,36 @@ describe("local store", () => {
     const d = await store.load();
     expect(d.attempts).toHaveLength(1);
     expect(d.attempts[0].points).toBe(1);
+  });
+});
+
+describe("grading with photos", () => {
+  const photo = () => new Blob(["x"], { type: "image/jpeg" });
+  const withPhotos = (id: string, n: number) => problem({ problemId: id, answerImages: Array.from({ length: n }, photo) });
+
+  it("splits a hand-in so no call carries more photos than allowed, keeping the order", () => {
+    const ps = [withPhotos("a", 2), withPhotos("b", 1), problem({ problemId: "c" }), withPhotos("d", 2)];
+    expect(imageGroups(ps, 3).map((g) => g.map((p) => p.problemId))).toEqual([["a", "b", "c"], ["d"]]);
+    expect(imageGroups(ps, 0)).toHaveLength(1);
+  });
+
+  it("fails visibly when one answer has more photos than one call can carry", () => {
+    expect(() => imageGroups([withPhotos("a", 4)], 3)).toThrow();
+    try {
+      imageGroups([withPhotos("a", 4)], 3);
+    } catch (e) {
+      expect(e).toMatchObject({ code: "image_rejected" });
+    }
+  });
+
+  it("grades each group in its own call with every photo attached, strictly", async () => {
+    const ask = vi.fn(async (_turns, opts) => {
+      const ids = opts.images.length === 2 ? ["a"] : ["b"];
+      return JSON.stringify(ids.map((problemId) => ({ ...good, problemId })));
+    });
+    const res = await gradeProblems([withPhotos("a", 2), withPhotos("b", 1)], ask, undefined, 2);
+    expect(res.map((r) => r.problemId)).toEqual(["a", "b"]);
+    expect(ask).toHaveBeenCalledTimes(2);
+    expect(ask.mock.calls.every((c) => c[1].strictImages === true)).toBe(true);
   });
 });
