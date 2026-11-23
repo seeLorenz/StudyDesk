@@ -158,7 +158,7 @@ Because grading now happens once, the gate no longer stops the quest mid-way. A 
 - **Key rule in one line** at the end of each lesson: see the table above.
 - **"Too easy / just right / too hard"** on every part. The most recent rating per skill (last 14 days) goes into the prompts that write the next quests: too hard means slower, smaller steps and an easier own problem; too easy means brisker and harder.
 - **Planned against actual time** on every row of the overview, from the problem timers ("9 of 12 min"). Reading time isn't timed.
-- **Autosave**: every change to the work (answers, hints, key-rule lines, notes) is copied to this browser at once, and saved to the student's StudyDesk within 2 seconds, and immediately when the tab is hidden or closed. After a crash, the newer of the two is used, so at most the last keystrokes before a crash on a different device are lost.
+- **Autosave**: every change to the work (answers, hints, key-rule lines, notes) is copied to this browser at once, and saved to the student's StudyDesk within 2 seconds, and immediately when the tab is hidden or closed. After a crash, the newer of the two is used, so at most the last keystrokes before a crash on a different device are lost. A page only saves when it has unsaved changes of its own, and when it comes back to the front it takes over newer work saved elsewhere, so an old tab or a second device never overwrites newer hand-ins.
 - **Carry-over**: homework from an unfinished earlier quest comes back automatically (tasks only count as done when handed in), and the new quest says so ("Carried over from Thursday: 4.2b").
 
 ## Notes for other modules

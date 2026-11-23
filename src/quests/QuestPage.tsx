@@ -600,6 +600,8 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
   const progressRef = useRef(progress);
   progressRef.current = progress;
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Changes on this page not yet saved. A page with none never writes, so an old tab can't overwrite newer work. */
+  const dirty = useRef(progress !== record.progress); // a newer copy from this browser still needs saving
 
   const skills = useMemo(() => new Map(semester.skills.map((s) => [s.id, s])), [semester]);
   const course = semester.courses.find((c) => c.id === quest.courseId);
@@ -610,15 +612,21 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
   const flush = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = null;
+    if (!dirty.current) return Promise.resolve();
+    dirty.current = false;
     const r = { quest, progress: { ...progressRef.current, updatedAt: Date.now() } };
     onRecordRef.current(r);
     return qs
       .saveRecord(r)
       .then(() => setErrors((e) => (e.save ? { ...e, save: "" } : e)))
-      .catch(() => setErrors((e) => ({ ...e, save: "Your work couldn't be saved. Keep this page open and try again." })));
+      .catch(() => {
+        dirty.current = true;
+        setErrors((e) => ({ ...e, save: "Your work couldn't be saved. Keep this page open and try again." }));
+      });
   }, [qs, quest]);
 
   const saveSoon = useCallback(() => {
+    dirty.current = true;
     if (!saveTimer.current) saveTimer.current = setTimeout(() => void flush(), 2000);
   }, [flush]);
 
@@ -632,6 +640,24 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
       /* storage full or blocked: the 2-second save still runs */
     }
   }, [progress, draftKey]);
+  // Back on the page with nothing unsaved: take over newer work saved elsewhere (another tab or device).
+  useEffect(() => {
+    const onShow = () => {
+      if (document.visibilityState !== "visible" || dirty.current) return;
+      void qs
+        .loadRecords()
+        .then((rs) => {
+          const r = rs.find((x) => x.quest.id === quest.id);
+          if (!r || dirty.current || r.progress.updatedAt <= progressRef.current.updatedAt) return;
+          progressRef.current = r.progress;
+          setProgress(r.progress);
+          onRecordRef.current({ quest, progress: r.progress });
+        })
+        .catch(() => undefined);
+    };
+    document.addEventListener("visibilitychange", onShow);
+    return () => document.removeEventListener("visibilitychange", onShow);
+  }, [qs, quest]);
   useEffect(() => {
     const save = () => void flush();
     const onHide = () => document.visibilityState === "hidden" && save();
@@ -647,6 +673,7 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
     const next = fn(progressRef.current);
     progressRef.current = next;
     setProgress(next);
+    dirty.current = true;
     void flush();
   };
 
