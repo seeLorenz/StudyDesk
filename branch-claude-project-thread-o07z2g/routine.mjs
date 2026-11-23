@@ -1087,6 +1087,7 @@ function setPart(desk, key, value) {
   return { ...desk, draft: { ...desk.draft, [key]: value } };
 }
 const OWN_WORD = " (set by the student in StudyDesk)";
+const dateLabel = (k) => `${k.kind === "quiz" ? "Quiz" : "Exam"} "${k.title}"`;
 const clone = (x) => x === void 0 ? x : JSON.parse(JSON.stringify(x));
 const same$1 = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 function applyOps(desk0, ops, o) {
@@ -1117,12 +1118,11 @@ function applyOps(desk0, ops, o) {
     return g >= lo && g <= hi;
   };
   const fact = (c, text) => touch("facts", [...desk.draft.facts, { id: uid(), courseId: c?.id ?? null, text, addedAt: now }]);
-  const studentSet = (c, label2) => o.by === "organization" && desk.draft.facts.some((f) => f.courseId === c.id && f.text.startsWith(`${label2}:`) && f.text.endsWith(OWN_WORD));
+  const isOwn = (c, label2) => (f) => f.courseId === c.id && f.text.startsWith(`${label2}:`) && f.text.endsWith(OWN_WORD);
+  const studentSet = (c, label2) => o.by === "organization" && desk.draft.facts.some(isOwn(c, label2));
   const ownWord = (c, label2, value) => {
     if (o.by === "organization") return;
-    const tag = `${label2}:`;
-    const rest = desk.draft.facts.filter((f) => !(f.courseId === c.id && f.text.startsWith(tag) && f.text.endsWith(OWN_WORD)));
-    touch("facts", [...rest, { id: uid(), courseId: c.id, text: `${tag} ${value}${OWN_WORD}`, addedAt: now }]);
+    touch("facts", [...desk.draft.facts.filter((f) => !isOwn(c, label2)(f)), { id: uid(), courseId: c.id, text: `${label2}: ${value}${OWN_WORD}`, addedAt: now }]);
   };
   for (const op of ops) {
     if (CONFIRM_FIRST.has(op.op) && !o.confirmed) {
@@ -1164,16 +1164,16 @@ function applyOps(desk0, ops, o) {
         const j = i >= 0 ? i : list.filter((k) => k.kind === kind).length === 1 && !op.title ? list.findIndex((k) => k.kind === kind) : -1;
         if (j >= 0) {
           if (list[j].date === date) break;
-          if (studentSet(c, `${list[j].kind === "quiz" ? "Quiz" : "Exam"} "${list[j].title}"`)) {
+          if (studentSet(c, dateLabel(list[j]))) {
             errors.push(`set_exam_date: the student set ${c.name}, ${list[j].title} to ${list[j].date} themselves; not changed.`);
             break;
           }
           touch(`results.${c.id}.keyDates`, list.map((k, n) => n === j ? { ...k, date } : k));
-          ownWord(c, `${list[j].kind === "quiz" ? "Quiz" : "Exam"} "${list[j].title}"`, date);
+          ownWord(c, dateLabel(list[j]), date);
           lines.push(`${c.name}, ${list[j].title}: ${shortDate(list[j].date)} → ${shortDate(date)}`);
         } else {
           touch(`results.${c.id}.keyDates`, [...list, { courseId: c.id, date, kind, title, skillIds: [] }]);
-          ownWord(c, `${kind === "quiz" ? "Quiz" : "Exam"} "${title}"`, date);
+          ownWord(c, dateLabel({ kind, title }), date);
           lines.push(`${c.name}, ${title}: added on ${shortDate(date)}`);
         }
         break;
@@ -1189,7 +1189,7 @@ function applyOps(desk0, ops, o) {
           break;
         }
         touch(`results.${c.id}.keyDates`, r.keyDates.filter((x) => x !== k));
-        ownWord(c, `${k.kind === "quiz" ? "Quiz" : "Exam"} "${k.title}"`, "removed, there is no such date");
+        ownWord(c, dateLabel(k), "removed, there is no such date");
         lines.push(`${c.name}, ${k.title} on ${shortDate(k.date)}: removed`);
         break;
       }
