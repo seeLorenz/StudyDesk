@@ -303,7 +303,7 @@ describe("changing the nightly run through the StudyDesk chat", () => {
   });
 
   it("ticks a setup to-do item off itself", () => {
-    const d = draft();
+    const d = { ...draft(), results: { c1: { ...draft().results.c1, conflicts: ["file says 6 credits", "file says oral exam"] } } };
     const key = setupTodo(d)[0]?.key;
     expect(key).toBeDefined();
     const r = applyOps({ draft: d, profile }, [{ op: "tick_todo", key }], { studentWords: "here are the dates, they're right" });

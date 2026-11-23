@@ -7,6 +7,7 @@
 // what it touched before and after, so it can be undone.
 
 import { uid } from "../chat/types";
+import { toDay } from "../mastery/days";
 import { assessmentAttempts } from "../mastery/grades";
 import type { AssessmentResult, Attempt, CourseTarget } from "../mastery/types";
 import { buildSemester } from "../onboarding/setup";
@@ -442,7 +443,7 @@ export function applyOps(
       }
       case "tick_todo": {
         const key = str(op.key);
-        const todo = setupTodo(desk.draft);
+        const todo = setupTodo(desk.draft, toDay(new Date(now)));
         const item = todo.find((t) => t.key === key || t.title === key);
         const sub = item ? undefined : todo.flatMap((t) => t.subs ?? []).find((x) => x.key === key);
         if (!item && !sub) {
@@ -456,6 +457,7 @@ export function applyOps(
         // Opening a part again also opens its item when the whole item was ticked.
         const parent = target.key.split(":")[0];
         touch("todoDone", on ? [...new Set([...list, target.key])] : list.filter((k) => k !== target.key && k !== parent));
+        if (on) touch("todoDoneOn", { ...desk.draft.todoDoneOn, [target.key]: toDay(new Date(now)) });
         lines.push(on ? `To do: ticked off "${target.label}"` : `To do: "${target.label}" is open again`);
         break;
       }
