@@ -101,8 +101,10 @@ export function SelectionReply({ scope, disabled, onAsk }: Props) {
   const width = asking ? Math.min(420, window.innerWidth - 32) : 232;
   const left = Math.max(16, Math.min(window.innerWidth - width - 16, r.left + r.width / 2 - width / 2));
   // On touch screens the system's own copy menu sits above the selection, so go below it.
-  // The question box always opens under the selected text, so the passage stays readable.
-  const below = asking || coarse || r.top < 72;
+  // The question box opens under the selected text, so the passage stays readable,
+  // unless there's no room left below it on screen; then it opens above.
+  const roomBelow = window.innerHeight - r.bottom;
+  const below = asking ? roomBelow >= 160 || r.top < 160 : coarse || r.top < 72;
   const style: React.CSSProperties = below ? { left, top: r.bottom + 10, width } : { left, bottom: window.innerHeight - r.top + 10, width };
 
   // Rendered on <body>: a page wrapper with a transform (e.g. the quest page's
