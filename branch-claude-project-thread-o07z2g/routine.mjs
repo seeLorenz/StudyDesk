@@ -670,6 +670,12 @@ ${input.priorFundamentals.map((p) => `- ${p.id}: ${p.name}`).join("\n")}
 Skills this course already has (the student's progress is stored under these ids). When a skill in your map is one of these, write its id exactly as given here. Never give one of these ids to a different skill; drop a skill only if it really isn't part of the course:
 ${known2.map((k) => `- ${k.id}: ${k.name}`).join("\n")}
 ` : "";
+  const prev = input.draft.results?.[input.course.id];
+  const items = [...(prev?.assignments ?? []).map((a) => `- homework "${a.title}", due ${a.dueAt}`), ...(prev?.keyDates ?? []).map((k) => `- ${k.kind} "${k.title}" on ${k.date}`)];
+  const listed = items.length ? `
+Homework and exams this course already has. When you list one of these again, write its title exactly as given here:
+${items.join("\n")}
+` : "";
   const content = `You are StudyDesk's organization agent. You set up one course for one student: you turn their real course materials into the list of skills StudyDesk teaches, practices and tracks. Everything later (daily quests, grading) depends on this map, so be thorough and precise.
 
 ## The student
@@ -684,7 +690,7 @@ ${known2.map((k) => `- ${k.id}: ${k.name}`).join("\n")}
 
 ## What the student said about it (word for word; if a file disagrees, the student's word wins, and you list the disagreement under CONFLICTS)
 ${facts.length ? facts.map((f) => `- "${f.text}"`).join("\n") : "- nothing"}
-${prior}${current}
+${prior}${current}${listed}
 ## Files
 ${files.length ? fileBlocks.join("\n\n") : opts.web ? "No files. Search the web for the official description of this course at this school (curriculum, course catalogue entry, syllabus, weekly schedule, exam rules) and build the map from it. If nothing official turns up, use what a course with this name usually covers in this program and country, and say which in the summary. Don't ask for files under QUESTIONS: StudyDesk asks for missing materials itself." : "No files. Use what a course with this name usually covers in this program and country, and say so in the summary. Don't ask for files under QUESTIONS: StudyDesk asks for missing materials itself."}${opts.web ? "\n\n## Web research\nYou can search the web. Before writing, look this course up: its official page or catalogue entry at the student's school, for topics, schedule, grading and exam dates. Prefer official sources. The student's words and files win where they say something; the web fills what they don't. Name the sites you used in the SUMMARY (site names, no links)." : ""}
 
@@ -855,7 +861,9 @@ function parseSetup(reply, input, fileKeys, now = Date.now()) {
     const [title, due] = head.split("|").map((x) => x.trim());
     const dueAt2 = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/.test(due ?? "") ? due.length === 10 ? `${due}T23:59` : due : null;
     if (!title || !dueAt2 || dueAt2.slice(0, 10) < input.today) continue;
-    const aid = `${cid}-hw-${slug(title)}`;
+    const base = input.draft?.results?.[cid]?.assignments.find((a) => sameName(a.title, title))?.id ?? `${cid}-hw-${slug(title)}`;
+    let aid = base;
+    for (let n = 2; assignments.some((a) => a.id === aid); n++) aid = `${base}-${n}`;
     const tasks = [];
     for (const tb of rest.join("\n").split(/^####\s*/m).slice(1)) {
       const [th, ...body] = tb.split("\n");

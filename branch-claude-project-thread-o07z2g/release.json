@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-o07z2g",
   "branch": "claude/project-thread-o07z2g",
-  "notes": "Trim: one label helper for exam dates, one comment, comment above the right function",
+  "notes": "Keep homework ids and exam titles on re-reads; no duplicate homework ids",
   "dataVersion": 1,
-  "builtAt": "2026-11-23T19:51:43.825Z",
-  "commit": "8bf1548e89602bdcbe035284a91db7e0d3caf503"
+  "builtAt": "2026-11-23T20:11:05.034Z",
+  "commit": "92b0a83b6688cb561dd0698c3b6143639ba53811"
 }
