@@ -12,8 +12,9 @@ import { OrchestratorPanel, type OrchStatus } from "./orchestrator/OrchestratorP
 import { subscribe } from "./platform/deskBus";
 import type { Semester } from "./quests/types";
 import { DeskPanel } from "./shell/DeskPanel";
+import { WeekPage } from "./now/WeekPage";
 import { VersionLabel } from "./updates/VersionPanel";
-import { daysBetween, toDay } from "./mastery/days";
+import { addDays, daysBetween, toDay } from "./mastery/days";
 
 const newChat = (): Chat => ({ id: uid(), title: "New chat", createdAt: Date.now(), updatedAt: Date.now(), messages: [], notes: [] });
 
@@ -24,12 +25,14 @@ function when(ts: number) {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-type View = "today" | "chat" | "organize" | "setup";
+type View = "now" | "week" | "courses" | "chat" | "setup";
 
 const Icon = {
-  today: <path d="M3.5 2.5h9v11h-9zM5.8 7.6l1.6 1.6 3-3.4" />,
-  ask: <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" />,
-  organize: <path d="M2.5 4h11v9.5h-11zM2.5 7h11M5.5 2.5v3M10.5 2.5v3" />,
+  now: <path d="M8 2.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11zM8 5v3l2 1.3" />,
+  week: <path d="M2.5 4h11v9.5h-11zM2.5 7h11M5.5 2.5v3M10.5 2.5v3" />,
+  courses: <path d="M3 3.5h4v4H3zM9 3.5h4v4H9zM3 9.5h4v4H3zM9 9.5h4v4H9z" />,
+  ask: <path d="M4.5 6.2a3.5 3.5 0 1 1 4.6 3.3c-.7.3-1.1.8-1.1 1.5M8 13h0" />,
+  tell: <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" />,
   plus: <path d="M8 3.5v9M3.5 8h9" />,
 };
 const Svg = ({ children }: { children: JSX.Element }) => (
@@ -56,15 +59,13 @@ export function App() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [current, setCurrent] = useState<Chat>(newChat);
-  // Narrow screens show Organize's chat or its data, not one under the other, so the chat box stays at hand.
-  const [orgView, setOrgView] = useState<"chat" | "data">("chat");
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
-  const [view, setView] = useState<View>("today");
-  const [todayLoaded, setTodayLoaded] = useState(false);
+  const [view, setView] = useState<View>("now");
+  const [nowLoaded, setNowLoaded] = useState(false);
   useEffect(() => {
-    if (view === "today") setTodayLoaded(true);
+    if (view === "now") setNowLoaded(true);
   }, [view]);
   // Focus mode: the sidebar shrinks to an icon strip. Remembered in this browser only.
   const [focus, setFocus] = useState<boolean>(() => {
@@ -86,10 +87,9 @@ export function App() {
     });
   // The semester, for the sidebar line; null until loaded, "none" when there isn't one yet.
   const [semester, setSemester] = useState<Semester | null | "none">(null);
-  // Organize (the Orchestrator): a full page, and a quick panel over every other screen.
+  // "Tell StudyDesk" (the Orchestrator): a panel over every screen, expandable to a full window.
   const [orchOpen, setOrchOpen] = useState(false);
   const [orchExpanded, setOrchExpanded] = useState(false);
-  const [dock, setDock] = useState<HTMLDivElement | null>(null);
   const [quote, setQuote] = useState<string | null>(null);
   const [status, setStatus] = useState<OrchStatus>({ needs: 0, notes: 0, nightly: "off", nightlyTime: null });
   const [askSeed, setAskSeed] = useState<{ chatId: string; question: string } | null>(null);
@@ -108,7 +108,6 @@ export function App() {
     setNewSemesterAsk(0);
     setMenuOpen(false);
     setToolsOpen(false);
-    if (v === "organize") setOrchOpen(false);
   }, []);
 
   const openOrch = useCallback(() => {
@@ -117,14 +116,11 @@ export function App() {
     setOrchOpen(true);
     setMenuOpen(false);
   }, []);
-  // On the Organize page the chat is already there; elsewhere it opens as a panel.
-  const viewRef = useRef(view);
-  viewRef.current = view;
+  // Ctrl/⌘ J opens and closes the StudyDesk chat from every screen.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
         e.preventDefault();
-        if (viewRef.current === "organize") return (document.querySelector(".orch.is-docked textarea") as HTMLTextAreaElement | null)?.focus();
         setOrchOpen((o) => {
           if (!o) openOrch();
           return !o;
@@ -134,7 +130,7 @@ export function App() {
     };
     const onAsk = (e: Event) => {
       setQuote((e as CustomEvent<{ quote: string }>).detail?.quote || null);
-      if (viewRef.current !== "organize") setOrchOpen(true);
+      setOrchOpen(true);
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("studydesk:ask", onAsk);
@@ -142,18 +138,16 @@ export function App() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("studydesk:ask", onAsk);
     };
-    // viewRef is read at event time
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openOrch]);
 
-  // A new student (no semester yet) starts in Organize, which begins with the setup chat.
+  // A new student (no semester yet) starts with the setup chat.
   const first = useRef(true);
   useEffect(() => {
     openQuestStore()
       .then((qs) => qs.loadSemester())
       .then((sem) => {
         setSemester(sem ?? "none");
-        if (!sem && first.current) setView((v) => (v === "today" ? "setup" : v));
+        if (!sem && first.current) setView((v) => (v === "now" ? "setup" : v));
         first.current = false;
       })
       .catch(() => setSemester("none"));
@@ -221,16 +215,16 @@ export function App() {
   const sem = semester && semester !== "none" ? semester : null;
   // Setting up counts as something StudyDesk needs from the student.
   const needs = status.needs + (semester === "none" || sem?.source === "sample" ? 1 : 0);
-  const organizeView = view === "organize" || view === "setup";
-  // Organize without a semester is the setup chat.
-  const shown: View = view === "organize" && semester === "none" ? "setup" : view;
+  const shown: View = view;
   const chatTitle = chats.find((c) => c.id === current.id)?.title ?? "New chat";
-  const title = shown === "today" ? "Today" : shown === "chat" ? chatTitle : shown === "setup" ? "Set up your semester" : "Organize";
+  const title = { now: "Now", week: "Week", courses: "Courses", chat: chatTitle, setup: "Set up your semester" }[shown];
   const command_ = (kind: QuestCommand["kind"]) => {
     setCommand({ id: Date.now(), kind });
     setConfirmRestart(false);
-    go("today");
+    go("now");
   };
+  // Exams in the next four weeks, for the Week item.
+  const examsSoon = sem ? sem.keyDates.filter((k) => k.date >= toDay() && k.date <= addDays(toDay(), 28)).length : 0;
 
   const badge = needs > 0 ? (
     <span className="nav-badge" aria-label={`${needs} ${needs === 1 ? "thing needs" : "things need"} you`}>
@@ -257,14 +251,23 @@ export function App() {
         {semesterLine(sem) && <p className="side-semester">{semesterLine(sem)}</p>}
 
         <nav className="side-nav" aria-label="Screens">
-          <button type="button" className={"nav-item" + (shown === "today" ? " is-current" : "")} aria-current={shown === "today" ? "page" : undefined} title="Today" onClick={() => go("today")}>
-            <Svg>{Icon.today}</Svg>
-            <span className="nav-text">Today</span>
+          <button type="button" className={"nav-item" + (shown === "now" ? " is-current" : "")} aria-current={shown === "now" ? "page" : undefined} title="Now: what to do, and when" onClick={() => go("now")}>
+            <Svg>{Icon.now}</Svg>
+            <span className="nav-text">Now</span>
+          </button>
+          <button type="button" className={"nav-item" + (shown === "week" ? " is-current" : "")} aria-current={shown === "week" ? "page" : undefined} title="Week: the run-up to your exams" onClick={() => go("week")}>
+            <Svg>{Icon.week}</Svg>
+            <span className="nav-text">Week</span>
+            {examsSoon > 0 && <span className="nav-count">{examsSoon} {examsSoon === 1 ? "exam" : "exams"}</span>}
+          </button>
+          <button type="button" className={"nav-item" + (shown === "courses" ? " is-current" : "")} aria-current={shown === "courses" ? "page" : undefined} title="Courses: your semester, dates and files" onClick={() => go("courses")}>
+            <Svg>{Icon.courses}</Svg>
+            <span className="nav-text">Courses</span>
           </button>
           <button
             type="button"
             className={"nav-item" + (shown === "chat" && !chats.some((c) => c.id === current.id) ? " is-current" : "")}
-            title="Ask: start a new chat"
+            title="Ask: a tutor chat for anything you're stuck on"
             onClick={() => open(newChat())}
           >
             <Svg>{Icon.ask}</Svg>
@@ -315,13 +318,13 @@ export function App() {
 
         <button
           type="button"
-          className={"organize-btn" + (organizeView ? " is-current" : "")}
-          aria-current={organizeView ? "page" : undefined}
-          onClick={() => go("organize")}
-          title="Your semester, dates and files. Tell StudyDesk what changed (Ctrl/⌘ J)"
+          className={"organize-btn" + (orchOpen ? " is-current" : "")}
+          aria-expanded={orchOpen}
+          onClick={() => (orchOpen ? setOrchOpen(false) : openOrch())}
+          title="Tell StudyDesk what changed, or ask about your plan (Ctrl/⌘ J)"
         >
-          <Svg>{Icon.organize}</Svg>
-          <span className="nav-text">Organize</span>
+          <Svg>{Icon.tell}</Svg>
+          <span className="nav-text">Tell StudyDesk</span>
           {badge}
           <kbd className="organize-kbd">Ctrl J</kbd>
         </button>
@@ -358,7 +361,7 @@ export function App() {
               </button>
               <p className="tools-label">Testing tools</p>
               <button type="button" role="menuitem" onClick={() => command_("build")}>
-                Build a new quest for today
+                Plan today again
               </button>
               {sem?.source === "sample" &&
                 (confirmRestart ? (
@@ -402,65 +405,72 @@ export function App() {
             </button>
           </div>
         )}
-        {/* Today stays loaded once opened, so coming back to it is instant. */}
-        {(shown === "today" || todayLoaded) && (
-          <div className={"today-host" + (shown === "today" ? "" : " is-hidden")} aria-hidden={shown !== "today"}>
-            <QuestPage key={sem?.id ?? "none"} onStartSetup={() => go("setup")} command={command} />
+        {/* Now stays loaded once opened, so coming back to it is instant. */}
+        {(shown === "now" || nowLoaded) && (
+          <div className={"today-host" + (shown === "now" ? "" : " is-hidden")} aria-hidden={shown !== "now"}>
+            <QuestPage key={sem?.id ?? "none"} onStartSetup={() => go("setup")} onOpenWeek={() => go("week")} onOpenTodo={() => go("setup")} command={command} />
           </div>
         )}
+        {shown === "week" && <WeekPage onOpenNow={() => go("now")} />}
         {shown === "chat" && <ChatView key={current.id} initial={current} save={save} onSaveError={onSaveError} autoSend={askSeed?.chatId === current.id ? askSeed.question : undefined} />}
-        {shown === "organize" && (
-          <div className="organize" data-narrow={orgView}>
-            <div className="setup-switch organize-switch" role="tablist" aria-label="Show">
-              <button type="button" role="tab" aria-selected={orgView === "chat"} className={orgView === "chat" ? "is-on" : ""} onClick={() => setOrgView("chat")}>
-                Chat
-              </button>
-              <button type="button" role="tab" aria-selected={orgView === "data"} className={orgView === "data" ? "is-on" : ""} onClick={() => setOrgView("data")}>
-                Your semester
-              </button>
-            </div>
-            <div className="organize-chat" ref={setDock} />
-            <div className="organize-data">
-              <DeskPanel onOpenSetup={() => go("setup")} />
-            </div>
+        {shown === "courses" && (
+          <div className="courses-page">
+            <DeskPanel onOpenSetup={() => go("setup")} />
           </div>
         )}
         {(shown === "setup" || runPending) && (
           <div className={shown === "setup" ? "setup-host" : "setup-host is-hidden"} aria-hidden={shown !== "setup"}>
             {shown === "setup" && sem && (
-              <button type="button" className="link-btn setup-back" onClick={() => go("organize")}>
-                ← Back to Organize
+              <button type="button" className="link-btn setup-back" onClick={() => go("courses")}>
+                ← Back to Courses
               </button>
             )}
-            <OnboardingPage onDone={() => go("today")} askNewSemester={newSemesterAsk} />
+            <OnboardingPage onDone={() => go("now")} askNewSemester={newSemesterAsk} />
           </div>
         )}
 
         <nav className="tabbar" aria-label="Screens">
-          <button type="button" className={shown === "today" ? "is-current" : ""} onClick={() => go("today")}>
-            <Svg>{Icon.today}</Svg>
-            Today
+          <button type="button" className={shown === "now" ? "is-current" : ""} onClick={() => go("now")}>
+            <Svg>{Icon.now}</Svg>
+            Now
+          </button>
+          <button type="button" className={shown === "week" ? "is-current" : ""} onClick={() => go("week")}>
+            <Svg>{Icon.week}</Svg>
+            Week
+          </button>
+          <button type="button" className="tab-tell" aria-label="Tell StudyDesk" onClick={() => (orchOpen ? setOrchOpen(false) : openOrch())}>
+            <span className="tab-icon">
+              <Svg>{Icon.tell}</Svg>
+              {badge}
+            </span>
+          </button>
+          <button type="button" className={shown === "courses" || shown === "setup" ? "is-current" : ""} onClick={() => go("courses")}>
+            <Svg>{Icon.courses}</Svg>
+            Courses
           </button>
           <button type="button" className={shown === "chat" ? "is-current" : ""} onClick={() => open(newChat())}>
             <Svg>{Icon.ask}</Svg>
             Ask
           </button>
-          <button type="button" className={organizeView ? "is-current" : ""} onClick={() => go("organize")}>
-            <span className="tab-icon">
-              <Svg>{Icon.organize}</Svg>
-              {badge}
-            </span>
-            Organize
-          </button>
         </nav>
       </main>
       <OrchestratorPanel
-        open={orchOpen && shown !== "organize"}
-        dock={shown === "organize" ? dock : null}
+        open={orchOpen}
+        dock={null}
         expanded={orchExpanded}
         onClose={() => setOrchOpen(false)}
         onToggleExpand={() => setOrchExpanded((x) => !x)}
-        screen={shown === "today" ? "Today's quest" : shown === "setup" ? "Semester setup" : shown === "organize" ? "Organize page (semester, courses, dates, files)" : `Ask chat "${chatTitle}"`}
+        screen={
+          shown === "now"
+            ? "Now (today's plan: blocks on the clock)"
+            : shown === "week"
+              ? "Week (the run-up to the exams)"
+              : shown === "courses"
+                ? "Courses (semester, courses, dates, files)"
+                : shown === "setup"
+                  ? "Semester setup"
+                  : `Ask chat "${chatTitle}"`
+        }
         quote={quote}
         onClearQuote={() => setQuote(null)}
         onStatus={setStatus}

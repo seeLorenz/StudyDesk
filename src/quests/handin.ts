@@ -158,3 +158,8 @@ export function ungraded(quest: Quest, progress: QuestProgress): Array<{ problem
 export function isFinished(quest: Quest, progress: QuestProgress): boolean {
   return allHandedIn(quest, progress) && ungraded(quest, progress).length === 0;
 }
+
+/** True once the student did anything on a quest: then it's never rewritten. */
+export function questStarted(r: { progress: QuestProgress }): boolean {
+  return r.progress.handedIn.length > 0 || Object.values(r.progress.work).some((w) => w.activeSeconds > 0 || w.answerText.trim() !== "" || w.files.length > 0 || w.hintsShown > 0);
+}

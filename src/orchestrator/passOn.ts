@@ -10,7 +10,8 @@ import { canUseTools } from "../platform/claude";
 
 export const PASS_ON_EVENT = "studydesk:pass-on";
 
-export type PassOn = { text: string; where: string };
+/** `by`: the tutor passing a remark on (default), or the student answering on another screen (Now's quick answers). */
+export type PassOn = { text: string; where: string; by?: "tutor" | "student" };
 
 export function passOn(p: PassOn): void {
   window.dispatchEvent(new CustomEvent<PassOn>(PASS_ON_EVENT, { detail: p }));

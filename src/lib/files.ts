@@ -151,7 +151,7 @@ export async function readAttachment(file: File, opts: { keepAll?: boolean } = {
       ...base,
       kind: "text",
       status: "error",
-      error: cls === "zip" ? "Drop course zips in Organize: StudyDesk unpacks and keeps them there." : cls === "video" ? "Claude can't watch or listen to videos. Describe what happens in it instead." : "StudyDesk can't read this kind of file here. Save it as PDF, or drop it in Organize.",
+      error: cls === "zip" ? "Drop course zips in the StudyDesk chat (Tell StudyDesk): it unpacks and keeps them there." : cls === "video" ? "Claude can't watch or listen to videos. Describe what happens in it instead." : "StudyDesk can't read this kind of file here. Save it as PDF, or drop it in the StudyDesk chat (Tell StudyDesk).",
     };
   }
   try {

@@ -10,6 +10,8 @@ import type { Attempt, Day, ReviewItem } from "../mastery/types";
 import type { QuestRecord, Semester } from "../quests/types";
 import { addDays } from "../mastery/days";
 import { questSettingsNow } from "../quests/config";
+import { questStarted } from "../quests/handin";
+import { recordsOnDay } from "../plan/day";
 import type { Change, Job, Memory, OrchMessage, OrchState } from "./types";
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -73,7 +75,7 @@ export function deskSnapshot(i: SnapshotInput): string {
     .filter((k) => k.date >= today && k.date <= addDays(today, 60))
     .sort((a, b) => (a.date < b.date ? -1 : 1))
     .map((k) => `${k.date} ${draft.courses.find((c) => c.id === k.courseId)?.short ?? k.courseId}: ${k.title} (${k.kind})`);
-  const quest = todaysQuest(i.records, today);
+  const blocks = todaysBlocks(i.records, today, i.semester?.placementQuestId);
   return JSON.stringify(
     {
       today: `${today} (${DAY[new Date(`${today}T12:00`).getDay()]})`,
@@ -85,7 +87,7 @@ export function deskSnapshot(i: SnapshotInput): string {
       courses,
       examsNext60Days: exams,
       homeworkDueNext14Days: homework,
-      todaysQuest: quest ? { course: quest.quest.courseId, plannedMinutes: quest.quest.plannedMinutes, started: questStarted(quest) } : null,
+      todaysBlocks: blocks.map((b) => ({ course: b.quest.courseId, kind: b.quest.block?.kind ?? "quest", plannedMinutes: b.quest.plannedMinutes, started: questStarted(b) })),
       questSettings: questSettingsNow(draft.questSettings),
       speedLastQuests: sp.ratio === null ? "not measured yet" : `${sp.actual} min actual vs ${sp.planned} min planned over ${sp.quests} quests`,
       openToDo: setupTodo(draft).filter((t) => !t.done).map((t) => ({ key: t.key, title: t.title, ...(t.subs ? { parts: t.subs.map((x) => ({ key: x.key, text: x.text, done: x.done })) } : {}) })),
@@ -107,7 +109,7 @@ What you do:
 - Make small changes with the change tool, right away, in the same reply: dates, homework due dates, target grades, study goal, days off, weekly slots, a course's teaching language, profile, results from school, and facts to remember (what the student says about a course, word for word). The student sees a card with what changed and an Undo button, so don't ask "are you sure?" for small things and don't repeat the card's lines in your text.
 - Start a job with start_job for bigger work: new material (files the student drops: assign them to their course in the same call), a new course (add_course first, then start_job), or re-mapping a course when the student says something that changes what the course needs ("chapter 7 isn't in the exam", "the exam is oral now"); record that statement as a fact too. New files start a job automatically; re-reading everything a course already has asks the student first (the tool shows them a yes/no card).
 - Dropping a course always needs the student's yes: call change with drop_course, and the student gets a yes/no card.
-- After a change that affects today (todaysQuest exists and started is false), you may rebuild today's quest with rebuild_quest; the change card also offers it.
+- Each day is a few short blocks, one course each, placed in the student's free time (homework due next, then prep for every exam in the next four weeks, reviews). After a change that affects today (todaysBlocks has blocks with started false), you may plan today's unstarted blocks again with rebuild_quest; the change card also offers it.
 - When the student asks to redo or regenerate their placement check, first ask once whether they also want to delete their past stats (mastery progress, past attempts and the mistake review) for a clean start, or keep them. Only after they answer, call redo_placement with resetStats. It shows a yes/no card; nothing happens before their yes. If the placement came out in the wrong language, fix the courses' language with the change tool first.
 - The nightly run (nightlyRun in the snapshot) grades at its time, runs the organization agent's check and deep sweeps, and writes tomorrow's quest. Change it with set_nightly (time, pause, turn parts off) and set_sweep (when a course is read again completely); start it at once with run_nightly_now only when the student asks.
 - StudyDesk's own updates: update_studydesk. "check" answers questions about the version and what's new; when the student wants the new version, "update" shows the button card (never claim it's updating before they press it); "go_back" only when they ask to undo an update.
@@ -298,15 +300,12 @@ export function jobTitle(j: Job, names: Map<string, string>): string {
 
 export type { Change };
 
-/** Today's quest as the quest page shows it: the newest one of today that wasn't replaced. */
-export function todaysQuest(records: QuestRecord[], today: Day): QuestRecord | null {
-  return records.filter((r) => r.quest.date === today && !r.progress.replacedAt).sort((a, b) => b.quest.createdAt - a.quest.createdAt)[0] ?? null;
+/** Today's blocks as Now shows them: today's quests (and ones moved to today), not replaced, skipped or moved away. */
+export function todaysBlocks(records: QuestRecord[], today: Day, placementId?: string): QuestRecord[] {
+  return recordsOnDay(records, today, placementId);
 }
 
-/** True once the student did anything on a quest: then it's never rewritten. */
-export function questStarted(r: QuestRecord): boolean {
-  return r.progress.handedIn.length > 0 || Object.values(r.progress.work).some((w) => w.activeSeconds > 0 || w.answerText.trim() !== "" || w.files.length > 0 || w.hintsShown > 0);
-}
+export { questStarted };
 
 export const NIGHTLY_TOOL = {
   name: "run_nightly_now",
@@ -330,6 +329,6 @@ export const PLACEMENT_TOOL = {
 
 export const REBUILD_TOOL = {
   name: "rebuild_quest",
-  description: "Writes today's quest again from the current desk (after a change that affects today: a nearer exam, homework due tomorrow, a different study goal). Only works while today's quest hasn't been started; a started quest is never rewritten.",
+  description: "Plans today's blocks again from the current desk (after a change that affects today: a nearer exam, homework due tomorrow, a different study goal). Only blocks that haven't been started are planned again; a started block is never rewritten.",
   inputSchema: { type: "object", properties: {} },
 } as const;

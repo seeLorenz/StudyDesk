@@ -1,33 +1,42 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Chat, Note } from "../chat/types";
+import type { Note } from "../chat/types";
 import { ChatView } from "../chat/ChatView";
 import { SelectionReply } from "../chat/SelectionReply";
 import { passageNoteTurns } from "../chat/prompts";
 import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
 import { useSideNotes } from "../notes/useSideNotes";
 import { CONFIG } from "../mastery/config";
-import { toDay } from "../mastery/days";
+import { addDays, daysBetween, toDay } from "../mastery/days";
 import { answerSlip, GradingFailed } from "../mastery/grading";
 import { questBonus, replay } from "../mastery/replay";
 import { askClaude, claudeAvailable, errorCopy, type AskError } from "../platform/claude";
 import { openMasteryStore, type MasteryData, type MasteryStore } from "../platform/masteryStore";
 import { openQuestStore, type QuestStore } from "../platform/questStore";
 import { QUEST_CONFIG, partMinutes } from "./config";
-import { allHandedIn, answerUnlocked, emptyProgress, emptyWork, handIn, isFinished, ungraded } from "./handin";
-import { carriedOver, doneTasks, formatDue, planQuest, recentBlockers, recentFeel, type PlanResult } from "./plan";
-import { ProblemCard, clock } from "./ProblemCard";
+import { allHandedIn, answerUnlocked, emptyProgress, emptyWork, handIn, isFinished, questStarted, ungraded } from "./handin";
+import { carriedOver, formatDue, recentFeel } from "./plan";
+import { ProblemCard, clock as clockText } from "./ProblemCard";
 import { sampleGradingAsk, sampleSemester, sampleWriter } from "./seed";
 import type { AnswerFile, ProblemPart, ProblemWork, Quest, QuestPart, QuestProgress, QuestRecord, Rating, Semester } from "./types";
+import type { Chat } from "../chat/types";
 import { claudeWriter, writeQuest, type WriteStatus } from "./write";
 import { compressImage, dataUrlToBlob } from "./images";
 import { applyChecks, checkResults, isResolved, newReviewChat, questMistakes, reviewRules } from "./review";
 import { WorkloadCard } from "../onboarding/WorkloadCard";
-import { busyMinutesFromEvents, readCalendar } from "../platform/calendar";
+import type { SemesterDraft } from "../onboarding/types";
+import { busyFromAhead, spansFromAhead, type CalendarAhead } from "../platform/calendar";
 import { publish, subscribe } from "../platform/deskBus";
 import { openOnboardingStore } from "../platform/onboardingStore";
 import { openRoutineStore } from "../platform/routineStore";
 import { gradingFields, mergeGrading, type GradingOutbox } from "../routine/apply";
-import { ComingUp } from "../shell/ComingUp";
+import { nightlySettings } from "../routine/nightly";
+import { passOn } from "../orchestrator/passOn";
+import { duration, hhmm, toMinute } from "../plan/clock";
+import { DAY_PLAN, dueLine, needsQuest, planDays, recordOnDay, recordsOnDay, shortDate, whyLine, type PlannedBlock } from "../plan/day";
+import { questsForDay, type BlockQuest } from "../plan/build";
+import { quickQuestions } from "../plan/questions";
+import { today as todayLine, type BlockState } from "../plan/today";
+import { ExamRail, NowCard, QuickAnswers, RailNote, Timeline, type BlockView, type LaterChoice } from "../now/parts";
 
 // The quest page: builds today's quest on the first open of the day (the
 // in-page fallback from the design), then lets the student work through it
@@ -42,8 +51,14 @@ type Data = {
   reviewChats: Record<string, Chat>;
   mastery: MasteryData;
   live: boolean;
-  /** The nightly run is set up (grading at 22:00, tomorrow's quest overnight). */
+  /** The nightly run is set up (grading at 22:00, tomorrow's blocks overnight). */
   nightly: boolean;
+  /** Its time, "22:00", when it's set up. */
+  nightlyTime: string | null;
+  /** The setup sheet, for the open questions (quick answers). */
+  draft: SemesterDraft | null;
+  /** The calendar's last read: busy time per day, for the clock. */
+  calendar: CalendarAhead | null;
 };
 
 /** Tonight's grades for the quest that's open, handed to it so it merges them into its own copy. */
@@ -104,28 +119,86 @@ const WEEKDAY = (day: string) => new Date(`${day}T12:00`).toLocaleDateString("en
 /** A testing tool picked in the sidebar's menu; `id` changes each time it's picked. */
 export type QuestCommand = { id: number; kind: "build" | "restart" };
 
-export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void; command?: QuestCommand | null }) {
+/** Blocks being written right now, in the order they're written. */
+type Building = { items: Array<{ key: string; quest: Quest; status: Record<string, WriteStatus>; state: "waiting" | "writing" | "done" | "failed" }> };
+
+/** Per-day choices only this browser needs: blocks pushed to later today, blocks hidden for today. */
+type DayPrefs = { day: string; later: Record<string, number>; hidden: string[] };
+const PREFS_KEY = "studydesk.dayprefs";
+function loadPrefs(day: string): DayPrefs {
+  try {
+    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || "null") as DayPrefs | null;
+    if (p && p.day === day) return p;
+  } catch {
+    /* none kept */
+  }
+  return { day, later: {}, hidden: [] };
+}
+function savePrefs(p: DayPrefs) {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(p));
+  } catch {
+    /* only for this page load */
+  }
+}
+
+const minuteOf = (d: Date) => d.getHours() * 60 + d.getMinutes();
+const KIND = { learn: "Learn", lesson: "Learn & try", practice: "Practice", assignment: "Homework" } as const;
+const kindLabel = (p: QuestPart) => (p.kind !== "learn" && p.check ? "Placement check" : KIND[p.kind]);
+
+/** The title a block shows: its homework, else its first lesson, else its first part. */
+function blockTitle(q: Quest, courseName: string): string {
+  return q.parts.find((p) => p.kind === "assignment")?.title ?? q.parts.find((p) => p.kind === "lesson")?.title ?? q.parts[0]?.title ?? courseName;
+}
+
+const minutesLeft = (q: Quest, p: QuestProgress) => q.parts.filter((x) => !p.handedIn.includes(x.id)).reduce((s, x) => s + partMinutes(x), 0);
+
+export function QuestPage({
+  onStartSetup,
+  onOpenWeek,
+  onOpenTodo,
+  command,
+}: {
+  onStartSetup: () => void;
+  onOpenWeek: () => void;
+  onOpenTodo: () => void;
+  command?: QuestCommand | null;
+}) {
   const [data, setData] = useState<Data | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [building, setBuilding] = useState<{ plan: Quest; status: Record<string, WriteStatus> } | null>(null);
+  const [building, setBuilding] = useState<Building | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
-  const [planNotice, setPlanNotice] = useState<Exclude<PlanResult, { kind: "quest" }> | null>(null);
-  const autoBuilt = useRef(false);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [clock, setClock] = useState(() => new Date());
+  const autoBuilt = useRef<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  const today = toDay();
+  const today = toDay(clock);
+  const [prefs, setPrefs] = useState<DayPrefs>(() => loadPrefs(toDay()));
+  const updatePrefs = (fn: (p: DayPrefs) => DayPrefs) =>
+    setPrefs((p) => {
+      const next = fn(p.day === today ? p : { day: today, later: {}, hidden: [] });
+      savePrefs(next);
+      return next;
+    });
+
+  // The clock moves the plan along: what's "now", what moved.
+  useEffect(() => {
+    const t = setInterval(() => setClock(new Date()), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   const load = useCallback((useSample = false) => {
     (async () => {
       const [qs, ms, live] = await Promise.all([openQuestStore(), openMasteryStore(), claudeAvailable()]);
       let semester = await qs.loadSemester();
       if (!semester && !useSample) {
-        // A new student: StudyDesk needs Start New Semester before it can build quests.
+        // A new student: StudyDesk needs Start New Semester before it can plan anything.
         setNeedsSetup(true);
         return;
       }
       if (!semester) {
-        semester = sampleSemester(toDay());
+        semester = sampleSemester(toDay(), Date.now(), { more: true });
         await qs.saveSemester(semester);
       }
       setNeedsSetup(false);
@@ -141,22 +214,41 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
           mastery.targets.push(t);
         }
       }
-      const [loaded, reviewChats, profile] = await Promise.all([qs.loadRecords(), qs.loadReviewChats(), openOnboardingStore().then((o) => o.loadProfile()).catch(() => null)]);
+      const onboarding = await openOnboardingStore().catch(() => null);
+      const [loaded, reviewChats, profile, draft, calendar] = await Promise.all([
+        qs.loadRecords(),
+        qs.loadReviewChats(),
+        onboarding ? onboarding.loadProfile().catch(() => null) : null,
+        onboarding ? onboarding.loadDraft().catch(() => null) : null,
+        qs.loadCalendar().catch(() => null),
+      ]);
       // Grades from the nightly run come in before anything is shown.
       const { records } = await applyNightlyGrades(qs, loaded, null).catch(() => ({ records: loaded }));
-      setData({ qs, ms, semester, records, reviewChats, mastery, live, nightly: !!profile?.schedule });
+      setData({
+        qs,
+        ms,
+        semester,
+        records,
+        reviewChats,
+        mastery,
+        live,
+        nightly: !!profile?.schedule,
+        nightlyTime: profile?.schedule ? nightlySettings(profile.nightly).time : null,
+        draft: draft && draft.id === semester.id ? draft : null,
+        calendar,
+      });
     })().catch((e) => setLoadError(message(e)));
   }, []);
   useEffect(() => load(), [load]);
   // While the page is open (say at 22:00), the night's grades arrive within a few minutes.
   const dataRef = useRef(data);
   dataRef.current = data;
+  const openRecordId = useRef<string | null>(null);
   useEffect(() => {
     const tick = async () => {
       const d = dataRef.current;
       if (!d || document.visibilityState === "hidden") return;
-      const open = d.records.filter((r) => r.quest.date === toDay() && !r.progress.replacedAt).sort((a, b) => b.quest.createdAt - a.quest.createdAt)[0];
-      const res = await applyNightlyGrades(d.qs, d.records, open?.quest.id ?? null).catch(() => null);
+      const res = await applyNightlyGrades(d.qs, d.records, openRecordId.current).catch(() => null);
       if (!res?.applied) return;
       const mastery = await d.ms.load();
       setData((x) => (x ? { ...x, records: x.records.map((r) => res.records.find((y) => y.quest.id === r.quest.id) ?? r), mastery } : x));
@@ -170,10 +262,10 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
   useEffect(() => {
     if (!data || leftoversTried.current) return;
     leftoversTried.current = true;
-    const todo = data.records.filter((r) => !r.progress.replacedAt && r.quest.date < today && ungraded(r.quest, r.progress).length);
+    const todo = data.records.filter((r) => !r.progress.replacedAt && r.quest.date < today && r.quest.id !== data.semester.placementQuestId && ungraded(r.quest, r.progress).length);
     if (!todo.length) return;
     void (async () => {
-      setLeftovers(`Grading work from ${todo.map((r) => WEEKDAY(r.quest.date)).join(", ")} that wasn't graded overnight…`);
+      setLeftovers(`Grading work from ${[...new Set(todo.map((r) => WEEKDAY(r.quest.date)))].join(", ")} that wasn't graded overnight…`);
       try {
         for (const r of todo) {
           const problems = ungraded(r.quest, r.progress);
@@ -204,18 +296,19 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
       }
     })();
   }, [data, today]);
-  // "Rebuild today's quest" from the StudyDesk chat: reload, and the newest plan is written.
+  // "Rebuild today's blocks" from the StudyDesk chat: reload, and the newest plan is written.
   useEffect(() => {
     const onReplaced = () => {
-      autoBuilt.current = false;
-      setPlanNotice(null);
+      autoBuilt.current = null;
+      setOpenKey(null);
       load();
     };
     window.addEventListener("studydesk:quest-replaced", onReplaced);
     return () => window.removeEventListener("studydesk:quest-replaced", onReplaced);
   }, [load]);
-  // A change through the Orchestrator (a new date, a day off) shows up here at once.
+  // A change through the StudyDesk chat (a new date, a day off, an answer) shows up here at once.
   useEffect(() => subscribe("semester", "quests", (semester) => setData((d) => (d && d.semester.id === semester.id ? { ...d, semester } : d))), []);
+  useEffect(() => subscribe("draft", "quests", (draft) => setData((d) => (d && d.semester.id === draft.id ? { ...d, draft } : d))), []);
 
   /** Set up through onboarding, but the placement check hasn't been written yet. */
   const needsPlacement = !!data && data.semester.source === "onboarding" && !data.semester.placementQuestId;
@@ -228,22 +321,17 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
     return !!r && isFinished(r.quest, r.progress);
   }, [data]);
 
-  const current = useMemo(
-    () => data?.records.filter((r) => r.quest.date === today && !r.progress.replacedAt).sort((a, b) => b.quest.createdAt - a.quest.createdAt)[0] ?? null,
-    [data, today],
-  );
-  const currentDone = !!current && isFinished(current.quest, current.progress);
-  /** Graded quests and earlier days' quests, newest first. */
+  /** Graded quests and earlier days' blocks, newest first. */
   const archive = useMemo(
     () =>
       (data?.records ?? [])
         .filter((r) => !r.progress.replacedAt)
-        .filter((r) => r !== current || currentDone)
-        .filter((r) => isFinished(r.quest, r.progress) || r.quest.date < today)
+        .filter((r) => r.quest.id !== data?.semester.placementQuestId || isFinished(r.quest, r.progress))
+        .filter((r) => isFinished(r.quest, r.progress) || (r.quest.date < today && r.progress.deferredTo !== today))
         .sort((a, b) => b.quest.createdAt - a.quest.createdAt),
-    [data, current, currentDone, today],
+    [data, today],
   );
-  /** The newest graded quest with mistakes gets the review chat at the top. */
+  /** The newest graded quest with mistakes gets the mistake review, today's first block. */
   const review = useMemo(() => {
     if (!data) return null;
     for (const r of archive) {
@@ -254,78 +342,202 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
     }
     return null;
   }, [archive, data]);
+  const openMistakes = review ? review.mistakes.filter((m) => !isResolved(m, data!.mastery.reviews)).length : 0;
   const [openArchived, setOpenArchived] = useState<string | null>(null);
-  const [reviewOpen, setReviewOpen] = useState(false);
+  const [showAllArchive, setShowAllArchive] = useState(false);
 
-  const build = useCallback(
-    async (budgetOverride?: number) => {
-      if (!data) return;
-      setBuildError(null);
-      setPlanNotice(null);
-      const { semester, records, mastery } = data;
-      // A semester set up from the calendar sizes today's quest from today's real calendar.
-      let calendarBusyMinutes: number | undefined;
-      if (semester.calendarSync && data.live) {
-        try {
-          calendarBusyMinutes = busyMinutesFromEvents(await readCalendar(today, 1), today);
-        } catch {
-          calendarBusyMinutes = undefined; // not reachable now: the weekly timetable is used
-        }
-      }
-      const res = planQuest({
-        calendarBusyMinutes,
-        semester,
-        today,
-        nowLocal: nowLocal(),
-        attempts: mastery.attempts,
-        reviews: mastery.reviews,
-        doneTaskIds: doneTasks(records),
-        blockerSkillIds: recentBlockers(records, today),
-        budgetOverride,
-        questId: `qst_${today}_${Date.now().toString(36)}`,
-      });
-      if (res.kind !== "quest") {
-        setPlanNotice(res);
-        return;
-      }
-      setBuilding({ plan: res.quest, status: {} });
-      try {
-        const { states } = replay(mastery.skills, mastery.attempts, mastery.reviews);
-        const knownIds = [...states.values()].filter((s) => s.stage === "mastered" || s.stage === "retained").map((s) => s.skillId);
-        const feel = recentFeel(records, (id) => semester.skills.find((s) => s.id === id)?.name, today);
-        const writer = data.live ? claudeWriter(semester, res.quest, knownIds, askClaude, undefined, feel) : sampleWriter(semester.skills);
-        const carried = carriedOver(records, res.quest);
-        if (carried.length) {
-          res.quest.notes.unshift(`Carried over from ${WEEKDAY(carried[0].from)}, when the quest wasn't finished: ${carried.map((c) => c.label).join(", ")}.`);
-        }
-        const quest = await writeQuest(res.quest, writer, (s) =>
-          setBuilding((b) => (b ? { ...b, status: { ...b.status, [s.partId]: s } } : b)),
-        );
-        const record = { quest, progress: emptyProgress(quest.id) };
-        await data.qs.saveRecord(record);
-        setData((d) => (d ? { ...d, records: [...d.records, record] } : d));
-        setBuilding(null);
-      } catch (e) {
-        setBuildError(message(e));
-      }
-    },
+  // ---- the plan: today on the clock, and four weeks of exams ----
+  const nl = nowLocal(clock);
+  const plan = useMemo(() => {
+    if (!data) return null;
+    const fixKey = `fix:${today}`;
+    const fix = review && openMistakes && !prefs.hidden.includes(fixKey) ? { courseId: review.record.quest.courseId, count: openMistakes } : null;
+    return planDays({ semester: data.semester, today, nowLocal: nl, attempts: data.mastery.attempts, reviews: data.mastery.reviews, records: data.records, days: 1, calendarBusy: (d) => busyFromAhead(data.calendar, d), fix }).days[0];
+  }, [data, today, nl, review, openMistakes, prefs.hidden]);
+  const weeks = useMemo(
+    () =>
+      data
+        ? planDays({ semester: data.semester, today, nowLocal: `${today}T00:00`, attempts: data.mastery.attempts, reviews: data.mastery.reviews, records: data.records, days: DAY_PLAN.horizonDays, calendarBusy: (d) => busyFromAhead(data.calendar, d) })
+        : null,
     [data, today],
   );
 
-  useEffect(() => {
-    if (data && !current && !building && !autoBuilt.current && !planNotice && !needsPlacement) {
-      autoBuilt.current = true;
-      void build();
+  const pending = new Map((building?.items ?? []).filter((i) => i.state !== "done").map((i) => [i.key, i]));
+  const blocks = (plan?.blocks ?? []).filter((b) => !prefs.hidden.includes(b.key) && (!needsQuest(b) || pending.has(b.key)));
+  const courseName = (id: string) => data?.semester.courses.find((c) => c.id === id)?.name ?? id;
+  const courseShort = (id: string) => {
+    const c = data?.semester.courses.find((x) => x.id === id);
+    return c?.short || c?.name.slice(0, 2) || "?";
+  };
+
+  const recordOf = (b: PlannedBlock): QuestRecord | null => (b.recordId ? data?.records.find((r) => r.quest.id === b.recordId) ?? null : null);
+  const blockState = (b: PlannedBlock): BlockState => {
+    const later = prefs.later[b.key];
+    if (b.kind === "fix") {
+      const chat = review ? data?.reviewChats[review.record.quest.id] : undefined;
+      return { done: openMistakes === 0, started: !!chat?.messages.some((m) => m.role === "user"), laterAt: later };
     }
-  }, [data, current, building, build, needsPlacement]);
+    const r = recordOf(b);
+    if (!r) return { done: false, started: false, laterAt: later };
+    if (b.kind === "check") {
+      const parts = r.quest.parts.filter((p) => b.partIds?.includes(p.id));
+      const done = parts.every((p) => r.progress.handedIn.includes(p.id));
+      const started = parts.some((p) => p.kind !== "learn" && p.problems.some((q) => (r.progress.work[q.id]?.activeSeconds ?? 0) > 0 || !!r.progress.work[q.id]?.answerText.trim()));
+      return { done, started, laterAt: later };
+    }
+    return { done: allHandedIn(r.quest, r.progress), started: questStarted(r), laterAt: later };
+  };
+  const remaining = (b: PlannedBlock): number => {
+    const r = recordOf(b);
+    if (!r || b.kind === "fix") return b.minutes;
+    if (b.kind === "check") return r.quest.parts.filter((p) => b.partIds?.includes(p.id) && !r.progress.handedIn.includes(p.id)).reduce((s, p) => s + partMinutes(p), 0) || b.minutes;
+    return minutesLeft(r.quest, r.progress);
+  };
+
+  const views = useMemo(() => {
+    const m = new Map<string, BlockView>();
+    if (!data) return m;
+    for (const b of blocks) {
+      const course = courseName(b.courseId);
+      const why = whyLine(b, today, data.semester);
+      const base = { block: b, course, short: courseShort(b.courseId), why, minutesLeft: remaining(b), preparing: false };
+      const r = recordOf(b);
+      if (b.kind === "fix" && review) {
+        const skills = new Map(data.semester.skills.map((s) => [s.id, s]));
+        m.set(b.key, {
+          ...base,
+          title: `${openMistakes} ${openMistakes === 1 ? "mistake" : "mistakes"} from ${WEEKDAY(review.record.quest.date)}`,
+          reason: "Understand each one, then solve a fresh problem on your own: that's what moves the streak again.",
+          steps: review.mistakes.slice(0, 4).map((x) => ({ label: "Mistake", title: skills.get(x.problem.skillId)?.name ?? "A problem", minutes: DAY_PLAN.fixPerMistake, done: isResolved(x, data.mastery.reviews) })),
+        });
+      } else if (b.kind === "check" && r) {
+        const parts = r.quest.parts.filter((p): p is ProblemPart => p.kind !== "learn" && !!b.partIds?.includes(p.id));
+        const n = parts.reduce((s, p) => s + p.problems.length, 0);
+        m.set(b.key, {
+          ...base,
+          title: "Where you stand",
+          reason: `${n} short ${n === 1 ? "problem" : "problems"}, one per skill: the basics and what's been taught so far. Skip what you can't do; a gap only tells StudyDesk where to start.`,
+          steps: parts.map((p) => ({ label: "Placement check", title: `${p.problems.length} short problems`, minutes: partMinutes(p), done: r.progress.handedIn.includes(p.id) })),
+        });
+      } else if (r) {
+        m.set(b.key, {
+          ...base,
+          title: blockTitle(r.quest, course),
+          reason: r.quest.reason,
+          steps: r.quest.parts.slice(0, 4).map((p) => ({ label: kindLabel(p), title: p.title, minutes: partMinutes(p), done: r.progress.handedIn.includes(p.id) })),
+        });
+      } else {
+        const p = pending.get(b.key);
+        m.set(b.key, {
+          ...base,
+          title: p ? blockTitle(p.quest, course) : course,
+          reason: p?.quest.reason ?? "",
+          steps: (p?.quest.parts ?? []).slice(0, 4).map((x) => ({ label: kindLabel(x), title: x.title, minutes: partMinutes(x), done: false })),
+          preparing: true,
+        });
+      }
+    }
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocks.map((b) => b.key).join("|"), data, today, review, openMistakes, building]);
+
+  const todayRecords = data ? recordsOnDay(data.records, today, data.semester.placementQuestId) : [];
+  const madeToday = todayRecords.map((r) => r.quest.createdAt).filter((t) => toDay(new Date(t)) === today);
+  const line = data
+    ? todayLine({
+        blocks,
+        state: blockState,
+        timetable: data.semester.timetable,
+        weekday: clock.getDay(),
+        calendar: spansFromAhead(data.calendar, today),
+        now: minuteOf(clock),
+        nightlyAt: data.nightlyTime ? toMinute(data.nightlyTime) : null,
+        remaining,
+        anchor: madeToday.length && madeToday.length === todayRecords.length ? minuteOf(new Date(Math.min(...madeToday))) : null,
+      })
+    : null;
+
+  // ---- writing today's blocks ----
+  const knownSkillIds = (mastery: MasteryData) => {
+    const { states } = replay(mastery.skills, mastery.attempts, mastery.reviews);
+    return [...states.values()].filter((s) => s.stage === "mastered" || s.stage === "retained").map((s) => s.skillId);
+  };
+  const buildDay = useCallback(
+    async (opts: { anyway?: number } = {}) => {
+      if (!data) return;
+      setBuildError(null);
+      const { semester, records, mastery } = data;
+      const ctx = { semester, nowLocal: nowLocal(), attempts: mastery.attempts, reviews: mastery.reviews, records, now: Date.now() };
+      let list: BlockQuest[];
+      if (opts.anyway) {
+        // A block on a day the plan has no time for, because the student asked.
+        const exam = weeks?.exams.find((e) => e.status !== "needs_you");
+        const courseId = exam?.courseId ?? semester.courses[0]?.id;
+        if (!courseId) return;
+        const block: PlannedBlock = { key: `extra:${courseId}:${today}`, kind: exam ? "exam" : "new", courseId, minutes: opts.anyway, day: today, rank: 6, tone: exam ? "exam" : "plain", examKeys: exam ? [exam.key] : [] };
+        list = questsForDay({ day: today, budget: opts.anyway, blocks: [block] }, ctx);
+      } else {
+        if (!plan) return;
+        list = questsForDay(plan, ctx);
+      }
+      if (!list.length) return;
+      const items: Building["items"] = list.map((x) => ({ key: x.block.key, quest: x.quest, status: {}, state: "waiting" }));
+      setBuilding({ items });
+      const known = knownSkillIds(mastery);
+      const feel = recentFeel(records, (id) => semester.skills.find((s) => s.id === id)?.name, today);
+      const mark = (key: string, patch: Partial<Building["items"][number]>) =>
+        setBuilding((b) => (b ? { items: b.items.map((i) => (i.key === key ? { ...i, ...patch } : i)) } : b));
+      for (const { block, quest: planned } of list) {
+        mark(block.key, { state: "writing" });
+        try {
+          const carried = carriedOver(records, planned);
+          if (carried.length) planned.notes.unshift(`Carried over from ${WEEKDAY(carried[0].from)}, when it wasn't finished: ${carried.map((c) => c.label).join(", ")}.`);
+          const writer = data.live ? claudeWriter(semester, planned, known, askClaude, undefined, feel) : sampleWriter(semester.skills);
+          const quest = await writeQuest(planned, writer, (s) => setBuilding((b) => (b ? { items: b.items.map((i) => (i.key === block.key ? { ...i, status: { ...i.status, [s.partId]: s } } : i)) } : b)));
+          const record = { quest, progress: emptyProgress(quest.id) };
+          await data.qs.saveRecord(record);
+          setData((d) => (d ? { ...d, records: [...d.records, record] } : d));
+          mark(block.key, { state: "done" });
+        } catch (e) {
+          mark(block.key, { state: "failed" });
+          setBuildError(`${courseName(block.courseId)} couldn't be prepared: ${message(e)}`);
+        }
+      }
+      setBuilding((b) => (b && b.items.every((i) => i.state === "done") ? null : b));
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, plan, weeks, today],
+  );
+
+  useEffect(() => {
+    if (!data || !plan || building || needsPlacement || autoBuilt.current === today) return;
+    if (!plan.blocks.some((b) => needsQuest(b) && !prefs.hidden.includes(b.key))) return;
+    autoBuilt.current = today;
+    void buildDay();
+  }, [data, plan, building, buildDay, needsPlacement, today, prefs.hidden]);
+
+  /** Sets today's unstarted blocks aside so the plan is written again (testing tool). */
+  const rebuildToday = async () => {
+    if (!data) return;
+    const records = await Promise.all(
+      data.records.map(async (r) => {
+        if (!recordOnDay(r, today) || r.quest.id === data.semester.placementQuestId || questStarted(r)) return r;
+        const next = { ...r, progress: { ...r.progress, replacedAt: Date.now(), updatedAt: Date.now() } };
+        await data.qs.saveRecord(next);
+        return next;
+      }),
+    );
+    autoBuilt.current = null;
+    setBuilding(null);
+    setData({ ...data, records });
+  };
 
   const restartSample = async () => {
     if (!data) return;
-    const semester = sampleSemester(toDay());
+    const semester = sampleSemester(toDay(), Date.now(), { more: true });
     await data.qs.saveSemester(semester);
+    autoBuilt.current = null;
     setData({ ...data, semester });
-    autoBuilt.current = true;
-    void build();
   };
 
   // Testing tools live in the sidebar's menu and arrive here as commands.
@@ -333,48 +545,234 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
   useEffect(() => {
     if (!command || !data || doneCommand.current === command.id) return;
     doneCommand.current = command.id;
-    if (command.kind === "build" && !(building && !buildError)) void build();
+    if (command.kind === "build" && !building) void rebuildToday();
     if (command.kind === "restart" && data.semester.source === "sample") void restartSample();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [command, data]);
 
-  if (loadError) return <div className="quest-page"><p className="quest-error">Your quests couldn't be loaded: {loadError}</p></div>;
+  // ---- moving a block: later today, tomorrow, or skipped ----
+  const tomorrow = addDays(today, 1);
+  const saveRec = async (r: QuestRecord, patch: Partial<QuestProgress>) => {
+    if (!data) return;
+    const next = { ...r, progress: { ...r.progress, ...patch, updatedAt: Date.now() } };
+    await data.qs.saveRecord(next);
+    setData((d) => (d ? { ...d, records: d.records.map((x) => (x.quest.id === next.quest.id ? next : x)) } : d));
+  };
+  const moveBlock = async (b: PlannedBlock, choice: LaterChoice) => {
+    if (choice === "later") return updatePrefs((p) => ({ ...p, later: { ...p.later, [b.key]: Date.now() } }));
+    const r = recordOf(b);
+    if (b.kind === "check" && r) {
+      const notBefore = { ...(r.progress.partsNotBefore ?? {}) };
+      for (const id of b.partIds ?? []) notBefore[id] = tomorrow;
+      return saveRec(r, { partsNotBefore: notBefore });
+    }
+    if (r && b.kind !== "fix") return saveRec(r, choice === "tomorrow" ? { deferredTo: tomorrow } : { skippedOn: today });
+    updatePrefs((p) => ({ ...p, hidden: [...p.hidden, b.key] }));
+  };
+  /** What moving a block does to its exam, from the plan with and without it. */
+  const impact = (b: PlannedBlock, choice: LaterChoice): string => {
+    if (!data || !weeks || !b.examKeys.length || !b.recordId) return choice === "skip" ? "Less today; the plan makes room for it later." : "";
+    const r = recordOf(b);
+    if (!r) return "";
+    const changed = data.records.map((x) => (x === r ? { ...x, progress: { ...x.progress, ...(choice === "tomorrow" ? { deferredTo: tomorrow } : { skippedOn: today }) } } : x));
+    const after = planDays({ semester: data.semester, today, nowLocal: `${today}T00:00`, attempts: data.mastery.attempts, reviews: data.mastery.reviews, records: changed, days: DAY_PLAN.horizonDays, calendarBusy: (d) => busyFromAhead(data.calendar, d) });
+    const was = weeks.exams.find((e) => e.key === b.examKeys[0]);
+    const now = after.exams.find((e) => e.key === b.examKeys[0]);
+    if (!was || !now) return "";
+    const say = { on_track: "on track", tight: "tight", behind: "behind", needs_you: "waiting for you" } as const;
+    return was.status === now.status ? `${courseName(b.courseId)} stays ${say[now.status]}.` : `${courseName(b.courseId)} goes from ${say[was.status]} to ${say[now.status]}.`;
+  };
+  const laterOptions = (b: PlannedBlock) => {
+    const dueTomorrowMorning = !!b.dueAt && daysBetween(today, b.dueAt.slice(0, 10)) <= 1 && b.dueAt.slice(11, 16) < DAY_PLAN.morningDue;
+    const out: Array<{ choice: LaterChoice; label: string; note: string; disabled?: boolean }> = [{ choice: "later", label: "Later today", note: "After your other blocks" }];
+    if (b.kind !== "fix") out.push({ choice: "tomorrow", label: "Tomorrow", note: dueTomorrowMorning ? `${dueLine(b.dueAt!, today)}: tomorrow is too late.` : impact(b, "tomorrow"), disabled: dueTomorrowMorning });
+    out.push({ choice: "skip", label: "Skip today", note: b.kind === "fix" ? "The mistakes wait in the review." : impact(b, "skip") });
+    return out;
+  };
+
+  if (loadError) return <div className="quest-page"><p className="quest-error">Your plan couldn't be loaded: {loadError}</p></div>;
   if (needsSetup)
     return (
       <div className="quest-page">
         <section className="setup-card setup-welcome">
           <p className="quest-kicker">Welcome to StudyDesk</p>
           <h1>Set up your semester first</h1>
-          <p>StudyDesk builds a quest for you every day, around your real courses, homework and exams. For that it needs a short setup: your courses, the grade you're aiming for in each, and how much time you have. About ten minutes, saved as you go.</p>
+          <p>StudyDesk plans each day around your courses, exams and free time. It needs your courses, a target grade for each, and how much you want to study. It takes about ten minutes, in a chat.</p>
           <div className="setup-actions">
-            <button type="button" className="link-btn" onClick={() => load(true)}>
-              Look around with sample data first
-            </button>
             <button type="button" className="mini-btn primary big" onClick={onStartSetup}>
-              Set up your semester
+              Set up my semester
+            </button>
+            <button type="button" className="link-btn" onClick={() => load(true)}>
+              Look around with a sample semester first
             </button>
           </div>
         </section>
       </div>
     );
-  if (!data) return <div className="quest-page"><p className="quest-muted">Loading today's quest…</p></div>;
+  if (!data || !plan || !line || !weeks) return <div className="quest-page"><p className="quest-muted">Loading your day…</p></div>;
+
+  const updateRecord = (r: QuestRecord) => setData((d) => (d ? { ...d, records: d.records.map((x) => (x.quest.id === r.quest.id ? r : x)) } : d));
+  const updateMastery = (m: MasteryData) => setData((d) => (d ? { ...d, mastery: m } : d));
+
+  // ---- one block, opened ----
+  const opened = openKey ? line.blocks.find((x) => x.block.key === openKey) ?? null : null;
+  if (openKey && opened) {
+    const b = opened.block;
+    const v = views.get(b.key);
+    const r = recordOf(b);
+    openRecordId.current = r?.quest.id ?? null;
+    const after = line.blocks.filter((x) => x.status !== "done" && x.block.key !== b.key);
+    const nextUp = after[0] ?? null;
+    const next = nextUp ? { label: `Next: ${courseName(nextUp.block.courseId)}${nextUp.start !== null ? ` at ${hhmm(nextUp.start)}` : ""}`, open: () => setOpenKey(nextUp.block.key) } : null;
+    return (
+      <div className="quest-page" ref={scroller} data-select-scope="">
+        <div className="back-now">
+          <button type="button" className="link-btn" onClick={() => setOpenKey(null)}>
+            ← Now
+          </button>
+        </div>
+        {b.kind === "fix" && review ? (
+          <section className="quest">
+            <header className="quest-head">
+              <p className="quest-kicker">
+                {courseName(review.record.quest.courseId)} · Mistake review · {WEEKDAY(review.record.quest.date)}
+              </p>
+              <h1>{v?.title ?? "Mistake review"}</h1>
+              <p className="quest-reason">
+                <strong>How it works:</strong> explain your step first; when you're stuck you get the idea from the start, then one fresh problem of your own. A mistake counts as understood once you solve that problem alone.
+              </p>
+            </header>
+            <div className="review-chat">
+              <ChatView
+                key={review.record.quest.id}
+                initial={data.reviewChats[review.record.quest.id] ?? newReviewChat(review.record.quest, review.mistakes)}
+                rules={reviewRules(review.mistakes, courseName(review.record.quest.courseId), data.semester.courses.find((c) => c.id === review.record.quest.courseId)?.teachingLanguage ?? "English")}
+                placeholder="Answer here, or paste a photo of your working"
+                save={async (chat) => {
+                  setData((d) => (d ? { ...d, reviewChats: { ...d.reviewChats, [review.record.quest.id]: chat } } : d));
+                  await data.qs.saveReviewChat(review.record.quest.id, chat);
+                  // A passed check question resolves the mistake and counts for the skill.
+                  const res = applyChecks(review.mistakes, checkResults(chat), data.mastery.reviews, review.record.quest.id, toDay(), Date.now());
+                  if (!res.attempts.length && !res.reviews.length) return;
+                  await data.ms.appendAttempts(res.attempts);
+                  for (const rv of res.reviews) await data.ms.putReview(rv);
+                  setData((d) =>
+                    d
+                      ? {
+                          ...d,
+                          mastery: {
+                            ...d.mastery,
+                            attempts: [...d.mastery.attempts, ...res.attempts.filter((a) => !d.mastery.attempts.some((x) => x.id === a.id))],
+                            reviews: d.mastery.reviews.map((rv) => res.reviews.find((u) => u.attemptId === rv.attemptId) ?? rv),
+                          },
+                        }
+                      : d,
+                  );
+                }}
+                onSaveError={() => {}}
+              />
+            </div>
+          </section>
+        ) : r ? (
+          <QuestView
+            key={`${r.quest.id}:${b.partIds?.join(",") ?? ""}`}
+            record={r}
+            data={data}
+            scroller={scroller}
+            onlyParts={b.kind === "check" ? b.partIds : undefined}
+            title={b.kind === "check" ? `${courseName(b.courseId)}: where you stand` : v?.title}
+            why={whyLine(b, today, data.semester)}
+            next={next}
+            onBack={() => setOpenKey(null)}
+            onRecord={updateRecord}
+            onMastery={updateMastery}
+          />
+        ) : (
+          <section className="quest-building" aria-live="polite">
+            <h2>Preparing {courseName(b.courseId)}</h2>
+            <p className="quest-muted">{v?.reason}</p>
+            <ol>
+              {(pending.get(b.key)?.quest.parts ?? []).map((p, i) => {
+                const st = pending.get(b.key)?.status[p.id]?.state ?? "waiting";
+                return (
+                  <li key={p.id} className={`b-${st}`}>
+                    Part {i + 1} · {kindLabel(p)}: {p.title}
+                    <span>{st === "done" ? "ready" : st === "failed" ? "failed" : st === "waiting" ? "waiting" : "writing…"}</span>
+                  </li>
+                );
+              })}
+            </ol>
+          </section>
+        )}
+      </div>
+    );
+  }
+  openRecordId.current = null;
+
+  // ---- the day ----
+  const nowItem = line.now;
+  const nowView = nowItem ? views.get(nowItem.block.key) ?? null : null;
+  const doneCount = line.blocks.filter((b) => b.status === "done").length;
+  const dayOff = !!data.semester.daysOff?.includes(today);
+  const nowMin = minuteOf(clock);
+  const dateLine = clock.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }).toUpperCase();
+  let headline: string;
+  let context: string;
+  if (needsPlacement) {
+    headline = "Your semester is set up";
+    context = "First, a short placement check, a couple of courses a day, so StudyDesk knows where you stand.";
+  } else if (dayOff) {
+    headline = "Day off today. Enjoy it.";
+    context = "Nothing is planned. Reviews move to your next study day.";
+  } else if (!line.blocks.length) {
+    headline = plan.budget > 0 ? "Nothing is due today" : "No study time planned today";
+    context = plan.budget > 0 ? "No homework, reviews or exam prep are waiting." : `Your study goal for ${WEEKDAY(today)} leaves no time after school.`;
+  } else if (!nowItem) {
+    headline = "Done for today. The evening is yours.";
+    context = `${doneCount} ${doneCount === 1 ? "block" : "blocks"} done.${data.nightly ? ` Graded tonight at ${data.nightlyTime}.` : ""}`;
+  } else if (line.schoolEnd !== null && nowMin < line.schoolEnd && nowItem.start !== null) {
+    headline = `School until ${hhmm(line.schoolEnd)}. Your first block is at ${hhmm(nowItem.start)}.`;
+    context = `${line.blocks.length - doneCount} ${line.blocks.length - doneCount === 1 ? "block" : "blocks"} today, ${duration(line.plannedLeft)} in all.`;
+  } else {
+    const left = line.blocks.length - doneCount;
+    headline = line.doneBy !== null ? `${left} ${left === 1 ? "block" : "blocks"} left today. You're done by ${hhmm(line.doneBy)}.` : `${left} ${left === 1 ? "block" : "blocks"} left today.`;
+    context = `You have about ${duration(line.freeLeft)} free until 21:30. StudyDesk planned ${duration(line.plannedLeft)} of it and kept the rest for you.`;
+  }
+
+  const { top: questions, waiting } = quickQuestions(data.draft, data.semester.keyDates, today);
+  const graded = data.mastery.attempts.filter((a) => a.part !== "assessment" && a.gradedAt > clock.getTime() - 20 * 3_600_000);
+  const lastNight = graded.length
+    ? {
+        solved: graded.filter((a) => a.verdict === "solved").length,
+        slips: graded.filter((a) => a.verdict === "slip").length,
+        missed: graded.filter((a) => a.verdict === "not_understood").length,
+      }
+    : null;
+  const examsAhead = weeks.exams.filter((e) => e.date >= today);
+  const tooLittle = weeks.leftOut.length > 0 && weeks.neededPerDay > weeks.budgetPerDay * 1.15;
+  const tell = (text: string) => passOn({ text, where: "Now", by: "student" });
 
   return (
-    <div className="quest-page" ref={scroller} data-select-scope="">
-      {!data.live && (
-        <p className="quest-banner">Preview mode: no Claude here, so quests use sample text and a stand-in grader (an empty answer is "not yet", an answer with the word "typo" is a slip).</p>
-      )}
-
+    <div className="quest-page now-page" ref={scroller} data-select-scope="">
+      {!data.live && <p className="quest-banner">Preview mode: no Claude here, so blocks use sample text and a stand-in grader (an empty answer is "not yet", an answer with the word "typo" is a slip).</p>}
       {leftovers && <p className="quest-banner">{leftovers}</p>}
+
+      <header className="now-head">
+        <p className="quest-kicker">
+          {dateLine} · {hhmm(nowMin)}
+        </p>
+        <h1>{headline}</h1>
+        <p className="now-context">{context}</p>
+      </header>
 
       {needsPlacement && (
         <section className="setup-card setup-welcome">
           <p className="quest-kicker">{data.semester.name}</p>
-          <h1>Your semester is set up</h1>
-          <p>Your first quest is a placement check: it finds out where you stand, so StudyDesk can plan the right amount each day.</p>
+          <h2>Start with a placement check</h2>
+          <p>One short problem per skill, a couple of courses a day, nearest exam first. A gap only tells StudyDesk where to start.</p>
           <div className="setup-actions">
             <button type="button" className="mini-btn primary big" onClick={onStartSetup}>
-              Start the placement check
+              Prepare the placement check
             </button>
           </div>
         </section>
@@ -394,172 +792,146 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
         />
       )}
 
-      {review && (
-        <section className="review-card">
-          <button type="button" className="ov-row review-row" aria-expanded={reviewOpen} onClick={() => setReviewOpen((o) => !o)}>
-            <span className="ov-mark review-mark" aria-hidden="true">
-              !
-            </span>
-            <span className="ov-main">
-              <span className="ov-kind">Mistake review · {WEEKDAY(review.record.quest.date)}</span>
-              <span className="ov-title">
-                {review.mistakes.length} {review.mistakes.length === 1 ? "mistake" : "mistakes"} to understand
-              </span>
-            </span>
-            <span className="ov-status">
-              {review.mistakes.filter((m) => isResolved(m, data.mastery.reviews)).length} of {review.mistakes.length} understood
-            </span>
-            <svg className="ov-chev" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+      {tooLittle && (
+        <section className="room-card" aria-label="Not enough time">
+          <p>
+            <strong>Your study time is too short for what's coming.</strong> Homework and prep for {examsAhead.length} {examsAhead.length === 1 ? "exam" : "exams"} in the next four weeks need about {duration(weeks.neededPerDay)} per study day; your study goal gives about {duration(weeks.budgetPerDay)}.
+          </p>
+          <button
+            type="button"
+            className="mini-btn dark"
+            onClick={() => tell(`Please raise my study goal so StudyDesk can plan about ${weeks.neededPerDay} minutes of study blocks per study day until my exams are over.`)}
+          >
+            Plan about {duration(weeks.neededPerDay)} a day
           </button>
-          {reviewOpen && (
-            <div className="review-chat">
-              <ChatView
-                key={review.record.quest.id}
-                initial={data.reviewChats[review.record.quest.id] ?? newReviewChat(review.record.quest, review.mistakes)}
-                rules={reviewRules(
-                  review.mistakes,
-                  data.semester.courses.find((c) => c.id === review.record.quest.courseId)?.name ?? "",
-                  data.semester.courses.find((c) => c.id === review.record.quest.courseId)?.teachingLanguage ?? "English",
-                )}
-                placeholder="Answer here, or paste a photo of your working"
-                save={async (chat) => {
-                  setData((d) => (d ? { ...d, reviewChats: { ...d.reviewChats, [review.record.quest.id]: chat } } : d));
-                  await data.qs.saveReviewChat(review.record.quest.id, chat);
-                  // A passed check question resolves the mistake and counts for the skill.
-                  const res = applyChecks(review.mistakes, checkResults(chat), data.mastery.reviews, review.record.quest.id, toDay(), Date.now());
-                  if (!res.attempts.length && !res.reviews.length) return;
-                  await data.ms.appendAttempts(res.attempts);
-                  for (const r of res.reviews) await data.ms.putReview(r);
-                  setData((d) =>
-                    d
-                      ? {
-                          ...d,
-                          mastery: {
-                            ...d.mastery,
-                            attempts: [...d.mastery.attempts, ...res.attempts.filter((a) => !d.mastery.attempts.some((x) => x.id === a.id))],
-                            reviews: d.mastery.reviews.map((r) => res.reviews.find((u) => u.attemptId === r.attemptId) ?? r),
-                          },
-                        }
-                      : d,
-                  );
-                }}
-                onSaveError={() => {}}
-              />
-            </div>
-          )}
         </section>
       )}
 
-      {current && !currentDone && !building ? (
-        <QuestView
-          key={current.quest.id}
-          record={current}
-          data={data}
-          scroller={scroller}
-          extra={<ComingUp semester={data.semester} today={today} />}
-          onRecord={(r) => setData((d) => (d ? { ...d, records: d.records.map((x) => (x.quest.id === r.quest.id ? r : x)) } : d))}
-          onMastery={(m) => setData((d) => (d ? { ...d, mastery: m } : d))}
-        />
-      ) : current && currentDone && !building ? (
-        <section className="quest-empty">
-          <h2>Today's quest is done</h2>
-          <p className="quest-muted">It's in the archive below{review?.record === current ? ", and the mistake review above goes through what went wrong" : ""}. Tomorrow's quest builds on today's results.</p>
-          <ComingUp semester={data.semester} today={today} />
-        </section>
-      ) : building ? (
-        <section className="quest-building" aria-live="polite">
-          <h2>Writing today's quest</h2>
-          <p className="quest-muted">{building.plan.reason}</p>
-          <ol>
-            {building.plan.parts.map((p, i) => {
-              const st = building.status[p.id]?.state ?? "waiting";
-              return (
-                <li key={p.id} className={`b-${st}`}>
-                  Part {i + 1} · {kindLabel(p)}: {p.title}
-                  <span>{st === "done" ? "ready" : st === "failed" ? "failed" : st === "waiting" ? "waiting" : "writing…"}</span>
-                </li>
-              );
-            })}
-          </ol>
+      <div className="now-grid">
+        <div className="now-main">
+          {nowItem && nowView ? (
+            <NowCard
+              view={nowView}
+              item={nowItem}
+              nightly={data.nightlyTime}
+              onStart={() => setOpenKey(nowItem.block.key)}
+              onLater={(c) => void moveBlock(nowItem.block, c)}
+              laterOptions={laterOptions(nowItem.block)}
+            />
+          ) : (
+            !needsPlacement && (
+              <section className="quest-empty">
+                <h2>{line.blocks.length ? "That's today" : dayOff ? "Rest" : "Nothing planned"}</h2>
+                <p className="quest-muted">
+                  {line.blocks.length ? "Everything you handed in is graded tonight, and tomorrow's plan builds on it." : "Want to get ahead anyway? StudyDesk picks the course with the nearest exam."}
+                </p>
+                {!line.blocks.length && (
+                  <button type="button" className="mini-btn primary" disabled={!!building} onClick={() => void buildDay({ anyway: QUEST_CONFIG.restDayMinutes })}>
+                    Give me a {QUEST_CONFIG.restDayMinutes}-minute block anyway
+                  </button>
+                )}
+              </section>
+            )
+          )}
           {buildError && (
             <div className="quest-error">
               <p>{buildError}</p>
-              <button type="button" className="mini-btn primary" onClick={() => void build(building.plan.budgetMinutes)}>
+              <button
+                type="button"
+                className="mini-btn primary"
+                onClick={() => {
+                  setBuilding(null);
+                  void buildDay();
+                }}
+              >
                 Try again
               </button>
             </div>
           )}
-        </section>
-      ) : planNotice ? (
-        <section className="quest-empty">
-          {planNotice.kind === "no_time" ? (
-            <>
-              <h2>No quest today</h2>
-              <p>Your study goal for {WEEKDAY(today)} is {planNotice.goalMinutes} min{planNotice.goalMinutes ? " and your lectures fill it" : ""}, so there's no quest. Enjoy the day off.</p>
-            </>
-          ) : (
-            <>
-              <h2>Nothing is due</h2>
-              <p>No homework, reviews or new skills are waiting in this course right now.</p>
-            </>
+
+          {line.items.length > 0 && (
+            <section className="now-today" aria-label="Today">
+              <div className="now-today-head">
+                <h3 className="section-label">Today</h3>
+                <span className="quest-muted">
+                  {duration(line.blocks.reduce((s, b) => s + b.block.minutes, 0))} planned{plan.budget ? ` · study goal leaves ${duration(plan.budget)}` : ""}
+                </span>
+              </div>
+              <Timeline items={line.items} views={views} now={nowMin} onOpen={(k) => setOpenKey(k)} freeNote="The first hour after school stays free." />
+            </section>
           )}
-          <button type="button" className="mini-btn primary" onClick={() => void build(QUEST_CONFIG.restDayMinutes)}>
-            Give me a {QUEST_CONFIG.restDayMinutes}-minute quest anyway
-          </button>
-        </section>
-      ) : (
-        <p className="quest-muted">Getting today's quest ready…</p>
-      )}
+        </div>
+
+        <aside className="now-rail" aria-label="Coming up and questions">
+          <ExamRail
+            exams={examsAhead}
+            today={today}
+            courseName={courseName}
+            onWeek={onOpenWeek}
+            onNeedsYou={(e) => window.dispatchEvent(new CustomEvent("studydesk:ask", { detail: { quote: `${courseName(e.courseId)}: ${e.label} on ${shortDate(e.date)}. StudyDesk has no material for it yet.` } }))}
+          />
+          <QuickAnswers
+            questions={questions.map((q) => ({ key: q.key, course: q.course, text: q.text, impact: q.impact }))}
+            waiting={waiting}
+            onSeeAll={onOpenTodo}
+            onAnswer={(q, a) => tell(`${q.course}, a question from the to-do list: “${q.text}” My answer: ${a}`)}
+          />
+          {lastNight && (
+            <RailNote label="Last night">
+              <p className="rail-text">
+                Graded {lastNight.solved + lastNight.slips + lastNight.missed} {lastNight.solved + lastNight.slips + lastNight.missed === 1 ? "problem" : "problems"}: <strong>{lastNight.solved} solved</strong>
+                {lastNight.slips ? `, ${lastNight.slips} ${lastNight.slips === 1 ? "slip" : "slips"}` : ""}
+                {lastNight.missed ? `, ${lastNight.missed} not understood yet` : ""}.
+              </p>
+              {openMistakes > 0 && <p className="rail-foot">The mistakes are today's first block.</p>}
+            </RailNote>
+          )}
+        </aside>
+      </div>
 
       {archive.length > 0 && (
-        <section className="archive" aria-label="Done quests">
-          <h2 className="archive-h">Done quests</h2>
+        <section className="archive" aria-label="Earlier blocks">
+          <h2 className="archive-h">Earlier blocks</h2>
           <div className="overview">
-            {archive.map((r) => {
+            {(showAllArchive ? archive : archive.slice(0, 8)).map((r) => {
               const isOpen = openArchived === r.quest.id;
-              const course = data.semester.courses.find((c) => c.id === r.quest.courseId);
               const probs = r.quest.parts.flatMap((p) => (p.kind === "learn" ? [] : p.problems));
               const pts = probs.reduce((s, p) => s + (r.progress.work[p.id]?.points ?? 0), 0);
               const max = probs.reduce((s, p) => s + p.maxPoints, 0);
-              const graded = isFinished(r.quest, r.progress);
+              const isGraded = isFinished(r.quest, r.progress);
               return (
                 <div key={r.quest.id} className={"ov-part" + (isOpen ? " is-open" : "")}>
                   <button type="button" className="ov-row is-done" aria-expanded={isOpen} onClick={() => setOpenArchived(isOpen ? null : r.quest.id)}>
-                    <span className={"ov-mark " + (graded ? "graded" : "done")} aria-hidden="true">
-                      {graded ? "✓" : ""}
+                    <span className={"ov-mark " + (isGraded ? "graded" : "done")} aria-hidden="true">
+                      {isGraded ? "✓" : ""}
                     </span>
                     <span className="ov-main">
                       <span className="ov-kind">
-                        {WEEKDAY(r.quest.date)} {r.quest.date.slice(5).replace("-", "/")} · {r.quest.parts.some((p) => p.kind !== "learn" && p.check) ? "Placement check" : course?.name}
+                        {WEEKDAY(r.quest.date)} {r.quest.date.slice(5).replace("-", "/")} · {r.quest.id === data.semester.placementQuestId ? "Placement check" : courseName(r.quest.courseId)}
                       </span>
                       <span className="ov-title">{r.quest.reason}</span>
                     </span>
-                    <span className="ov-status">{graded ? `${pts}/${max}` : "Not finished"}</span>
+                    <span className="ov-status">{isGraded ? `${pts}/${max}` : r.progress.skippedOn ? "Skipped" : "Not finished"}</span>
                     <svg className="ov-chev" viewBox="0 0 16 16" aria-hidden="true">
                       <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </button>
                   {isOpen && (
                     <div className="archive-body">
-                      <QuestView
-                        key={r.quest.id}
-                        record={r}
-                        data={data}
-                        scroller={scroller}
-                        onRecord={(x) => setData((d) => (d ? { ...d, records: d.records.map((y) => (y.quest.id === x.quest.id ? x : y)) } : d))}
-                        onMastery={(m) => setData((d) => (d ? { ...d, mastery: m } : d))}
-                      />
+                      <QuestView key={r.quest.id} record={r} data={data} scroller={scroller} onRecord={updateRecord} onMastery={updateMastery} />
                     </div>
                   )}
                 </div>
               );
             })}
           </div>
+          {archive.length > 8 && !showAllArchive && (
+            <button type="button" className="link-btn" onClick={() => setShowAllArchive(true)}>
+              Show all {archive.length}
+            </button>
+          )}
         </section>
       )}
-
     </div>
   );
 }
@@ -572,12 +944,16 @@ type ViewProps = {
   scroller: React.RefObject<HTMLDivElement>;
   onRecord: (r: QuestRecord) => void;
   onMastery: (m: MasteryData) => void;
-  /** Shown under the quest's header (Coming up). */
-  extra?: React.ReactNode;
+  /** Show only these parts (a placement check block: one course's part). */
+  onlyParts?: string[];
+  /** The block's title, when it isn't the course's name. */
+  title?: string;
+  /** Why this block is in the day: "Due tomorrow 08:00", "Klausur in 9 days". */
+  why?: string;
+  /** The next block of the day, offered once this one is handed in. */
+  next?: { label: string; open: () => void } | null;
+  onBack?: () => void;
 };
-
-const KIND = { learn: "Learn", lesson: "Learn & try", practice: "Practice", assignment: "Homework" } as const;
-const kindLabel = (p: QuestPart) => (p.kind !== "learn" && p.check ? "Placement check" : KIND[p.kind]);
 
 const NOTE_RULES = `You are StudyDesk, a study assistant for high school and university students.
 The student is working through today's study quest and highlighted a passage in it to ask about.
@@ -591,7 +967,7 @@ const HOMEWORK_RULE = `
 - This passage belongs to real homework the student hasn't handed in yet. Guide with a question or the principle behind it; never give the answer or a finished step.`;
 
 
-function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewProps) {
+function QuestView({ record, data, scroller, onRecord, onMastery, onlyParts, title, why, next, onBack }: ViewProps) {
   const { quest } = record;
   // The header shows only "Why today"; the extra notes open on request.
   const [notesOpen, setNotesOpen] = useState(false);
@@ -835,7 +1211,7 @@ ${b?.text ?? ""}
 
   const handInPart = (part: QuestPart) => {
     if (part.kind !== "learn" && activeId && part.problems.some((p) => p.id === activeId)) setActiveId(null);
-    commit((p) => ({ ...p, handedIn: [...p.handedIn.filter((x) => x !== part.id), part.id], updatedAt: Date.now() }));
+    commit((p) => ({ ...p, handedIn: [...p.handedIn.filter((x) => x !== part.id), part.id], handedInOn: { ...(p.handedInOn ?? {}), [part.id]: toDay() }, updatedAt: Date.now() }));
     setOpenPart(null);
     requestAnimationFrame(() => document.getElementById(`row-${part.id}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
   };
@@ -880,7 +1256,9 @@ ${b?.text ?? ""}
   // ---- rendering ----
   const nl = nowLocal();
   const spentSeconds = Object.values(progress.work).reduce((s, w) => s + (w.activeSeconds || 0), 0);
-  const doneCount = quest.parts.filter((p) => progress.handedIn.includes(p.id)).length;
+  const shownParts = onlyParts ? quest.parts.filter((p) => onlyParts.includes(p.id)) : quest.parts;
+  const doneCount = shownParts.filter((p) => progress.handedIn.includes(p.id)).length;
+  const blockDone = shownParts.length > 0 && doneCount === shownParts.length;
   const waiting = ungraded(quest, progress).length;
   const everythingIn = allHandedIn(quest, progress);
 
@@ -1049,11 +1427,12 @@ ${b?.text ?? ""}
     <div className="quest">
       <header className="quest-head">
         <p className="quest-kicker">
-          {WEEKDAY(quest.date)} · {quest.parts.some((p) => p.kind !== "learn" && p.check) ? "Placement check" : course?.name} · about {quest.plannedMinutes} min
+          {WEEKDAY(quest.date)} · {quest.parts.some((p) => p.kind !== "learn" && p.check) ? "Placement check" : course?.name} · about {shownParts.reduce((s, p) => s + partMinutes(p), 0)} min
+          {why ? ` · ${why}` : ""}
         </p>
-        <h1>Today's quest</h1>
+        <h1>{title ?? (quest.block ? course?.name ?? "This block" : "Today's quest")}</h1>
         <p className="quest-reason">
-          <strong>Why today:</strong> {quest.reason}
+          <strong>{quest.block ? "Why now:" : "Why today:"}</strong> {quest.reason}
         </p>
         {quest.notes.length > 0 &&
           (notesOpen ? (
@@ -1064,17 +1443,15 @@ ${b?.text ?? ""}
             ))
           ) : (
             <button type="button" className="link-btn quest-more" onClick={() => setNotesOpen(true)}>
-              More about this quest
+              More about this {quest.block ? "block" : "quest"}
             </button>
           ))}
       </header>
 
-      {extra}
-
       {errors.save && <p className="quest-error">{errors.save}</p>}
 
-      <section className="overview" aria-label="Today's parts">
-        {quest.parts.map((part, i) => {
+      <section className="overview" aria-label="This block's parts">
+        {shownParts.map((part, i) => {
           const st = status(part);
           const isOpen = openPart === part.id;
           return (
@@ -1101,8 +1478,8 @@ ${b?.text ?? ""}
 
         <div className="ov-foot">
           <span className="ov-count">
-            {doneCount} of {quest.parts.length} done
-            {spentSeconds > 0 && <> · {clock(spentSeconds)} worked</>}
+            {doneCount} of {shownParts.length} done
+            {spentSeconds > 0 && <> · {clockText(spentSeconds)} worked</>}
           </span>
           {waiting > 0 || grading ? (
             <button type="button" className="mini-btn primary big" disabled={grading} onClick={() => void gradeNow()}>
@@ -1121,6 +1498,26 @@ ${b?.text ?? ""}
           {errors.grade && <p className="quest-error">{errors.grade}</p>}
         </div>
       </section>
+
+      {blockDone && !progress.finishedAt && (next || onBack) && (
+        <section className="block-done" aria-live="polite">
+          <p>
+            <strong>This block is done.</strong> {data.nightly ? "It's graded tonight with the rest of today." : "Press the button above to grade it, or it's graded the next time you open StudyDesk."}
+          </p>
+          <div className="block-done-actions">
+            {next && (
+              <button type="button" className="mini-btn primary big" onClick={next.open}>
+                {next.label}
+              </button>
+            )}
+            {onBack && (
+              <button type="button" className="mini-btn big" onClick={onBack}>
+                Back to Now
+              </button>
+            )}
+          </div>
+        </section>
+      )}
 
       {progress.finishedAt && <Summary quest={quest} progress={progress} mastery={mastery} spentSeconds={spentSeconds} semester={semester} />}
 
@@ -1153,7 +1550,7 @@ function Summary({ quest, progress, mastery, spentSeconds, semester }: { quest: 
       </p>
       {solved === 0 && <p>Nothing was solved yet, so there's nothing to reward. The mistake review at the top goes through it with you.</p>}
       <p>
-        Active time {clock(spentSeconds)} against a plan of about {quest.plannedMinutes} min. These times train your estimates, so tomorrow's quest fits better.
+        Active time {clockText(spentSeconds)} against a plan of about {quest.plannedMinutes} min. These times train your estimates, so tomorrow's quest fits better.
       </p>
       {pendingSlips > 0 && <p className="part-note is-warn">Open the parts marked with a slip and answer the question there, so your streaks count correctly.</p>}
       <table className="summary-table">

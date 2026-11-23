@@ -1347,7 +1347,7 @@ function Done({ env, draft, onDone, setEnv, today, update }: StepProps) {
       {error && <p className="quest-error">{error}</p>}
       <Actions>
         <button type="button" className="mini-btn primary big" disabled={!semester || !!building} onClick={() => void start()}>
-          {semester?.placementQuestId ? "Open your quests" : "Start my placement check"}
+          {semester?.placementQuestId ? "Open Now" : "Prepare my placement check"}
         </button>
       </Actions>
     </div>
@@ -1370,7 +1370,11 @@ function TodoList({ draft, md, update, onStart }: StepProps & { onStart: () => v
     }));
   const startInChat = (item: TodoItem) => {
     const msg: SetupMessage = { id: uid(), role: "assistant", text: item.chatPrompt, createdAt: Date.now() };
-    update((d) => ({ ...d, chat: [...(d.chat ?? []), msg] }));
+    // Pressing it again (or another tab doing it) doesn't post the same questions twice.
+    update((d) => {
+      const last = [...(d.chat ?? [])].reverse().find((m) => m.role === "assistant" && !m.error);
+      return last?.text === item.chatPrompt ? d : { ...d, chat: [...(d.chat ?? []), msg] };
+    });
     setOpenKey(item.key);
     onStart();
     setTimeout(() => (document.querySelector(".setup-composer textarea") as HTMLTextAreaElement | null)?.focus(), 80);

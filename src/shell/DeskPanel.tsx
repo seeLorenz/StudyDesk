@@ -9,8 +9,17 @@ import { openOnboardingStore, type StorageUsage } from "../platform/onboardingSt
 import { describeCounts, fmtMB } from "../lib/keep";
 import { LeftoversNotice } from "./LeftoversNotice";
 import type { Semester } from "../quests/types";
-import { askAboutItem } from "./ComingUp";
-import { countdown, upcoming } from "./upcoming";
+import { countdown, upcoming, type UpcomingItem } from "./upcoming";
+
+const KIND = { homework: "Hand-in", exam: "Exam", quiz: "Quiz" } as const;
+
+/** Opens the StudyDesk chat with the item quoted, so the student can correct it. */
+function askAboutItem(i: UpcomingItem) {
+  const d = new Date(`${i.date}T12:00`);
+  const day = d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+  const quote = `${KIND[i.kind]}: ${i.courseName}, ${i.title}, ${i.time ? `${day} · ${i.time}` : day}`;
+  window.dispatchEvent(new CustomEvent("studydesk:ask", { detail: { quote } }));
+}
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const FILES_SHOWN = 8;
@@ -25,7 +34,7 @@ function hours(min: number) {
 }
 
 /**
- * The Organize page's right side: everything StudyDesk knows about the
+ * The Courses page: everything StudyDesk knows about the
  * semester, to look at and check. Changes go through the chat beside it.
  */
 export function DeskPanel({ onOpenSetup }: { onOpenSetup: () => void }) {
@@ -97,7 +106,7 @@ export function DeskPanel({ onOpenSetup }: { onOpenSetup: () => void }) {
           {semester.source === "sample" ? "Set up your semester" : "Setup sheet"}
         </button>
       </header>
-      {semester.source === "sample" && <p className="quest-banner">This is sample data (Calculus 1). Setting up your semester replaces it with your real courses.</p>}
+      {semester.source === "sample" && <p className="quest-banner">This is sample data. Setting up your semester replaces it with your real courses.</p>}
 
       <section className="desk-section" aria-label="Courses">
         <h3 className="section-label">Courses</h3>

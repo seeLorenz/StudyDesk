@@ -249,7 +249,14 @@ export function busyMinutesFromEvents(events: CalendarEvent[], day: Day): number
  * reach the calendar (scheduled tasks have no connectors), so it sizes
  * tomorrow's quest from this, the latest read, instead of a setup-time copy.
  */
-export type CalendarAhead = { readAt: number; from: Day; days: number; busy: Record<Day, number> };
+export type CalendarAhead = {
+  readAt: number;
+  from: Day;
+  days: number;
+  busy: Record<Day, number>;
+  /** The timed events per day, so study blocks go around them (design/day-plan.md). Absent on reads from before the day plan. */
+  spans?: Record<Day, Array<{ start: string; end: string; title: string }>>;
+};
 export const CALENDAR_AHEAD_DAYS = 14;
 /** Read again when the last read is older than this. */
 export const CALENDAR_REFRESH_MS = 3 * 60 * 60 * 1000;
@@ -257,11 +264,21 @@ export const CALENDAR_REFRESH_MS = 3 * 60 * 60 * 1000;
 /** Pure: busy minutes for each of `days` days from `from`. */
 export function aheadFromEvents(events: CalendarEvent[], from: Day, days: number, readAt: number): CalendarAhead {
   const busy: Record<Day, number> = {};
+  const spans: NonNullable<CalendarAhead["spans"]> = {};
   for (let i = 0; i < days; i++) {
     const d = addDays(from, i);
     busy[d] = busyMinutesFromEvents(events, d);
+    spans[d] = events
+      .filter((e) => e.date === d && e.start && e.end && e.end > e.start)
+      .map((e) => ({ start: e.start!, end: e.end!, title: e.title.slice(0, 80) }))
+      .sort((a, b) => (a.start < b.start ? -1 : 1));
   }
-  return { readAt, from, days, busy };
+  return { readAt, from, days, busy, spans };
+}
+
+/** Pure: the calendar's timed events on `day`, from the last read; empty when it doesn't cover the day. */
+export function spansFromAhead(ahead: CalendarAhead | null | undefined, day: Day): Array<{ start: string; end: string; title: string }> {
+  return ahead?.spans?.[day] ?? [];
 }
 
 /** Pure: the calendar's busy minutes on `day`, or undefined when the last read doesn't cover it. */
