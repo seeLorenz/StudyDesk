@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { anchorFromRange, passageContext, type Anchor } from "../lib/highlight";
 import { InputBox } from "./InputBox";
 import type { PendingAttachment } from "../lib/files";
@@ -104,7 +105,10 @@ export function SelectionReply({ scope, disabled, onAsk }: Props) {
   const below = asking || coarse || r.top < 72;
   const style: React.CSSProperties = below ? { left, top: r.bottom + 10, width } : { left, bottom: window.innerHeight - r.top + 10, width };
 
-  return (
+  // Rendered on <body>: a page wrapper with a transform (e.g. the quest page's
+  // fade-in) would otherwise pin this "fixed" box to itself instead of the
+  // screen, so on a scrolled page the question box opened out of sight.
+  return createPortal(
     <div className={"sel-pop" + (asking ? " is-asking" : "")} style={style} ref={boxRef} role="dialog" aria-label="Ask about the selected text">
       {asking ? (
         <InputBox
@@ -148,6 +152,7 @@ export function SelectionReply({ scope, disabled, onAsk }: Props) {
           </button>
         </span>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
