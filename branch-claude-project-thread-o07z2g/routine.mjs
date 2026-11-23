@@ -68,6 +68,12 @@ function host(opts = {}) {
     use: (name) => c.use(name).then((ns) => name === "db" && ns ? guard(ns, "") : ns)
   };
 }
+function toDay(d = /* @__PURE__ */ new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 function addDays(day, n) {
   const [y, m, d] = day.split("-").map(Number);
   const t = new Date(Date.UTC(y, m - 1, d + n));
@@ -747,10 +753,10 @@ The task text, word for word.
 skill id | F1 | p. 3-5
 
 === CONFLICTS ===
-- one line each
+- one line each, only where the student's word and a file really contradict each other on a date, the grading or what the course covers. Leave out small differences in wording, rounding or naming.
 
 === QUESTIONS ===
-- at most 3, most important first: only what would change the skill map, the dates or the grading. One short line each. Never ask them to upload files.`;
+- usually none. Decide yourself whatever you are fairly sure about, and name the assumption in the SUMMARY instead of asking. Ask only what you really can't work out and what would change the skill map, the dates or the grading, e.g. an exam date you only guessed. At most 3, most important first, one short line each. Never ask them to upload files.`;
   return { turns: [{ role: "user", content }], images, fileKeys, clipped };
 }
 class SetupFailed extends Error {
@@ -983,11 +989,19 @@ function withSubs(done, key, lines, make) {
 }
 const asksForFiles = (q) => /\b(upload|share|send)\b|\bsyllabus\b|LV-Beschreibung/i.test(q);
 const label = (c) => (c.short || c.name).trim();
-function dayLabel(when) {
-  const d = new Date(/T/.test(when) ? when : `${when}T12:00`);
-  return isNaN(+d) ? when : d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+const ASKS_PER_DAY = 3;
+function asksOf(draft, today) {
+  return draft.courses.filter((c) => draft.results[c.id]).flatMap((c) => {
+    const r = draft.results[c.id];
+    const at = [...r.keyDates.map((k) => k.date), ...r.assignments.map((x) => x.dueAt)].filter((d) => d >= today).sort()[0] ?? "~";
+    const ask = (key, text) => ({ key, sub: `${key}:${subId(text)}`, text, course: c.name, at });
+    return [
+      ...r.conflicts.map((t) => ask("conflicts", `**${label(c)}:** ${t}`)),
+      ...r.questions.filter((q) => !asksForFiles(q)).slice(0, MAX_QUESTIONS).map((q) => ask(`q-${c.id}`, q))
+    ];
+  }).sort((x, y) => x.at < y.at ? -1 : x.at > y.at ? 1 : 0);
 }
-function setupTodo(draft) {
+function setupTodo(draft, today = toDay()) {
   const done = new Set(draft.todoDone ?? []);
   const items = [];
   const results = draft.courses.filter((c) => draft.results[c.id]);
@@ -1005,38 +1019,25 @@ function setupTodo(draft) {
       done: done.has("upload")
     });
   }
-  const dates = results.flatMap((c) => [
-    ...draft.results[c.id].keyDates.map((k) => ({ sort: k.date, line: `**${dayLabel(k.date)}** · ${label(c)}: ${k.title}` })),
-    ...draft.results[c.id].assignments.map((a) => ({ sort: a.dueAt, line: `**${dayLabel(a.dueAt)}** · ${label(c)}: ${a.title} due` }))
-  ]).sort((a, b) => a.sort < b.sort ? -1 : 1);
-  if (dates.length) {
-    items.push(
-      withSubs(done, "dates", dates.map((d) => d.line), (open, total) => ({
-        title: open.length === total ? `Check ${total} important ${total === 1 ? "date" : "dates"}` : `Check ${open.length} of ${total} important dates`,
-        body: "StudyDesk plans around these. Say if any is wrong or missing.",
-        chatPrompt: `Next on your list: the important dates I found. Tell me if any is wrong or missing:
+  let left = ASKS_PER_DAY - Object.entries(draft.todoDoneOn ?? {}).filter(([k, d]) => d === today && done.has(k)).length;
+  const groups = /* @__PURE__ */ new Map();
+  for (const x of asksOf(draft, today)) if (done.has(x.key) || done.has(x.sub) || left-- > 0) groups.set(x.key, [...groups.get(x.key) ?? [], x.text]);
+  for (const [key, lines] of groups) {
+    if (key === "conflicts") {
+      items.push(
+        withSubs(done, key, lines, (open) => ({
+          title: `${open.length} ${open.length === 1 ? "place where your files disagree" : "places where your files disagree"} with you`,
+          body: "Your word was used. Say if the file was right instead.",
+          chatPrompt: `Next on your list: where your files disagree with what you told me. I went with your word; tell me if a file was right instead:
 
 ${open.map((l) => `- ${l}`).join("\n")}`
-      }))
-    );
-  }
-  const conflicts = results.flatMap((c) => draft.results[c.id].conflicts.map((t) => `**${label(c)}:** ${t}`));
-  if (conflicts.length) {
+        }))
+      );
+      continue;
+    }
+    const c = results.find((x) => `q-${x.id}` === key);
     items.push(
-      withSubs(done, "conflicts", conflicts, (open) => ({
-        title: `${open.length} ${open.length === 1 ? "place where your files disagree" : "places where your files disagree"} with you`,
-        body: "Your word was used. Say if the file was right instead.",
-        chatPrompt: `Next on your list: where your files disagree with what you told me. I went with your word; tell me if a file was right instead:
-
-${open.map((l) => `- ${l}`).join("\n")}`
-      }))
-    );
-  }
-  for (const c of results) {
-    const qs = draft.results[c.id].questions.filter((q) => !asksForFiles(q)).slice(0, MAX_QUESTIONS);
-    if (!qs.length) continue;
-    items.push(
-      withSubs(done, `q-${c.id}`, qs, (open, total) => ({
+      withSubs(done, key, lines, (open, total) => ({
         title: `${label(c)}: ${open.length === total ? `${total} ${total === 1 ? "question" : "questions"}` : `${open.length} of ${total} questions left`}`,
         body: "Answer whatever you know, skip the rest.",
         chatPrompt: `Next on your list: ${c.name}. ${open.length === 1 ? "One question" : `${open.length} quick questions`}. Answer whatever you know, skip the rest:
@@ -1418,7 +1419,7 @@ function applyOps(desk0, ops, o) {
       }
       case "tick_todo": {
         const key = str(op.key);
-        const todo = setupTodo(desk.draft);
+        const todo = setupTodo(desk.draft, toDay(new Date(now)));
         const item = todo.find((t) => t.key === key || t.title === key);
         const sub = item ? void 0 : todo.flatMap((t) => t.subs ?? []).find((x) => x.key === key);
         if (!item && !sub) {
@@ -1431,6 +1432,7 @@ function applyOps(desk0, ops, o) {
         const list = desk.draft.todoDone ?? [];
         const parent = target.key.split(":")[0];
         touch("todoDone", on ? [.../* @__PURE__ */ new Set([...list, target.key])] : list.filter((k) => k !== target.key && k !== parent));
+        if (on) touch("todoDoneOn", { ...desk.draft.todoDoneOn, [target.key]: toDay(new Date(now)) });
         lines.push(on ? `To do: ticked off "${target.label}"` : `To do: "${target.label}" is open again`);
         break;
       }

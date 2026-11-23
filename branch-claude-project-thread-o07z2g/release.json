@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-o07z2g",
   "branch": "claude/project-thread-o07z2g",
-  "notes": "One capability list for both chats; say \"can't\" plainly and save a wish with a Send to developer link",
+  "notes": "Chats get exactly the tools the capability list names; a test catches drift",
   "dataVersion": 1,
-  "builtAt": "2026-11-23T21:19:27.139Z",
-  "commit": "afef195f4142693ad4bd3934b24bf0ceb7d4de91"
+  "builtAt": "2026-11-23T21:23:54.454Z",
+  "commit": "2c46b87e76e557de4957e7ba03596e16f35dece5"
 }
