@@ -20,6 +20,7 @@ import { parseSetup, setupTurns, type FileForSetup, type SetupInput } from "../o
 import { syncSemester, type Desk } from "../orchestrator/changes";
 import type { Turn } from "../platform/claude";
 import { emptyProgress, handIn, ungraded } from "../quests/handin";
+import { addAnki } from "../quests/anki";
 import { carriedOver, doneTasks, planQuest, recentBlockers, recentFeel } from "../quests/plan";
 import type { QuestRecord, Semester } from "../quests/types";
 import { claudeWriter, writeQuest } from "../quests/write";
@@ -380,6 +381,7 @@ async function writeTomorrow(semester: Semester | null, calendar: CalendarAhead 
   const { states } = replay(mastery.skills, mastery.attempts, mastery.reviews);
   const knownIds = [...states.values()].filter((s) => s.stage === "mastered" || s.stage === "retained").map((s) => s.skillId);
   const feel = recentFeel(records, (id) => semester.skills.find((s) => s.id === id)?.name, tomorrow);
+  addAnki(res.quest, records, semester);
   const carried = carriedOver(records, res.quest);
   if (carried.length) res.quest.notes.unshift(`Carried over from ${weekdayName(carried[0].from)}, when the quest wasn't finished: ${carried.map((c) => c.label).join(", ")}.`);
   const course = semester.courses.find((c) => c.id === res.quest.courseId);

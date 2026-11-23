@@ -98,7 +98,16 @@ export function dropUnneeded(draft: SemesterDraft, asks: Ask[], reply: string): 
 
 export function setupTodo(draft: SemesterDraft, today: Day = toDay()): TodoItem[] {
   const done = new Set(draft.todoDone ?? []);
-  const items: TodoItem[] = [];
+  // Must-ask for everyone, also desks set up before it existed; outside the daily limit.
+  const items: TodoItem[] = [
+    {
+      key: "anki",
+      title: "Do you use Anki?",
+      body: "If you do, quests that teach vocabulary or other things to learn by heart come with a deck to import into Anki.",
+      chatPrompt: "Next on your list: do you use Anki? If you do, quests that teach vocabulary or other things to learn by heart come with a deck you can import. You can change this any time.",
+      done: draft.questSettings?.anki !== undefined || done.has("anki"),
+    },
+  ];
   const results = draft.courses.filter((c) => draft.results[c.id]);
 
   const needFiles = results.filter((c) => {
@@ -118,7 +127,7 @@ export function setupTodo(draft: SemesterDraft, today: Day = toDay()): TodoItem[
 
   // Disagreements and questions, a few a day, nearest exam first. Exam dates
   // aren't listed: the Orchestrator checks each one in the two weeks before it.
-  let left = ASKS_PER_DAY - Object.entries(draft.todoDoneOn ?? {}).filter(([k, d]) => d === today && done.has(k)).length;
+  let left = ASKS_PER_DAY - Object.entries(draft.todoDoneOn ?? {}).filter(([k, d]) => k !== "anki" && d === today && done.has(k)).length;
   const groups = new Map<string, string[]>();
   for (const x of asksOf(draft, today)) if (done.has(x.key) || done.has(x.sub) || left-- > 0) groups.set(x.key, [...(groups.get(x.key) ?? []), x.text]);
 

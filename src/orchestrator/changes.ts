@@ -14,7 +14,7 @@ import { buildSemester } from "../onboarding/setup";
 import { setupTodo } from "../onboarding/todo";
 import type { CourseSetup, DraftCourse, Profile, SemesterDraft, StudentFact } from "../onboarding/types";
 import type { Assignment, KeyDate, Semester, TimetableEntry } from "../quests/types";
-import { QUEST_SETTING_LIMITS, questSettingsNow, type QuestSettings } from "../quests/config";
+import { QUEST_SETTING_LIMITS, questSettingsNow } from "../quests/config";
 import type { Change, Operation } from "./types";
 import { nightlySettings } from "../routine/nightly";
 
@@ -397,7 +397,7 @@ export function applyOps(
         const now_ = questSettingsNow(cur);
         const labels = { hints: "hints per task", lessonMinutes: "lesson reading minutes", newSkillsPerQuest: "new skills per quest" } as const;
         const changed: string[] = [];
-        for (const k of Object.keys(QUEST_SETTING_LIMITS) as Array<keyof QuestSettings>) {
+        for (const k of Object.keys(QUEST_SETTING_LIMITS) as Array<keyof typeof QUEST_SETTING_LIMITS>) {
           if (op[k] === undefined) continue;
           const v = num(op[k]);
           const [lo, hi] = QUEST_SETTING_LIMITS[k];
@@ -408,6 +408,10 @@ export function applyOps(
           if (now_[k] === v) continue;
           changed.push(`${labels[k]} ${now_[k]} → ${v}`);
           cur[k] = v;
+        }
+        if (typeof op.anki === "boolean" && op.anki !== cur.anki) {
+          changed.push(`Anki decks ${op.anki ? "on" : "off"}`);
+          cur.anki = op.anki;
         }
         if (changed.length) {
           touch("questSettings", cur);

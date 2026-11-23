@@ -11,6 +11,7 @@ export const QUEST_CONFIG: {
   practiceMaxPoints: number;
   hints: number;
   restDayMinutes: number;
+  anki: { baseMinutes: number; perCard: number; cardsPerTest: number };
   tiers: { learn: "default"; lesson: "default"; practice: "default"; assignment: "default"; fixIt: "default" };
 } = {
   /** Real homework due within this many days is pulled into quests. */
@@ -35,6 +36,8 @@ export const QUEST_CONFIG: {
   hints: 3,
   /** Minutes used when the student asks for a quest on a day their goal leaves no time. */
   restDayMinutes: 30,
+  /** Anki step before a deck test: minutes = base + per card tested; at most this many cards per skill in one test. */
+  anki: { baseMinutes: 5, perCard: 0.5, cardsPerTest: 8 },
   /** Model size for each kind of writing. */
   tiers: { learn: "default", lesson: "default", practice: "default", assignment: "default", fixIt: "default" } as const,
 };
@@ -57,6 +60,8 @@ export type QuestSettings = {
   lessonMinutes?: number;
   /** Brand-new skills per quest when there's no homework to prepare (0 to 4). */
   newSkillsPerQuest?: number;
+  /** The student learns with Anki: quests then come with a deck of what to learn by heart. Unset = not asked yet. */
+  anki?: boolean;
 };
 
 export const QUEST_SETTING_LIMITS = { hints: [0, 5], lessonMinutes: [2, 15], newSkillsPerQuest: [0, 4] } as const;
@@ -75,6 +80,6 @@ export function applyQuestSettings(s: QuestSettings | undefined): void {
 }
 
 /** The settings in effect, for the Orchestrator's snapshot. */
-export function questSettingsNow(s: QuestSettings | undefined): Required<QuestSettings> {
-  return { hints: s?.hints ?? DEFAULTS.hints, lessonMinutes: s?.lessonMinutes ?? DEFAULTS.lessonMinutes, newSkillsPerQuest: s?.newSkillsPerQuest ?? DEFAULTS.newSkillsPerQuest };
+export function questSettingsNow(s: QuestSettings | undefined) {
+  return { hints: s?.hints ?? DEFAULTS.hints, lessonMinutes: s?.lessonMinutes ?? DEFAULTS.lessonMinutes, newSkillsPerQuest: s?.newSkillsPerQuest ?? DEFAULTS.newSkillsPerQuest, anki: s?.anki ?? null };
 }
