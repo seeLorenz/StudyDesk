@@ -665,6 +665,11 @@ ${text}
 Fundamentals this student already mastered in earlier semesters (reuse these exact ids when a fundamental here is the same skill; don't list them again otherwise):
 ${input.priorFundamentals.map((p) => `- ${p.id}: ${p.name}`).join("\n")}
 ` : "";
+  const known2 = currentSkills(input);
+  const current = known2.length ? `
+Skills this course already has (the student's progress is stored under these ids). When a skill in your map is one of these, write its id exactly as given here. Never give one of these ids to a different skill; drop a skill only if it really isn't part of the course:
+${known2.map((k) => `- ${k.id}: ${k.name}`).join("\n")}
+` : "";
   const content = `You are StudyDesk's organization agent. You set up one course for one student: you turn their real course materials into the list of skills StudyDesk teaches, practices and tracks. Everything later (daily quests, grading) depends on this map, so be thorough and precise.
 
 ## The student
@@ -679,7 +684,7 @@ ${input.priorFundamentals.map((p) => `- ${p.id}: ${p.name}`).join("\n")}
 
 ## What the student said about it (word for word; if a file disagrees, the student's word wins, and you list the disagreement under CONFLICTS)
 ${facts.length ? facts.map((f) => `- "${f.text}"`).join("\n") : "- nothing"}
-${prior}
+${prior}${current}
 ## Files
 ${files.length ? fileBlocks.join("\n\n") : opts.web ? "No files. Search the web for the official description of this course at this school (curriculum, course catalogue entry, syllabus, weekly schedule, exam rules) and build the map from it. If nothing official turns up, use what a course with this name usually covers in this program and country, and say which in the summary. Don't ask for files under QUESTIONS: StudyDesk asks for missing materials itself." : "No files. Use what a course with this name usually covers in this program and country, and say so in the summary. Don't ask for files under QUESTIONS: StudyDesk asks for missing materials itself."}${opts.web ? "\n\n## Web research\nYou can search the web. Before writing, look this course up: its official page or catalogue entry at the student's school, for topics, schedule, grading and exam dates. Prefer official sources. The student's words and files win where they say something; the web fills what they don't. Name the sites you used in the SUMMARY (site names, no links)." : ""}
 
@@ -747,13 +752,32 @@ class SetupFailed extends Error {
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "x";
 const bullets = (s) => (s ?? "").split("\n").map((l) => l.replace(/^[-*•]\s*/, "").trim()).filter((l) => l && !/^\(.*\)$/.test(l) && !/^(none|nothing|-)\.?$/i.test(l));
 const rows = (s) => (s ?? "").split("\n").map((l) => l.replace(/^[-*]\s*/, "").trim()).filter((l) => l.includes("|") && !/^\(/.test(l)).map((l) => l.split("|").map((x) => x.trim()));
+function currentSkills(input) {
+  const prior = new Set(input.priorFundamentals.map((p) => p.id));
+  return (input.draft?.results?.[input.course.id]?.skills ?? []).filter((s) => !prior.has(s.id));
+}
+const sameName = (a, b) => a.trim().toLowerCase().replace(/\s+/g, " ") === b.trim().toLowerCase().replace(/\s+/g, " ");
 function parseSetup(reply, input, fileKeys, now = Date.now()) {
   const { course, profile } = input;
   const sec = parseSections(reply);
   const cid = course.id;
   const priorIds = new Set(input.priorFundamentals.map((p) => p.id));
   const topicId = (id) => `${cid}-t-${slug(id)}`;
-  const skillId = (id) => priorIds.has(id) ? id : `${cid}-${slug(id)}`;
+  const known2 = new Map(currentSkills(input).map((s) => [s.id, s]));
+  const given = /* @__PURE__ */ new Map();
+  const baseId = (id) => priorIds.has(id) || known2.has(id) ? id : `${cid}-${slug(id)}`;
+  const newId = (id, name) => {
+    let sid = baseId(id);
+    const old = known2.get(sid);
+    if (old && sid !== id && !sameName(old.name, name)) {
+      let n = 2;
+      while (known2.has(`${sid}-${n}`)) n++;
+      sid = `${sid}-${n}`;
+    }
+    given.set(id, sid);
+    return sid;
+  };
+  const skillId = (id) => given.get(id) ?? baseId(id);
   const topics = [];
   for (const [id, name, taught] of rows(sec.get("TOPICS"))) {
     if (!id || !name || topics.some((t) => t.id === topicId(id))) continue;
@@ -768,7 +792,7 @@ function parseSetup(reply, input, fileKeys, now = Date.now()) {
   for (const r of rows(sec.get("SKILLS"))) {
     const [id, tid, name, kind, tier, diff, minutes, weight, prereqs] = r;
     if (!id || !name) continue;
-    const sid = skillId(id);
+    const sid = newId(id, name);
     if (skills.some((s) => s.id === sid)) continue;
     if (priorIds.has(id)) {
       skills.push(input.priorFundamentals.find((p) => p.id === id));
@@ -1062,6 +1086,8 @@ function setPart(desk, key, value) {
   }
   return { ...desk, draft: { ...desk.draft, [key]: value } };
 }
+const OWN_WORD = " (set by the student in StudyDesk)";
+const dateLabel = (k) => `${k.kind === "quiz" ? "Quiz" : "Exam"} "${k.title}"`;
 const clone = (x) => x === void 0 ? x : JSON.parse(JSON.stringify(x));
 const same$1 = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 function applyOps(desk0, ops, o) {
@@ -1092,6 +1118,12 @@ function applyOps(desk0, ops, o) {
     return g >= lo && g <= hi;
   };
   const fact = (c, text) => touch("facts", [...desk.draft.facts, { id: uid(), courseId: c?.id ?? null, text, addedAt: now }]);
+  const isOwn = (c, label2) => (f) => f.courseId === c.id && f.text.startsWith(`${label2}:`) && f.text.endsWith(OWN_WORD);
+  const studentSet = (c, label2) => o.by === "organization" && desk.draft.facts.some(isOwn(c, label2));
+  const ownWord = (c, label2, value) => {
+    if (o.by === "organization") return;
+    touch("facts", [...desk.draft.facts.filter((f) => !isOwn(c, label2)(f)), { id: uid(), courseId: c.id, text: `${label2}: ${value}${OWN_WORD}`, addedAt: now }]);
+  };
   for (const op of ops) {
     if (CONFIRM_FIRST.has(op.op) && !o.confirmed) {
       needsConfirm.push(op);
@@ -1132,10 +1164,16 @@ function applyOps(desk0, ops, o) {
         const j = i >= 0 ? i : list.filter((k) => k.kind === kind).length === 1 && !op.title ? list.findIndex((k) => k.kind === kind) : -1;
         if (j >= 0) {
           if (list[j].date === date) break;
+          if (studentSet(c, dateLabel(list[j]))) {
+            errors.push(`set_exam_date: the student set ${c.name}, ${list[j].title} to ${list[j].date} themselves; not changed.`);
+            break;
+          }
           touch(`results.${c.id}.keyDates`, list.map((k, n) => n === j ? { ...k, date } : k));
+          ownWord(c, dateLabel(list[j]), date);
           lines.push(`${c.name}, ${list[j].title}: ${shortDate(list[j].date)} → ${shortDate(date)}`);
         } else {
           touch(`results.${c.id}.keyDates`, [...list, { courseId: c.id, date, kind, title, skillIds: [] }]);
+          ownWord(c, dateLabel({ kind, title }), date);
           lines.push(`${c.name}, ${title}: added on ${shortDate(date)}`);
         }
         break;
@@ -1151,6 +1189,7 @@ function applyOps(desk0, ops, o) {
           break;
         }
         touch(`results.${c.id}.keyDates`, r.keyDates.filter((x) => x !== k));
+        ownWord(c, dateLabel(k), "removed, there is no such date");
         lines.push(`${c.name}, ${k.title} on ${shortDate(k.date)}: removed`);
         break;
       }
@@ -1169,7 +1208,12 @@ function applyOps(desk0, ops, o) {
           errors.push(`set_due: "${str(op.dueAt)}" isn't a date (YYYY-MM-DD or YYYY-MM-DDTHH:MM).`);
           break;
         }
+        if (studentSet(c, `Homework "${a.title}"`)) {
+          errors.push(`set_due: the student set ${c.name}, ${a.title} themselves; not changed.`);
+          break;
+        }
         touch(`results.${c.id}.assignments`, r.assignments.map((x) => x.id === a.id ? { ...x, dueAt: due } : x));
+        ownWord(c, `Homework "${a.title}"`, `due ${due}`);
         lines.push(`${c.name}, ${a.title} due: ${shortDate(a.dueAt)} → ${shortDate(due)}`);
         break;
       }
@@ -1207,6 +1251,7 @@ function applyOps(desk0, ops, o) {
         }
         const a = { id, courseId: c.id, title, dueAt: due, tasks };
         touch(`results.${c.id}.assignments`, [...r.assignments, a]);
+        ownWord(c, `Homework "${title}"`, `due ${due}, ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}`);
         lines.push(`${c.name}, ${title}: added, ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}, due ${shortDate(due)}`);
         break;
       }
@@ -1221,6 +1266,7 @@ function applyOps(desk0, ops, o) {
           break;
         }
         touch(`results.${c.id}.assignments`, r.assignments.filter((x) => x.id !== a.id));
+        ownWord(c, `Homework "${a.title}"`, "removed, it doesn't count");
         lines.push(`${c.name}, ${a.title}: removed`);
         break;
       }
