@@ -147,7 +147,7 @@ function useStartAtEnd(scroller: React.RefObject<HTMLElement>, ready: boolean) {
   }, [scroller, ready]);
 }
 
-export function OnboardingPage({ onDone, askNewSemester = 0 }: { onDone: () => void; askNewSemester?: number }) {
+export function OnboardingPage({ onDone, onOpenChat, askNewSemester = 0 }: { onDone: () => void; onOpenChat: () => void; askNewSemester?: number }) {
   const [env, setEnv] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile>(emptyProfile);
@@ -414,7 +414,7 @@ export function OnboardingPage({ onDone, askNewSemester = 0 }: { onDone: () => v
   if (!env || !draft) return <div className="quest-page" aria-busy="true"><p className="quest-muted late-in">Loading…</p></div>;
 
   const returning = env.current?.source === "onboarding" && env.current.id !== draft.id;
-  const props: StepProps = { env, draft, profile, update, updateProfile, go, today, flush, md, onDone, setEnv, returning, draftRef, profileRef, handoff, recheckHandoff };
+  const props: StepProps = { env, draft, profile, update, updateProfile, go, today, flush, md, onDone, onOpenChat, setEnv, returning, draftRef, profileRef, handoff, recheckHandoff };
   // The to-do list stays once the first setup finished, also while a course is being read again.
   const done = draft.setupStep === "done" || draft.status === "active";
   const todoLeft = done ? setupTodo(draft).filter((t) => !t.done).length : 0;
@@ -561,6 +561,8 @@ type StepProps = {
   /** Markdown with select-to-reply. `label` tells Claude where the passage is when it isn't a chat message or report. */
   md: (blockId: string, text: string, label?: string) => JSX.Element;
   onDone: () => void;
+  /** Opens the StudyDesk chat, which takes over once the semester is set up. */
+  onOpenChat: () => void;
   setEnv: (e: Loaded) => void;
   returning: boolean;
   draftRef: React.MutableRefObject<SemesterDraft | null>;
@@ -639,12 +641,12 @@ function HandoffCard({ handoff, recheckHandoff, draft, update }: StepProps) {
 // `below`: a quiet line under the input box ("Had StudyDesk before?"). It sits
 // there, not above the chat, so it never pushes the conversation around when
 // it appears or goes away.
-function SetupChat({ env, draft, update, updateProfile, today, flush, md, returning, draftRef, profileRef, handoff, below, after, scroller }: StepProps & { below?: ReactNode; after?: ReactNode; scroller: React.RefObject<HTMLDivElement> }) {
+function SetupChat({ env, draft, update, updateProfile, today, flush, md, returning, draftRef, profileRef, handoff, below, after, scroller, onOpenChat }: StepProps & { below?: ReactNode; after?: ReactNode; scroller: React.RefObject<HTMLDivElement> }) {
   const [busy, setBusy] = useState<string | null>(null);
   const ctl = useRef<AbortController | null>(null);
   const chat = draft.chat ?? [];
-  // The chat stays open after setup, to work through the to-do list.
-  const open = draft.setupStep !== "running";
+  // Once the semester is set up, the StudyDesk chat takes over: one chat with all the tools.
+  const open = draft.setupStep !== "running" && !handedOff(draft);
 
   // A sent message moves to the top of the view, and the answer comes in below it.
   const { tail, tailRef } = useSentToTop(scroller, [...chat].reverse().find((m) => m.role === "user")?.id);
@@ -851,9 +853,19 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
           {below}
         </div>
       )}
+      {handedOff(draft) && (
+        <div className="setup-composer">
+          <p className="quest-muted">Your semester is set up. From here on, everything goes through the StudyDesk chat.</p>
+          <button type="button" className="mini-btn primary" onClick={onOpenChat}>
+            Open the StudyDesk chat
+          </button>
+        </div>
+      )}
     </div>
   );
 }
+
+const handedOff = (d: SemesterDraft) => d.status === "active" && d.setupStep === "done";
 
 /** A set with one id added or taken out. Pure. */
 function toggled(s: Set<string>, id: string): Set<string> {
@@ -1358,7 +1370,7 @@ function Done({ env, draft, onDone, setEnv, today, update }: StepProps) {
 // ---------- the to-do list after setup, in the side panel ----------
 
 /** What setup still needs from the student, one item at a time. `onStart` brings the chat into view. */
-function TodoList({ draft, md, update, onStart }: StepProps & { onStart: () => void }) {
+function TodoList({ draft, md, update, onStart, onOpenChat }: StepProps & { onStart: () => void }) {
   const todo = setupTodo(draft);
   const left = todo.filter((t) => !t.done);
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -1371,9 +1383,13 @@ function TodoList({ draft, md, update, onStart }: StepProps & { onStart: () => v
       ...(on && { todoDoneOn: { ...d.todoDoneOn, [key]: toDay() } }),
     }));
   const startInChat = (item: TodoItem) => {
+    setOpenKey(item.key);
+    if (handedOff(draft)) {
+      publish("say", item.chatPrompt, "setup");
+      return onOpenChat();
+    }
     const msg: SetupMessage = { id: uid(), role: "assistant", text: item.chatPrompt, createdAt: Date.now() };
     update((d) => ({ ...d, chat: [...(d.chat ?? []), msg] }));
-    setOpenKey(item.key);
     onStart();
     setTimeout(() => (document.querySelector(".setup-composer textarea") as HTMLTextAreaElement | null)?.focus(), 80);
   };

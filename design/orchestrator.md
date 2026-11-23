@@ -88,7 +88,7 @@ The organization agent's own design (how it reads, maps and decides) is its own 
 
 ## The chat itself
 
-- **One chat per semester.** The setup chat simply continues as the Orchestrator chat when setup is done; nothing new to learn. Old messages fold away by day, and a new semester starts a fresh chat (the old one is kept in the archive).
+- **One chat per semester.** The setup chat simply continues as the Orchestrator chat when setup is done; nothing new to learn. Old messages fold away by day, and a new semester starts a fresh chat (the old one is kept in the archive). In practice: once the semester is set up, the setup page hands over to the StudyDesk chat (its input box becomes an "Open the StudyDesk chat" button, and to-do items start there).
 - **Reachable everywhere.** A button in the sidebar and a keyboard shortcut open it as a side panel over the current screen, and the panel can be expanded to a full window for longer talks (to be tuned once it's used in production). When the student has text selected, "Ask StudyDesk about this" puts the selection in the message (a quest problem, a date on the overview).
 - **Knows where the student is.** Each message carries the current screen and, when there is one, the quest part or course on it, so "this is too long" or "move this to Friday" needs no explanation.
 - **Accepts everything** (guideline 2): typed text, dropped files, pasted images.

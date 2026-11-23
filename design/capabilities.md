@@ -19,4 +19,4 @@ Why a list in the prompt and not a lookup step: the list is in front of Claude o
 
 Each entry names, per chat, the tool that provides it there. Both chats pass their tools through `toolsFor(chat, tools)`. A chat only gets the tools the list grants it, and any mismatch is logged. A test reads the tools each chat really builds and fails when they differ from the list. Adding a feature (Anki export, say) means one entry plus its tool; a missing entry fails the test.
 
-The two chats still have different tools: the setup chat fills the semester sheet, and the StudyDesk chat makes changes and starts jobs. Giving them the same set is a separate choice.
+The setup chat is only for setting a semester up. Once the semester is set up, the setup page's input box is replaced by an "Open the StudyDesk chat" button, and starting a to-do item opens it in the StudyDesk chat. So after setup there is one chat with all the tools.

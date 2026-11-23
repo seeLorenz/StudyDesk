@@ -291,12 +291,14 @@ export function OrchestratorPanel(props: Props) {
     const c = subscribe("semester", "orch", (s) => {
       semesterRef.current = s;
     });
+    const d = subscribe("say", "orch", (text) => saveMessages((ms) => [...ms, { id: uid(), role: "assistant", text, createdAt: Date.now() }]));
     return () => {
       a();
       b();
       c();
+      d();
     };
-  }, []);
+  }, [saveMessages]);
 
   // Jobs follow their courses: finished when read, queued ones start when free.
   useEffect(() => {
