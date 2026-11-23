@@ -11,7 +11,7 @@ import { assessmentAttempts } from "../mastery/grades";
 import type { AssessmentResult, Attempt, CourseTarget } from "../mastery/types";
 import { buildSemester } from "../onboarding/setup";
 import { setupTodo } from "../onboarding/todo";
-import type { CourseSetup, DraftCourse, Profile, SemesterDraft } from "../onboarding/types";
+import type { CourseSetup, DraftCourse, Profile, SemesterDraft, StudentFact } from "../onboarding/types";
 import type { Assignment, KeyDate, Semester, TimetableEntry } from "../quests/types";
 import { QUEST_SETTING_LIMITS, questSettingsNow, type QuestSettings } from "../quests/config";
 import type { Change, Operation } from "./types";
@@ -95,6 +95,7 @@ function setPart(desk: Desk, key: string, value: unknown): Desk {
 }
 
 const OWN_WORD = " (set by the student in StudyDesk)";
+const dateLabel = (k: Pick<KeyDate, "kind" | "title">) => `${k.kind === "quiz" ? "Quiz" : "Exam"} "${k.title}"`;
 
 const clone = <T>(x: T): T => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -150,17 +151,13 @@ export function applyOps(
   };
   const fact = (c: DraftCourse | null, text: string) =>
     touch("facts", [...desk.draft.facts, { id: uid(), courseId: c?.id ?? null, text, addedAt: now }]);
-  // A date the student set is also kept as their own word, replacing what they
-  // said about the same item before. Facts go into every re-reading and the
-  // nightly check, where the student's word wins, so a re-read can't undo it.
-  /** True when the organization agent would change a date the student set themselves: their word wins, so it isn't applied. */
-  const studentSet = (c: DraftCourse, label: string) =>
-    o.by === "organization" && desk.draft.facts.some((f) => f.courseId === c.id && f.text.startsWith(`${label}:`) && f.text.endsWith(OWN_WORD));
+  // Dates the student sets are also kept as their own word (replacing the older one), so a re-read
+  // or the nightly check can't undo them; the organization agent may not change them.
+  const isOwn = (c: DraftCourse, label: string) => (f: StudentFact) => f.courseId === c.id && f.text.startsWith(`${label}:`) && f.text.endsWith(OWN_WORD);
+  const studentSet = (c: DraftCourse, label: string) => o.by === "organization" && desk.draft.facts.some(isOwn(c, label));
   const ownWord = (c: DraftCourse, label: string, value: string) => {
     if (o.by === "organization") return;
-    const tag = `${label}:`;
-    const rest = desk.draft.facts.filter((f) => !(f.courseId === c.id && f.text.startsWith(tag) && f.text.endsWith(OWN_WORD)));
-    touch("facts", [...rest, { id: uid(), courseId: c.id, text: `${tag} ${value}${OWN_WORD}`, addedAt: now }]);
+    touch("facts", [...desk.draft.facts.filter((f) => !isOwn(c, label)(f)), { id: uid(), courseId: c.id, text: `${label}: ${value}${OWN_WORD}`, addedAt: now }]);
   };
 
   for (const op of ops) {
@@ -203,16 +200,16 @@ export function applyOps(
         const j = i >= 0 ? i : list.filter((k) => k.kind === kind).length === 1 && !op.title ? list.findIndex((k) => k.kind === kind) : -1;
         if (j >= 0) {
           if (list[j].date === date) break;
-          if (studentSet(c, `${list[j].kind === "quiz" ? "Quiz" : "Exam"} "${list[j].title}"`)) {
+          if (studentSet(c, dateLabel(list[j]))) {
             errors.push(`set_exam_date: the student set ${c.name}, ${list[j].title} to ${list[j].date} themselves; not changed.`);
             break;
           }
           touch(`results.${c.id}.keyDates`, list.map((k, n) => (n === j ? { ...k, date } : k)));
-          ownWord(c, `${list[j].kind === "quiz" ? "Quiz" : "Exam"} "${list[j].title}"`, date);
+          ownWord(c, dateLabel(list[j]), date);
           lines.push(`${c.name}, ${list[j].title}: ${shortDate(list[j].date)} → ${shortDate(date)}`);
         } else {
           touch(`results.${c.id}.keyDates`, [...list, { courseId: c.id, date, kind, title, skillIds: [] }]);
-          ownWord(c, `${kind === "quiz" ? "Quiz" : "Exam"} "${title}"`, date);
+          ownWord(c, dateLabel({ kind, title }), date);
           lines.push(`${c.name}, ${title}: added on ${shortDate(date)}`);
         }
         break;
@@ -228,7 +225,7 @@ export function applyOps(
           break;
         }
         touch(`results.${c.id}.keyDates`, r.keyDates.filter((x) => x !== k));
-        ownWord(c, `${k.kind === "quiz" ? "Quiz" : "Exam"} "${k.title}"`, "removed, there is no such date");
+        ownWord(c, dateLabel(k), "removed, there is no such date");
         lines.push(`${c.name}, ${k.title} on ${shortDate(k.date)}: removed`);
         break;
       }

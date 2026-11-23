@@ -256,7 +256,6 @@ const rows = (s: string | undefined) =>
     .filter((l) => l.includes("|") && !/^\(/.test(l))
     .map((l) => l.split("|").map((x) => x.trim()));
 
-/** Turns the agent's reply into records. Ids are made unique per course. */
 /** The course's skills from an earlier reading, if it was read before (not counting fundamentals carried over from earlier semesters). */
 function currentSkills(input: Pick<SetupInput, "course" | "priorFundamentals"> & { draft?: SetupInput["draft"] }): Skill[] {
   const prior = new Set(input.priorFundamentals.map((p) => p.id));
@@ -265,6 +264,7 @@ function currentSkills(input: Pick<SetupInput, "course" | "priorFundamentals"> &
 
 const sameName = (a: string, b: string) => a.trim().toLowerCase().replace(/\s+/g, " ") === b.trim().toLowerCase().replace(/\s+/g, " ");
 
+/** Turns the agent's reply into records. Ids are made unique per course. */
 export function parseSetup(reply: string, input: Pick<SetupInput, "course" | "profile" | "today" | "priorFundamentals"> & { draft?: SetupInput["draft"] }, fileKeys: Map<string, string>, now = Date.now()): CourseSetup {
   const { course, profile } = input;
   const sec = parseSections(reply);
