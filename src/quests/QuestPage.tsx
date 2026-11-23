@@ -26,7 +26,7 @@ import { busyMinutesFromEvents, readCalendar } from "../platform/calendar";
 import { publish, subscribe } from "../platform/deskBus";
 import { openOnboardingStore } from "../platform/onboardingStore";
 import { openRoutineStore } from "../platform/routineStore";
-import { mergeGrading, type GradingOutbox } from "../routine/apply";
+import { gradingFields, mergeGrading, type GradingOutbox } from "../routine/apply";
 import { ComingUp } from "../shell/ComingUp";
 
 // The quest page: builds today's quest on the first open of the day (the
@@ -75,6 +75,22 @@ async function applyNightlyGrades(qs: QuestStore, records: QuestRecord[], openQu
 
 function nowLocal(d = new Date()): string {
   return `${toDay(d)}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * This browser's copy of the work against the saved one: the newer wins, but a browser copy
+ * holding hand-ins the saved copy lacks (its last save didn't get through, and the saved copy
+ * was stamped newer since, say by the night's grades) keeps them, with the saved grades merged in.
+ */
+function pickDraft(d: QuestProgress, rec: QuestProgress): QuestProgress {
+  if (d.updatedAt > rec.updatedAt) return d;
+  if (rec.replacedAt || d.handedIn.every((id) => rec.handedIn.includes(id))) return rec;
+  const work = { ...d.work };
+  for (const [pid, w] of Object.entries(rec.work)) {
+    if (w.verdict && !work[pid]?.verdict) work[pid] = { ...(work[pid] ?? w), ...gradingFields(w) };
+  }
+  const handedIn = [...new Set([...rec.handedIn, ...d.handedIn])];
+  return { ...d, work, handedIn, finishedAt: rec.finishedAt ?? d.finishedAt, updatedAt: Date.now() };
 }
 
 function message(e: unknown): string {
@@ -586,7 +602,7 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
   const [progress, setProgress] = useState<QuestProgress>(() => {
     try {
       const d = JSON.parse(localStorage.getItem(draftKey) || "null") as QuestProgress | null;
-      if (d && d.questId === quest.id && d.updatedAt > record.progress.updatedAt) return d;
+      if (d && d.questId === quest.id) return pickDraft(d, record.progress);
     } catch {
       /* no draft */
     }
@@ -600,6 +616,8 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
   const progressRef = useRef(progress);
   progressRef.current = progress;
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Changes on this page not yet saved. A page with none never writes, so an old tab can't overwrite newer work. */
+  const dirty = useRef(progress !== record.progress); // a newer copy from this browser still needs saving
 
   const skills = useMemo(() => new Map(semester.skills.map((s) => [s.id, s])), [semester]);
   const course = semester.courses.find((c) => c.id === quest.courseId);
@@ -610,15 +628,21 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
   const flush = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = null;
+    if (!dirty.current) return Promise.resolve();
+    dirty.current = false;
     const r = { quest, progress: { ...progressRef.current, updatedAt: Date.now() } };
     onRecordRef.current(r);
     return qs
       .saveRecord(r)
       .then(() => setErrors((e) => (e.save ? { ...e, save: "" } : e)))
-      .catch(() => setErrors((e) => ({ ...e, save: "Your work couldn't be saved. Keep this page open and try again." })));
+      .catch(() => {
+        dirty.current = true;
+        setErrors((e) => ({ ...e, save: "Your work couldn't be saved. Keep this page open and try again." }));
+      });
   }, [qs, quest]);
 
   const saveSoon = useCallback(() => {
+    dirty.current = true;
     if (!saveTimer.current) saveTimer.current = setTimeout(() => void flush(), 2000);
   }, [flush]);
 
@@ -632,6 +656,24 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
       /* storage full or blocked: the 2-second save still runs */
     }
   }, [progress, draftKey]);
+  // Back on the page with nothing unsaved: take over newer work saved elsewhere (another tab or device).
+  useEffect(() => {
+    const onShow = () => {
+      if (document.visibilityState !== "visible" || dirty.current) return;
+      void qs
+        .loadRecords()
+        .then((rs) => {
+          const r = rs.find((x) => x.quest.id === quest.id);
+          if (!r || dirty.current || r.progress.updatedAt <= progressRef.current.updatedAt) return;
+          progressRef.current = r.progress;
+          setProgress(r.progress);
+          onRecordRef.current({ quest, progress: r.progress });
+        })
+        .catch(() => undefined);
+    };
+    document.addEventListener("visibilitychange", onShow);
+    return () => document.removeEventListener("visibilitychange", onShow);
+  }, [qs, quest]);
   useEffect(() => {
     const save = () => void flush();
     const onHide = () => document.visibilityState === "hidden" && save();
@@ -647,6 +689,7 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
     const next = fn(progressRef.current);
     progressRef.current = next;
     setProgress(next);
+    dirty.current = true;
     void flush();
   };
 
