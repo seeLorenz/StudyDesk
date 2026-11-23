@@ -978,6 +978,17 @@ function withSubs(done, key, lines, make) {
 const asksForFiles = (q) => /\b(upload|share|send)\b|\bsyllabus\b|LV-Beschreibung/i.test(q);
 const label = (c) => (c.short || c.name).trim();
 const ASKS_PER_DAY = 3;
+function asksOf(draft, today) {
+  return draft.courses.filter((c) => draft.results[c.id]).flatMap((c) => {
+    const r = draft.results[c.id];
+    const at = [...r.keyDates.map((k) => k.date), ...r.assignments.map((x) => x.dueAt)].filter((d) => d >= today).sort()[0] ?? "~";
+    const ask = (key, text) => ({ key, sub: `${key}:${subId(text)}`, text, course: c.name, at });
+    return [
+      ...r.conflicts.map((t) => ask("conflicts", `**${label(c)}:** ${t}`)),
+      ...r.questions.filter((q) => !asksForFiles(q)).slice(0, MAX_QUESTIONS).map((q) => ask(`q-${c.id}`, q))
+    ];
+  }).sort((x, y) => x.at < y.at ? -1 : x.at > y.at ? 1 : 0);
+}
 function setupTodo(draft, today = toDay()) {
   const done = new Set(draft.todoDone ?? []);
   const items = [];
@@ -996,17 +1007,9 @@ function setupTodo(draft, today = toDay()) {
       done: done.has("upload")
     });
   }
-  const asks = results.flatMap((c) => {
-    const r = draft.results[c.id];
-    const at = [...r.keyDates.map((k) => k.date), ...r.assignments.map((x) => x.dueAt)].filter((d) => d >= today).sort()[0] ?? "~";
-    return [
-      ...r.conflicts.map((t) => ({ key: "conflicts", text: `**${label(c)}:** ${t}`, at })),
-      ...r.questions.filter((q) => !asksForFiles(q)).slice(0, MAX_QUESTIONS).map((text) => ({ key: `q-${c.id}`, text, at }))
-    ];
-  }).sort((x, y) => x.at < y.at ? -1 : x.at > y.at ? 1 : 0);
   let left = ASKS_PER_DAY - Object.entries(draft.todoDoneOn ?? {}).filter(([k, d]) => d === today && done.has(k)).length;
   const groups = /* @__PURE__ */ new Map();
-  for (const x of asks) if (done.has(x.key) || done.has(`${x.key}:${subId(x.text)}`) || left-- > 0) groups.set(x.key, [...groups.get(x.key) ?? [], x.text]);
+  for (const x of asksOf(draft, today)) if (done.has(x.key) || done.has(x.sub) || left-- > 0) groups.set(x.key, [...groups.get(x.key) ?? [], x.text]);
   for (const [key, lines] of groups) {
     if (key === "conflicts") {
       items.push(

@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-qrvpqc",
   "branch": "claude/project-thread-qrvpqc",
-  "notes": "Setup asks fewer questions, a few a day, nearest exam first",
+  "notes": "Trim open setup questions once to what really needs the student",
   "dataVersion": 1,
-  "builtAt": "2026-11-23T20:13:18.585Z",
-  "commit": "4ff7a32cf429aaacc8599bf1f3913e925d59a8ae"
+  "builtAt": "2026-11-23T20:21:12.488Z",
+  "commit": "69c1e90a2278050daadf384dc0d488aa2e8b479d"
 }
