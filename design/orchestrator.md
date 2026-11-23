@@ -69,7 +69,7 @@ Every change follows the same path, small or big.
 
 **Started quests are never rewritten.** A change applies from the next quest. If today's quest hasn't been started yet and the change affects it (an exam moved closer, homework due tomorrow), the change card offers "Rebuild today's quest".
 
-**The student's word wins.** If what the student says disagrees with a file or with what the organization agent found, the Orchestrator applies the student's version and mentions the disagreement once ("Your syllabus says 28 Jan; I've used 4 Feb as you said.").
+**The student's word wins.** If what the student says disagrees with a file or with what the organization agent found, the Orchestrator applies the student's version and mentions the disagreement once ("Your syllabus says 28 Jan; I've used 4 Feb as you said."). Every date or homework the student sets, moves or removes is also kept as one of their own facts (it replaces what they said about the same item before). Facts go into every re-reading of a course and the nightly check, so a re-read can't quietly undo it, and code refuses a nightly change to a date the student set.
 
 ## Jobs for the organization agent
 
@@ -80,6 +80,8 @@ A job is a piece of work the organization agent does in the background. The Orch
 - **Job card.** Shows a live log the same way the setup run does ("Reading Blatt 5.pdf, p. 1-3: three tasks on integration by parts"), then a short result: "Added 3 skills, homework due Thu 27 Nov". Details stay folded.
 - **Questions from the organization agent** come back as at most 3 to-do items per job, like after setup. The Orchestrator puts them in the chat one at a time, the student answers in the chat, and the answers become facts for the next run.
 - **Closing the page is fine.** A job in a cloud session keeps running. Its result waits in the student's data and the Orchestrator reports it the next time the page opens.
+- **A re-read keeps skill ids.** Each re-reading gets the course's current skills and keeps their ids; code makes sure a new skill never takes over an old id that meant something else, because attempts, streaks and reviews are stored under those ids.
+- **Two tabs or devices.** The semester setup has a version check. The Orchestrator's own data (change log, jobs, notifications, notes) is merged on save, so nothing one device added is lost when the other saves; the semester keeps the placement check and the newest workload answer the same way.
 - **One job per course at a time.** A second change to the same course while a job runs is queued and sent with the next job, so two runs never overwrite each other.
 
 The organization agent's own design (how it reads, maps and decides) is its own module. The Orchestrator only depends on the job kinds and the records listed below.
