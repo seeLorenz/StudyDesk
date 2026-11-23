@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-fb2af4",
   "branch": "claude/project-thread-fb2af4",
-  "notes": "Quests: a browser copy with hand-ins the saved copy lacks wins on reload",
+  "notes": "Quests: draft choice as a small named function",
   "dataVersion": 1,
-  "builtAt": "2026-11-23T19:40:00.372Z",
-  "commit": "29bce88bf8ec351c51ca9f57657f4d0e44cab6ae"
+  "builtAt": "2026-11-23T19:52:33.869Z",
+  "commit": "3e3e94277b79cd603be03c06e8c02df807db34bc"
 }
