@@ -1367,6 +1367,7 @@ function TodoList({ draft, md, update, onStart }: StepProps & { onStart: () => v
     update((d) => ({
       ...d,
       todoDone: on ? [...new Set([...(d.todoDone ?? []), key])] : (d.todoDone ?? []).filter((k) => k !== key && k !== key.split(":")[0] && !k.startsWith(`${key}:`)),
+      ...(on && { todoDoneOn: { ...d.todoDoneOn, [key]: toDay() } }),
     }));
   const startInChat = (item: TodoItem) => {
     const msg: SetupMessage = { id: uid(), role: "assistant", text: item.chatPrompt, createdAt: Date.now() };

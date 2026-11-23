@@ -47,7 +47,7 @@ The page takes the outbox in when it opens, and every few minutes while it's ope
 
 - it may apply on its own: an exam date moved or announced, a deadline moved, a new homework sheet, a fact it found (always with its source), the course's language;
 - everything else (dropping a course, a new study goal, results) is left for the student;
-- at most 3 questions per course for what it couldn't find; they join the course's open questions and the Orchestrator asks them one at a time, as after setup.
+- at most 3 questions per course for what it couldn't find; they join the course's open questions and, as after setup, come a few a day, nearest exam first.
 
 Applied changes show up in the StudyDesk chat as change cards marked as found overnight, each with **Undo**.
 

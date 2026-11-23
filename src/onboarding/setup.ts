@@ -238,10 +238,10 @@ The task text, word for word.
 skill id | F1 | p. 3-5
 
 === CONFLICTS ===
-- one line each
+- one line each, only where the student's word and a file really contradict each other on a date, the grading or what the course covers. Leave out small differences in wording, rounding or naming.
 
 === QUESTIONS ===
-- at most 3, most important first: only what would change the skill map, the dates or the grading. One short line each. Never ask them to upload files.`;
+- usually none. Decide yourself whatever you are fairly sure about, and name the assumption in the SUMMARY instead of asking. Ask only what you really can't work out and what would change the skill map, the dates or the grading, e.g. an exam date you only guessed. At most 3, most important first, one short line each. Never ask them to upload files.`;
   return { turns: [{ role: "user", content }], images, fileKeys, clipped };
 }
 
