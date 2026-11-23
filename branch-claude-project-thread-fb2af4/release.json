@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-fb2af4",
   "branch": "claude/project-thread-fb2af4",
-  "notes": "Quests: an old tab no longer overwrites newer hand-ins",
+  "notes": "Quests: a browser copy with hand-ins the saved copy lacks wins on reload",
   "dataVersion": 1,
-  "builtAt": "2026-11-23T19:17:20.995Z",
-  "commit": "28055256ea28c8868a0c67ac7fe097920f837d5f"
+  "builtAt": "2026-11-23T19:40:00.372Z",
+  "commit": "29bce88bf8ec351c51ca9f57657f4d0e44cab6ae"
 }
