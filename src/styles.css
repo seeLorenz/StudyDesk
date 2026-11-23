@@ -85,6 +85,7 @@ body,
   height: 100%;
 }
 body {
+  margin: 0;
   background: var(--paper);
   color: var(--ink);
   font-family: var(--font-ui);
@@ -420,6 +421,12 @@ svg {
 }
 .md a {
   color: var(--accent);
+}
+/* KaTeX hides a copy of each formula for screen readers with position:
+   absolute. Anchored to the formula, it stays inside the chat's own scroll
+   area; unanchored, it stretched the whole page below the app. */
+.katex {
+  position: relative;
 }
 .md .katex-display {
   overflow-x: auto;
@@ -2102,7 +2109,12 @@ sup.sd-ref {
   color: var(--ink-2);
 }
 /* The chat column is at least a screen tall, so the chat box always sits at
-   the bottom of the screen (like claude.ai), not right under a short chat. */
+   the bottom of the screen (like claude.ai), not right under a short chat.
+   The page has no bottom padding under the chat, so the box sits in the same
+   place while scrolling and at the very end (no jump). */
+.setup-page:has(.setup-chat.has-composer) {
+  padding-bottom: 0;
+}
 .setup-chat {
   display: flex;
   flex-direction: column;
@@ -2113,9 +2125,7 @@ sup.sd-ref {
 .setup-composer {
   margin-top: auto;
   position: sticky;
-  /* Chrome keeps sticky boxes inside the page's 48px bottom padding, which
-     left a strip of chat showing under the box; reach down over it. */
-  bottom: -48px;
+  bottom: 0;
   z-index: 2;
   padding: 12px 0 16px;
   /* Solid, so no chat shows through or under the box; a short fade above
