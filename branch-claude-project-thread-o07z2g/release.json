@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-o07z2g",
   "branch": "claude/project-thread-o07z2g",
-  "notes": "Name the chats right: the setup page, and the StudyDesk chat (also on Organize)",
+  "notes": "After setup, the setup page hands over to the StudyDesk chat: one chat with all the tools",
   "dataVersion": 1,
-  "builtAt": "2026-11-23T21:24:51.356Z",
-  "commit": "bd0a00f9bd4d142c56725c22d1324264fe50d152"
+  "builtAt": "2026-11-23T21:27:45.110Z",
+  "commit": "d7937cd1383e4f1ab31671850993124069a5b35a"
 }
