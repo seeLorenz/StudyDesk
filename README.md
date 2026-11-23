@@ -12,13 +12,18 @@ It's built for high school and university students, for any subject and any scho
 
 ## What it does
 
-### Today
+### Now
 
-Your home screen.
+Your home screen. It always says what to do next, and when.
 
-- **A daily quest.** A short, timed set of explanations and problems, picked around your next exams and the homework that's actually due. It's sized to the study time you have that day, so nothing piles up.
-- **Coming up.** Your exams, deadlines and homework for the next weeks, in one row. Something looks wrong? Press "Wrong?" and fix it in a sentence.
-- **Mistake review.** After grading, the mistakes you made sit at the top, with a chat that walks you through them from first principles.
+- **A day of short blocks**, one course each, placed in your free time around school and your calendar: homework that's due first, then prep for every exam in the next four weeks, spread backwards from its date so nothing is crammed the night before. Each block says why it's there ("Due tomorrow 08:00", "Klausur in 9 days").
+- **One button.** Start the block that's on now. Can't do it? Move it to later today or tomorrow, or skip it, and see what that does to the exam it was for. A block you didn't start moves to your next free time by itself.
+- **Beside it:** your exams ahead and how ready you are, the one or two questions StudyDesk needs answered now, and last night's grading.
+- **Mistakes first.** After grading, the mistakes you made are the day's first block, with a chat that walks you through them from first principles.
+
+### Week
+
+The run-up to your exams: four weeks at a glance, a row per course with every block and every exam day, whether it all fits into your study time, and this week day by day on the clock.
 
 ### Ask
 
@@ -26,9 +31,9 @@ A chat with Claude for anything you're stuck on. Paste or drop screenshots, PDFs
 
 - **Select to reply.** Select any passage, press Reply, and ask about just that part. The answer opens right under it as a note, instead of making the chat longer. This works everywhere in StudyDesk: in chats, quests, hints and feedback.
 
-### Organize
+### Courses and Tell StudyDesk
 
-The one place to set things up and change them. It's a chat with StudyDesk's Orchestrator, with your semester beside it: courses, dates, study time and files.
+**Courses** shows everything StudyDesk knows: your semester, each course and how far you are toward your target grade, every date (with "Wrong?" to fix it), study time and files. **Tell StudyDesk** (on every screen, Ctrl/⌘ J) is the chat to set things up and change them.
 
 - **Start a new semester** by talking: your courses, target grades, course files and timetable.
 - **Import from Google Calendar**, through your own claude.ai Google Calendar connector.
@@ -48,7 +53,7 @@ Every night at 22:00 (your time), StudyDesk does its work while you're away:
 
 1. **Grades** what you handed in that day.
 2. **Checks your courses** for moved dates and new material, and reads a course again completely every few weeks.
-3. **Writes tomorrow's quest**, already knowing tonight's mistakes.
+3. **Plans tomorrow's blocks**, already knowing tonight's mistakes.
 
 This needs Claude Code on the web (see [Setup](#setup)). Without it, StudyDesk still works: grading and quests happen the next time you open it.
 
@@ -93,10 +98,10 @@ You don't need to know any code. Claude reads the technical steps from [`INSTALL
 
 ### 3. Set up your semester
 
-1. Open **Organize**. With no semester yet, it starts the setup chat.
+1. Open your StudyDesk. With no semester yet, it starts the setup chat.
 2. When StudyDesk asks to **allow cloud sessions**, press the button and allow the "Claude Code Remote" connector when claude.ai asks. If it says Claude Code on the web isn't set up yet, finish step 1 and press "Check again".
 3. Tell it about your courses and drop in your course files. If you like, let it import your Google Calendar.
-4. StudyDesk reads every course in the background, then starts with a short **placement check** to see what you already know. Your first daily quest follows.
+4. StudyDesk reads every course in the background, then starts with a short **placement check** to see what you already know, a couple of courses a day. Your first day plan follows on **Now**.
 
 The nightly run is set up on its own once cloud sessions are allowed and the semester is ready. The sidebar shows whether it's on and at what time.
 
@@ -114,7 +119,7 @@ The nightly run is set up on its own once cloud sessions are allowed and the sem
 
 Releases are git tags (`v1`, `v1.1`, …). Changes on `main` never reach anyone's StudyDesk on their own.
 
-**Planned, not built yet:** when a new release is out, StudyDesk will show "Update to v1.1" in Organize. Pressing it has your own Claude session put the new version onto your StudyDesk link, so your data stays, then checks and upgrades your data in code, with a way back if anything fails. The full plan is in [`design/updates.md`](design/updates.md).
+**Planned, not built yet:** when a new release is out, StudyDesk will show "Update to v1.1" in the StudyDesk chat. Pressing it has your own Claude session put the new version onto your StudyDesk link, so your data stays, then checks and upgrades your data in code, with a way back if anything fails. The full plan is in [`design/updates.md`](design/updates.md).
 
 Until then, you can update by asking Claude the same way as in setup: "Update my StudyDesk from github.com/seeLorenz/studydesk. Follow its INSTALL.md." Claude puts the new version onto your existing StudyDesk link, so your data stays.
 
@@ -159,11 +164,13 @@ npm run build      # writes artifact/index.html and artifact/routine.mjs
 | --- | --- |
 | `design/` | How StudyDesk works, in plain English, one file per module. Start here. |
 | `src/chat/` | Ask: the chat, select-to-reply notes and the composer |
-| `src/quests/` | Daily quests: planning (code), writing (Claude), hand-in and the quest page |
+| `src/plan/` | The day plan: which course when, on the clock, exams' run-up (all plain code) |
+| `src/now/` | The Now and Week pages |
+| `src/quests/` | Quests (one per block): planning (code), writing (Claude), hand-in, and Now's data |
 | `src/mastery/` | Grading and mastery rules: streaks, review ladder, timing, points |
 | `src/onboarding/` | Start New Semester: setup chat, course reading, placement check |
-| `src/orchestrator/` | Organize: the Orchestrator chat and its tools |
-| `src/routine/` | The nightly run: grading, course checks, tomorrow's quest |
+| `src/orchestrator/` | Tell StudyDesk: the Orchestrator chat and its tools |
+| `src/routine/` | The nightly run: grading, course checks, tomorrow's blocks |
 | `src/platform/` | The only code that talks to claude.ai: Claude calls, storage, calendar, cloud sessions |
 | `src/lib/` | Markdown and math rendering, highlights, file reading |
 | `tests/` | Unit tests, including whole nights played with a stand-in session |

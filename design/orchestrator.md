@@ -153,7 +153,7 @@ This stays small. Anything detailed is fetched with a look-up tool only when the
 | `start_job` | Starts an organization agent job (new material, new course, re-map, drop course, look-up online) with the student's words and files | One job per course at a time; queues otherwise |
 | `read_calendar` | Imports from the student's Google Calendar, as in onboarding | Same rules as onboarding |
 | `open_ask` | Opens an Ask note or chat with a learning question already filled in | None |
-| `rebuild_quest` | Asks the quest code to write today's quest again from the new records | Only when today's quest hasn't been started |
+| `rebuild_quest` | Plans today's blocks again from the new records ([day-plan.md](day-plan.md)) | Only blocks that haven't been started |
 | `redo_placement` | A new placement check; `resetStats` also deletes past attempts, mastery progress and the mistake review | Asks first whether to reset the stats; a yes/no card, only on yes |
 
 `change` takes typed operations (for example `set_target_grade`, `move_date`, `add_homework`, `set_day_off`), not free text. Claude decides what the student meant; code decides whether it's valid and saves it. When the student's message finishes an item of the setup to-do list, the same change includes `tick_todo` for it: StudyDesk ticks items off itself and never asks the student to.
@@ -253,3 +253,10 @@ The code lives in `src/orchestrator/`, storage in `src/platform/orchestratorStor
 
 - The organization agent's daily check and deep sweeps now run in the nightly run ([scheduled-runs.md](scheduled-runs.md)); their changes arrive as change cards in a "Last night's run" message.
 - The live reading log stays on the setup screen ("Watch it live" on the job card).
+
+## The day plan (2026-11-23)
+
+- **The chat has no page of its own any more.** "Tell StudyDesk" opens it as a panel over every screen (Ctrl/⌘ J); the semester data is the Courses page ([app-layout.md](app-layout.md)).
+- **Today is a few blocks** ([day-plan.md](day-plan.md)). The snapshot lists them (`todaysBlocks`: course, kind, minutes, started), and `rebuild_quest` plans today's unstarted blocks again; started ones stay.
+- **Fewer questions in the chat.** Of the organization agent's open questions, only the two whose course has the nearest exam are raised by the chat itself (`QUESTIONS.pushed`); the rest wait on the to-do list and in Now's quick answers. An answer typed on Now arrives here as the student's own message ("sent from Now"), and is recorded and ticked off like any other.
+

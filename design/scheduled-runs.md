@@ -14,9 +14,9 @@ Every night at 22:00 one Claude cloud session does all three, in this order:
 
 1. **Grade** everything handed in that isn't graded yet.
 2. **Check the courses** (the organization agent's short check), plus a **deep sweep** of any course whose sweep date has come.
-3. **Write tomorrow's quest**, planned from tonight's grades and whatever the check found.
+3. **Plan tomorrow's blocks**, from tonight's grades and whatever the check found: the same day plan as the page ([day-plan.md](day-plan.md)), one quest per block, all written at once.
 
-One run instead of three separate ones, because each step needs the one before: tomorrow's quest should already know tonight's mistakes and a moved deadline. It also starts one session a night instead of several.
+One run instead of three separate ones, because each step needs the one before: tomorrow's blocks should already know tonight's mistakes and a moved deadline. It also starts one session a night instead of several.
 
 ### Where it runs
 
@@ -30,13 +30,13 @@ Each task carries a key, and the profile keeps the key of the current one. If a 
 
 The nightly program (`routine.mjs`) is StudyDesk's own code: the same planning, grading rules, mastery counting and checks as the page, built into one file. The cloud session runs it with Node. Whenever the code needs Claude (to judge an answer, write a lesson, check a course), the program writes that request down and stops; the session, which is itself Claude, answers it; then the program runs again and continues. So Claude only does what Claude should do, and every number is still computed by code.
 
-In practice a night takes three rounds: grading and the course check together, then all parts of tomorrow's quest at once, then a last pass that saves.
+In practice a night takes three rounds: grading and the course check together, then every part of every one of tomorrow's blocks at once, then a last pass that saves.
 
 ### Nothing the student is working on is overwritten
 
 The nightly run never replaces a document the page may have open. It writes:
 
-- **straight to the student's data:** new attempts and review items (new records only) and tomorrow's quest (a new record);
+- **straight to the student's data:** new attempts and review items (new records only) and tomorrow's blocks (new records);
 - **into an outbox:** the grades for each quest (only the grading fields: verdict, points, feedback), the course check's changes and questions, and deep-sweep results.
 
 The page takes the outbox in when it opens, and every few minutes while it's open, so a student still on the page at 22:00 sees the grades arrive. A quest that's open on screen merges the grades into its own copy, so nothing typed is lost. If the page isn't opened before the next night, the next run folds the outbox in itself first. Grades given in the meantime with "Grade me early" are kept.
@@ -59,16 +59,16 @@ Everything about the nightly run is changed by talking to StudyDesk (the Orchest
 
 - **The time** ("run it at 21:30"): a new scheduled task is made at the new time; the old one finds a different key and does nothing.
 - **Pause and resume** ("stop the nightly run during the holidays"): the program reads the setting and stops at once, so no new task is needed.
-- **Each part on or off**: grading at night, the courses' check, writing tomorrow's quest. A part that's off is done the old way (the "Grade me early" button, the quest written on first open).
+- **Each part on or off**: grading at night, the courses' check, planning tomorrow's blocks. A part that's off is done the old way (the "Grade me early" button, the day's blocks written on first open).
 - **A course's deep sweep date** ("read Calculus again completely on Thursday"): the student's date wins over the agent's own; "none" hands it back to the agent.
-- **Run it now** ("grade everything now and write tomorrow's quest"): starts the run at once; results arrive within about 15 minutes. A run started by hand doesn't stop that night's regular run.
+- **Run it now** ("grade everything now and plan tomorrow"): starts the run at once; results arrive within about 15 minutes. A run started by hand doesn't stop that night's regular run.
 
 The Orchestrator sees the run's status, its settings, each course's next sweep and the last night's log, so it can answer "when is Calculus read again?" or "what happened last night?".
 
 ## What the student sees
 
 - **Quest overview:** "Grading runs on its own tonight at 22:00, or press the button to grade now." Without cloud sessions: "anything left is graded the next time you open StudyDesk".
-- **In the morning:** tomorrow's quest is simply there. Graded quests move to "Done quests", and the mistake review sits at the top as usual.
+- **In the morning:** the day's blocks are simply there, on the clock. Graded blocks move to "Earlier blocks", and the mistakes to understand are the day's first block.
 - **StudyDesk chat:** one message per run, "StudyDesk's nightly run", with what was graded, what the check found (with change cards), and the quest it wrote.
 
 ## When something fails
@@ -79,7 +79,7 @@ The Orchestrator sees the run's status, its settings, each course's next sweep a
 
 ## Limits, for now
 
-- **Calendar data is live, read by the page.** Scheduled tasks can't use connectors, so the nightly run can't read Google Calendar itself. Instead, whenever StudyDesk is open the page reads the next 14 days of the calendar again (at most every 3 hours, and on each new day) and saves the busy minutes per day in `data/users/<uid>/calendar`. The nightly run sizes tomorrow's quest from that latest read, with the weekly timetable as a floor, and its log says how old the read is. Only if tomorrow isn't covered by any read does it fall back to the weekly timetable alone. The page also reads today's calendar when it writes a quest itself.
+- **Calendar data is live, read by the page.** Scheduled tasks can't use connectors, so the nightly run can't read Google Calendar itself. Instead, whenever StudyDesk is open the page reads the next 14 days of the calendar again (at most every 3 hours, and on each new day) and saves the busy minutes and the timed events per day in `data/users/<uid>/calendar`. The nightly run sizes tomorrow from that latest read, with the weekly timetable as a floor, and its log says how old the read is. Only if tomorrow isn't covered by any read does it fall back to the weekly timetable alone. The page also reads today's calendar when it writes a quest itself.
 - **Files in deep sweeps** are opened by the session itself from the student's data and file store, like cloud setup runs (images and scans included).
 - **A new semester** creates no new task: the same one keeps running and reads whatever semester is current.
 - **Cost:** one Opus session a night on the student's own plan, longer on nights with a deep sweep.

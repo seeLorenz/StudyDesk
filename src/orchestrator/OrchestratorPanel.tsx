@@ -30,7 +30,7 @@ import { openQuestStore, type QuestStore } from "../platform/questStore";
 import { compressImage } from "../quests/images";
 import type { QuestRecord, Semester } from "../quests/types";
 import type { Profile, SemesterDraft, Upload } from "../onboarding/types";
-import { NIGHTLY_TOOL, UPDATE_TOOL, ASK_TOOL, CALENDAR_TOOL, CHANGE_TOOL, checkinTurns, deskSnapshot, JOB_TOOL, jobTitle, localCheckin, LOOKUP_TOOL, needsSummary, orchTurns, questStarted, PLACEMENT_TOOL, REBUILD_TOOL, summaryTurns, todaysQuest } from "./agent";
+import { NIGHTLY_TOOL, UPDATE_TOOL, ASK_TOOL, CALENDAR_TOOL, CHANGE_TOOL, checkinTurns, deskSnapshot, JOB_TOOL, jobTitle, localCheckin, LOOKUP_TOOL, needsSummary, orchTurns, questStarted, PLACEMENT_TOOL, REBUILD_TOOL, summaryTurns, todaysBlocks } from "./agent";
 import { PASS_ON_EVENT, type PassOn } from "./passOn";
 import { applyOps, canUndo, findCourse, syncSemester, undoChange, type Desk } from "./changes";
 import { advanceJobs, startJob, type JobFile } from "./jobs";
@@ -68,12 +68,12 @@ type Props = {
   expanded: boolean;
   onClose: () => void;
   onToggleExpand: () => void;
-  /** What the student is looking at, e.g. "Today's quest". */
+  /** What the student is looking at, e.g. "Now (today's plan)". */
   screen: string;
   /** Text the student selected when they opened the chat. */
   quote: string | null;
   onClearQuote: () => void;
-  /** What the sidebar shows on Organize: things that need the student, unread notes, the nightly run. */
+  /** What the sidebar shows on Tell StudyDesk: things that need the student, unread notes, the nightly run. */
   onStatus: (s: OrchStatus) => void;
   /** On the Organize page the chat sits in this element as a full page instead of a side panel. */
   dock?: HTMLElement | null;
@@ -374,18 +374,21 @@ export function OrchestratorPanel(props: Props) {
     [commitDesk, saveState],
   );
 
-  /** Marks today's unstarted quest as replaced; the quest page writes a new one from the current desk. */
+  /** Sets today's unstarted blocks aside; Now plans and writes them again from the current desk. */
   const rebuildQuest = useCallback(async (): Promise<string> => {
     if (!env) throw new Error("StudyDesk isn't loaded yet.");
     recordsRef.current = await env.qs.loadRecords();
-    const q = todaysQuest(recordsRef.current, today);
-    if (!q) return "There's no quest for today yet: it will be written from the current desk when the student opens Today's quest.";
-    if (questStarted(q)) throw new Error("Today's quest is already started, so it isn't rewritten. Changes apply from the next quest.");
-    const replaced = { ...q, progress: { ...q.progress, replacedAt: Date.now(), updatedAt: Date.now() } };
-    await env.qs.saveRecord(replaced);
-    recordsRef.current = recordsRef.current.map((r) => (r === q ? replaced : r));
+    const blocks = todaysBlocks(recordsRef.current, today, semesterRef.current?.placementQuestId);
+    if (!blocks.length) return "There are no blocks for today yet: they're planned from the current desk when the student opens Now.";
+    const open = blocks.filter((b) => !questStarted(b));
+    if (!open.length) throw new Error("Every block of today is started already, so none is rewritten. Changes apply from tomorrow's plan.");
+    for (const q of open) {
+      const replaced = { ...q, progress: { ...q.progress, replacedAt: Date.now(), updatedAt: Date.now() } };
+      await env.qs.saveRecord(replaced);
+      recordsRef.current = recordsRef.current.map((r) => (r === q ? replaced : r));
+    }
     window.dispatchEvent(new CustomEvent("studydesk:quest-replaced"));
-    return "Today's quest is being written again from the current desk; it shows on Today's quest in a minute.";
+    return `Today's blocks are being planned again from the current desk${open.length < blocks.length ? " (the started ones stay)" : ""}; they show on Now in a minute.`;
   }, [env, today]);
 
   /**
@@ -805,7 +808,7 @@ export function OrchestratorPanel(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doneJobs]);
 
-  // Unseen check-ins show on Organize: a number when StudyDesk needs an answer, a dot for notes. Opening the chat marks them seen.
+  // Unseen check-ins show on Tell StudyDesk: a number when StudyDesk needs an answer, a dot for notes. Opening the chat marks them seen.
   const unseen = state.notifications.filter((n) => n.seenAt === null).length;
   const needs = state.notifications.filter((n) => n.seenAt === null && n.kind === "needs_answer").length + state.confirms.filter((c) => c.status === "waiting").length;
   const nightlyTime = profile?.schedule || nightly === "failed" ? nightlySettings(profile?.nightly).time : null;
@@ -834,6 +837,11 @@ export function OrchestratorPanel(props: Props) {
     if (!ready || busy || !passQueue.current.length) return;
     const p = passQueue.current.shift()!;
     setQueued((n) => n - 1);
+    if (p.by === "student") {
+      // The student's own words from another screen: a plain message of theirs.
+      void sendRef.current(`${p.text}\n\n(sent from ${p.where})`, []);
+      return;
+    }
     saveState((s) => ({ ...s, notifications: [...s.notifications, { key: `pass:${uid()}`, kind: "passed_on", day: today, at: Date.now(), courseId: null, facts: p.text, messageId: null, seenAt: open ? Date.now() : null }] }));
     void sendRef.current(`${p.text}\n\n(said in ${p.where})`, [], { fromTutor: true });
   }, [ready, busy, queued, saveState, today, open]);
@@ -852,30 +860,30 @@ export function OrchestratorPanel(props: Props) {
   const md = (id: string, text: string) => <AnnotatedMarkdown blockId={id} text={text} notes={notes.byBlock.get(id) ?? []} {...notes.handlers} />;
 
   const names = useMemo(() => new Map((draft?.courses ?? []).map((c) => [c.id, c.name])), [draft]);
-  // A change card offers to rebuild today's quest while it isn't started and is older than the change.
+  // A change card offers to plan today again while some block isn't started and is older than the change.
   const [rebuilt, setRebuilt] = useState<Record<string, string>>({});
-  const todayQ = todaysQuest(recordsRef.current, today);
+  const todayOpen = todaysBlocks(recordsRef.current, today, semesterRef.current?.placementQuestId).filter((b) => !questStarted(b));
   const rebuildOffer = (c: ChatCard) => {
     if (c.kind !== "change") return undefined;
     const ch = state.changes.find((x) => x.id === c.changeId);
     if (rebuilt[c.changeId]) return { label: rebuilt[c.changeId], run: null };
-    if (!ch || ch.status !== "applied" || !todayQ || questStarted(todayQ) || todayQ.quest.createdAt > ch.at) return undefined;
+    if (!ch || ch.status !== "applied" || !todayOpen.some((b) => b.quest.createdAt < ch.at)) return undefined;
     return {
-      label: "Rebuild today's quest",
+      label: "Plan today again",
       run: () =>
         void rebuildQuest()
-          .then((t) => setRebuilt((r) => ({ ...r, [c.changeId]: t.startsWith("Today's quest is being") ? "Rebuilding today's quest" : t })))
+          .then((t) => setRebuilt((r) => ({ ...r, [c.changeId]: t.startsWith("Today's blocks are being") ? "Planning today again" : t })))
           .catch((e) => setError(message(e))),
     };
   };
   const deskNow = draft && profile ? { draft, profile } : null;
 
   const panel = (
-    <aside className={"orch" + (dock ? " is-docked" : (open ? " is-open" : "") + (expanded ? " is-expanded" : ""))} aria-label="Organize" aria-hidden={!open}>
+    <aside className={"orch" + (dock ? " is-docked" : (open ? " is-open" : "") + (expanded ? " is-expanded" : ""))} aria-label="Tell StudyDesk" aria-hidden={!open}>
       <header className="orch-head">
         <span className="orch-title">
           <Logo />
-          Organize
+          Tell StudyDesk
         </span>
         {!dock && (
           <>
@@ -888,7 +896,7 @@ export function OrchestratorPanel(props: Props) {
             )}
           </svg>
         </button>
-        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close Organize">
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close the StudyDesk chat">
           <svg viewBox="0 0 16 16" aria-hidden="true">
             <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>

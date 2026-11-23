@@ -155,10 +155,29 @@ export type ProblemPart = {
 
 export type QuestPart = LearnPart | ProblemPart;
 
+/** What kind of block a quest is in the day plan (design/day-plan.md). */
+export type BlockKind = "fix" | "homework" | "check" | "exam" | "review" | "new" | "quest";
+/** How a block's reason is coloured: a hand-in, an exam, or neither. */
+export type BlockTone = "due" | "exam" | "plain";
+
+/** Where a quest sits in the day plan. Quests from before the day plan have none. */
+export type QuestBlock = {
+  kind: BlockKind;
+  tone: BlockTone;
+  /** Lower goes first in the day. */
+  rank: number;
+  /** The exams it prepares for: "<courseId>:<date>:<title>". */
+  examKeys: string[];
+  /** Homework: the hand-in time, "YYYY-MM-DDTHH:MM". */
+  dueAt?: string;
+};
+
 export type Quest = {
   id: string;
   date: Day;
   courseId: string;
+  /** Its place in the day plan; absent on older quests. */
+  block?: QuestBlock;
   budgetMinutes: number;
   plannedMinutes: number;
   /** One line: why this quest, today. */
@@ -226,6 +245,16 @@ export type QuestProgress = {
   finishedAt: number | null;
   /** Set when the student asked for a new quest for today before starting this one (through the Orchestrator). */
   replacedAt?: number;
+  /** The student moved this block to another day ("Tomorrow" on Now). */
+  deferredTo?: Day;
+  /** The student skipped this block on that day. */
+  skippedOn?: Day;
+  /** The student pushed this block to the end of today ("Later today"). */
+  laterAt?: number;
+  /** Placement check parts the student moved to a later day: part id → first day they show again. */
+  partsNotBefore?: Record<string, Day>;
+  /** The day each part was handed in, by part id (so today's plan still shows what's done). */
+  handedInOn?: Record<string, Day>;
   updatedAt: number;
 };
 

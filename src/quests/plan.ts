@@ -10,7 +10,7 @@ import { dueSkills, replay, type Exam } from "../mastery/replay";
 import { expectedMinutes, questBudget, slownessFactor } from "../mastery/timing";
 import type { Attempt, Day, ReviewItem, Skill, SkillState } from "../mastery/types";
 import { applyQuestSettings, QUEST_CONFIG, partMinutes } from "./config";
-import type { Assignment, AssignmentTask, ProblemPart, Quest, QuestProblem, Semester, TimetableEntry } from "./types";
+import type { Assignment, AssignmentTask, BlockKind, ProblemPart, Quest, QuestProblem, Semester, TimetableEntry } from "./types";
 
 export type PlanInput = {
   semester: Semester;
@@ -30,6 +30,8 @@ export type PlanInput = {
   questId?: string;
   /** Minutes already taken today according to the student's calendar, when it's connected. */
   calendarBusyMinutes?: number;
+  /** Planned as one block of the day plan (src/plan/day.ts): what it's for, in one line. */
+  block?: { kind: BlockKind; why: string };
 };
 
 export type PlanResult =
@@ -297,17 +299,24 @@ export function planQuest(input: PlanInput): PlanResult {
     const mine = tasks.filter((t) => t.assignment.id === a.id);
     const lower = (x: string) => x.charAt(0).toLowerCase() + x.slice(1);
     const needs = [...new Set(mine.map((t) => lower(byId.get(t.task.skillId)!.name)))];
-    reason = `${a.title} is due ${formatDue(a.dueAt, today)}. ${mine.map((t) => t.task.label).join(" and ")} need the ${needs.join(" and the ")}.`;
+    reason = `${a.title} is due ${formatDue(a.dueAt, today)}. ${mine.map((t) => t.task.label).join(" and ")} ${mine.length === 1 ? "needs" : "need"} the ${needs.join(" and the ")}.`;
   } else if (gate.length) {
     reason = `Recent mistakes came from ${names(gate).join(" and ")}, so today fixes that first.`;
   } else if (reviewIds.length && !newIds.length) {
     reason = `${reviewIds.length} ${reviewIds.length === 1 ? "skill is" : "skills are"} due to come back today.`;
+  } else if (input.block?.kind === "exam") {
+    reason = `${input.block.why}: this block starts ${names(newIds).join(" and ")}.`;
+  } else if (input.block) {
+    reason = `Next up in ${course.name}: ${names(newIds).join(" and ")}.`;
   } else {
     reason = `No homework is due this week, so today starts ${names(newIds).join(" and ")}.`;
   }
+  if (input.block?.kind === "exam" && (tasks.length || gate.length || (reviewIds.length && !newIds.length))) reason = `${input.block.why}. ${reason}`;
 
   const notes: string[] = [];
-  if (input.budgetOverride !== undefined) {
+  if (input.block) {
+    notes.push(`One of today's blocks, about ${budgetMinutes} min, placed in your free time. StudyDesk shares each day's study time between your courses: homework that's due, then prep for every exam in the next four weeks.`);
+  } else if (input.budgetOverride !== undefined) {
     notes.push(`You asked for a quest today, so it's about ${budgetMinutes} min.`);
   } else {
     notes.push(

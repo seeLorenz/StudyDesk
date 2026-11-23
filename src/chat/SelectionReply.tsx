@@ -142,7 +142,7 @@ export function SelectionReply({ scope, disabled, onAsk }: Props) {
           <button
             type="button"
             className="reply-btn"
-            title="Tell Organize about this (change a date, plan, homework…)"
+            title="Tell StudyDesk about this (change a date, plan, homework…)"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               askStudyDesk(pending.range.toString());
@@ -150,7 +150,7 @@ export function SelectionReply({ scope, disabled, onAsk }: Props) {
               close();
             }}
           >
-            Organize
+            Tell StudyDesk
           </button>
         </span>
       )}

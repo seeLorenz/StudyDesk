@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { applyOps, canUndo, isRealDay, syncSemester, undoChange, type Desk } from "../src/orchestrator/changes";
 import { advanceJobs, startJob } from "../src/orchestrator/jobs";
 import { checkinTriggers, speed } from "../src/orchestrator/signals";
-import { needsSummary, orchTurns, questStarted, todaysQuest } from "../src/orchestrator/agent";
+import { needsSummary, orchTurns, questStarted, todaysBlocks } from "../src/orchestrator/agent";
 import { applyQuestSettings, QUEST_CONFIG } from "../src/quests/config";
 import { emptyState, type OrchMessage } from "../src/orchestrator/types";
 import type { CourseSetup, Profile, SemesterDraft } from "../src/onboarding/types";
@@ -255,14 +255,16 @@ describe("quest settings and rebuilding", () => {
     expect(canUndo(r.desk, r.change!)).toBe(true);
   });
 
-  it("finds today's quest, skipping replaced ones, and tells whether it was started", () => {
+  it("finds today's blocks, skipping replaced and moved ones, and tells whether one was started", () => {
     const mk = (id: string, createdAt: number, replacedAt?: number): QuestRecord => ({
       quest: { id, date: TODAY, courseId: "c1", budgetMinutes: 30, plannedMinutes: 30, reason: "", notes: [], createdAt, parts: [] },
       progress: { questId: id, work: {}, handedIn: [], fixIts: [], gatesCleared: [], finishedAt: null, replacedAt, updatedAt: 0 },
     });
     const a = mk("a", 1);
     const b = mk("b", 2, 5);
-    expect(todaysQuest([a, b], TODAY)?.quest.id).toBe("a");
+    const c = mk("c", 3);
+    c.progress.deferredTo = "2099-01-01";
+    expect(todaysBlocks([a, b, c], TODAY).map((r) => r.quest.id)).toEqual(["a"]);
     expect(questStarted(a)).toBe(false);
     expect(questStarted({ ...a, progress: { ...a.progress, work: { p: { answerText: "x", files: [], hintsShown: 0, sawSimilar: false, activeSeconds: 0, startedAt: null } } } })).toBe(true);
   });

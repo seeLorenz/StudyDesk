@@ -128,3 +128,8 @@ After "Are you sure?":
 
 1. **Backup.** StudyDesk saves one zip: every original file the student imported, by course, plus `studydesk-data.json` with everything it keeps for them (profile, semester and setup with chat and to-do list, archived semesters, quests with answers and reviews, Ask chats, mastery and stats). `src/platform/backup.ts`.
 2. **Keep or start fresh.** Only once the zip is saved, the student chooses. "Keep old data" (the default) starts the new setup and archives the old semester when the new one is saved; current quests keep working until then. "Delete old data and start fresh" (two clicks) deletes courses and semester, setup chat and to-do list, quests, imported files and archived semesters, and keeps mastery, stats and profile; Ask chats only if the student ticks the box. If the download is declined, nothing can be deleted.
+
+## The placement check in the day plan (2026-11-23)
+
+The placement check is still written once, as one quest with a part per course, but it's no longer done in one sitting. The day plan ([day-plan.md](day-plan.md)) takes it two courses a day, the course with the nearest exam first, each part as its own short block on Now; the student can move a part to tomorrow. Answers are graded as before (on "Grade me early" or overnight), and the workload recommendation comes once every part is graded.
+

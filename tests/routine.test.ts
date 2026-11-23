@@ -157,6 +157,22 @@ describe("the nightly run", () => {
     expect(result.log[0]).toContain("nothing was handed in");
   });
 
+  it("plans tomorrow across courses: a block per course, all written in one round", async () => {
+    const semester = sampleSemester(TUE, 0, { more: true });
+    const { result, rounds } = await playNight(input({ semester, records: [], mastery: { skills: semester.skills, targets: semester.targets, attempts: [], reviews: [] } }));
+    if (result.kind !== "done") throw new Error("not done");
+    const recs = result.writes.filter((w) => w.path[1] === "records").map((w) => w.data as unknown as QuestRecord);
+    expect(recs.length).toBeGreaterThan(1);
+    expect(new Set(recs.map((r) => r.quest.courseId)).size).toBe(recs.length);
+    expect(recs.every((r) => r.quest.date === "2026-11-04" && r.quest.block)).toBe(true);
+    // The exam nine days away gets prep; the block says so.
+    expect(recs.find((r) => r.quest.courseId === "la")?.quest.block?.examKeys).toHaveLength(1);
+    // One round writes every block, the next saves.
+    expect(rounds).toBe(2);
+    expect(result.night.questIds).toEqual(recs.map((r) => r.quest.id));
+    expect(result.log.join(" ")).toMatch(/Planned tomorrow: \d blocks/);
+  });
+
   it("doesn't write a second quest for tomorrow, and nothing before the placement check", async () => {
     const tomorrow = handedInRecord();
     tomorrow.quest = { ...tomorrow.quest, id: "qst_wed", date: "2026-11-04" };

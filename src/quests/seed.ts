@@ -37,8 +37,62 @@ export const SAMPLE_SKILLS: Skill[] = [
   sk({ id: "sk_leibniz", name: "Alternating series (Leibniz criterion)", topicId: "t_series", prereqSkillIds: ["sk_series-def", "sk_rational-limits"], tier: 2, difficulty: "hard", estMinutes: 8 }),
 ];
 
-/** A fresh sample semester anchored on `today`. Each anchor gets its own sheet ids, so a restart has open homework again. */
-export function sampleSemester(today: Day, now = Date.now()): Semester {
+/** Two more small courses for looking around: an exam in nine days and a quiz in sixteen, so the day plan has something to share. */
+const MORE_SKILLS: Skill[] = [
+  sk({ id: "sk_la-vectors", courseId: "la", name: "Vectors and linear combinations", topicId: "t_la-vec", estMinutes: 4 }),
+  sk({ id: "sk_la-gauss", courseId: "la", name: "Solve a linear system by Gaussian elimination", topicId: "t_la-sys", estMinutes: 6 }),
+  sk({ id: "sk_la-rank", courseId: "la", name: "Rank of a matrix", topicId: "t_la-sys", prereqSkillIds: ["sk_la-gauss"], estMinutes: 5 }),
+  sk({ id: "sk_la-det", courseId: "la", name: "Determinant of a 3×3 matrix", topicId: "t_la-det", estMinutes: 5 }),
+  sk({ id: "sk_la-inverse", courseId: "la", name: "Inverse of a matrix", topicId: "t_la-det", prereqSkillIds: ["sk_la-gauss", "sk_la-det"], estMinutes: 7, weight: 2 }),
+  sk({ id: "sk_ph-kinematics", courseId: "phys", name: "Uniformly accelerated motion", topicId: "t_ph-mech", estMinutes: 5 }),
+  sk({ id: "sk_ph-newton", courseId: "phys", name: "Newton's second law with friction", topicId: "t_ph-mech", estMinutes: 6 }),
+  sk({ id: "sk_ph-energy", courseId: "phys", name: "Conservation of energy", topicId: "t_ph-energy", estMinutes: 6, weight: 2 }),
+  sk({ id: "sk_ph-momentum", courseId: "phys", name: "Momentum in collisions", topicId: "t_ph-energy", estMinutes: 6 }),
+];
+
+/**
+ * A fresh sample semester anchored on `today`. Each anchor gets its own sheet
+ * ids, so a restart has open homework again. With `more`, two more courses
+ * with an exam and a quiz come along (the preview uses them; tests use one course).
+ */
+export function sampleSemester(today: Day, now = Date.now(), opts: { more?: boolean } = {}): Semester {
+  const base = oneCourse(today, now);
+  if (!opts.more) return base;
+  return {
+    ...base,
+    courses: [
+      ...base.courses,
+      {
+        id: "la",
+        name: "Linear Algebra",
+        short: "LA",
+        teachingLanguage: "English",
+        topics: [
+          { id: "t_la-vec", name: "Vectors" },
+          { id: "t_la-sys", name: "Linear systems" },
+          { id: "t_la-det", name: "Determinants" },
+        ],
+      },
+      { id: "phys", name: "Physics", short: "Ph", teachingLanguage: "English", topics: [{ id: "t_ph-mech", name: "Mechanics" }, { id: "t_ph-energy", name: "Energy" }] },
+    ],
+    targets: [...base.targets, { courseId: "la", targetGrade: 2, gradeScale: AUSTRIAN }, { courseId: "phys", targetGrade: 3, gradeScale: AUSTRIAN }],
+    // More lectures, so a little more study goal: about an hour of blocks after them.
+    studyGoal: [0, 330, 300, 330, 330, 240, 120],
+    skills: [...base.skills, ...MORE_SKILLS],
+    keyDates: [
+      ...base.keyDates,
+      { courseId: "la", date: addDays(today, 9), kind: "exam", title: "Linear Algebra exam", skillIds: [] },
+      { courseId: "phys", date: addDays(today, 16), kind: "quiz", title: "Physics quiz", skillIds: [] },
+    ],
+    timetable: [
+      ...base.timetable,
+      ...[1, 3].map((weekday): TimetableEntry => ({ weekday, start: "08:30", end: "10:00", kind: "lecture", title: "Linear Algebra lecture", courseId: "la" })),
+      { weekday: 4, start: "12:00", end: "13:30", kind: "lecture", title: "Physics lecture", courseId: "phys" },
+    ],
+  };
+}
+
+function oneCourse(today: Day, now: number): Semester {
   const tag = today.replace(/-/g, "");
   return {
     id: `sem_sample_${tag}`,

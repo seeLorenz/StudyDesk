@@ -10,6 +10,7 @@ import { replay } from "../mastery/replay";
 import type { Attempt, Day, ReviewItem, SkillState } from "../mastery/types";
 import { recommendWorkload } from "../onboarding/placement";
 import { setupTodo } from "../onboarding/todo";
+import { QUESTIONS, rankedItems } from "../plan/questions";
 import type { SemesterDraft } from "../onboarding/types";
 import type { ProblemPart, QuestRecord, Semester } from "../quests/types";
 import type { Job, Notification, NotificationKind } from "./types";
@@ -154,10 +155,14 @@ export function checkinTriggers(input: TriggerInput): Trigger[] {
     out.push(t);
   };
 
-  // Needs: questions from the organization agent, finished jobs.
+  // Needs: questions from the organization agent, finished jobs. Only the few
+  // that matter most now (courses with the nearest exam) are brought up; the
+  // rest wait on the to-do list and on Now's quick answers (design/day-plan.md).
+  const pushed = new Set(rankedItems(draft, semester.keyDates, today).slice(0, QUESTIONS.pushed).map((t) => t.key));
   for (const item of setupTodo(draft)) {
     // Dates and file conflicts are for the student to look over on the to-do list; exam dates get their own check-in below.
     if (item.done || item.key === "dates" || item.key === "conflicts") continue;
+    if (item.key.startsWith("q-") && !pushed.has(item.key)) continue;
     const cid = item.key.startsWith("q-") ? item.key.slice(2) : null;
     // Keyed by the question itself: a re-read that asks the same thing doesn't ask again.
     add({ key: `todo:${item.key}:${hash(item.body + (item.subs ?? []).map((x) => x.text).join("|"))}`, kind: "needs_answer", courseId: cid, facts: item.chatPrompt });

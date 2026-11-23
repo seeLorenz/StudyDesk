@@ -20,7 +20,9 @@ import { parseSetup, setupTurns, type FileForSetup, type SetupInput } from "../o
 import { syncSemester, type Desk } from "../orchestrator/changes";
 import type { Turn } from "../platform/claude";
 import { emptyProgress, handIn, ungraded } from "../quests/handin";
-import { carriedOver, doneTasks, planQuest, recentBlockers, recentFeel } from "../quests/plan";
+import { carriedOver, recentFeel } from "../quests/plan";
+import { planDays, recordsOnDay } from "../plan/day";
+import { questsForDay } from "../plan/build";
 import type { QuestRecord, Semester } from "../quests/types";
 import { claudeWriter, writeQuest } from "../quests/write";
 import { applyShallow, applySweep, gradingFields, mergeGrading, outboxId, outboxOrder, type GradingOutbox, type OutboxDoc, type ShallowOutbox, type SweepOutbox } from "./apply";
@@ -61,8 +63,10 @@ export type NightLog = {
   startedAt: number;
   finishedAt: number | null;
   lines: string[];
-  /** The quest written for the next day, if any. */
+  /** The first block written for the next day, if any. */
   questId: string | null;
+  /** Every block written for the next day. */
+  questIds?: string[];
 };
 
 /** data/users/<uid>/routine: what the nightly run keeps between nights. */
@@ -183,17 +187,14 @@ export async function runNightly(input: NightInput, d: DeferredAsk): Promise<Nig
     if (semester && semester.id === desk.draft.id) semester = syncSemester(desk.draft, desk.profile, semester, now);
   }
 
-  // ---- 3. Tomorrow's quest ----
-  let questId: string | null = null;
-  const q = settings.quest ? await writeTomorrow(semester, input.calendar ?? null, records, mastery, tomorrow, now, d, log) : { pending: false, record: null };
-  if (!settings.quest) log.push("Writing the quest overnight is turned off; it's written when you open StudyDesk.");
+  // ---- 3. Tomorrow's blocks ----
+  const q = settings.quest ? await writeTomorrow(semester, input.calendar ?? null, records, mastery, tomorrow, now, d, log) : { pending: false, records: [] as QuestRecord[] };
+  if (!settings.quest) log.push("Planning tomorrow overnight is turned off; today's blocks are written when you open StudyDesk.");
   if (q.pending) return { kind: "pending", log };
-  if (q.record) {
-    questId = q.record.quest.id;
-    writes.push({ path: ["quests", "records", questId], data: plain(q.record), mode: "create" });
-  }
+  for (const r of q.records) writes.push({ path: ["quests", "records", r.quest.id], data: plain(r), mode: "create" });
+  const questIds = q.records.map((r) => r.quest.id);
 
-  const night: NightLog = { day: today, status: "done", startedAt: now, finishedAt: null, lines: log, questId };
+  const night: NightLog = { day: today, status: "done", startedAt: now, finishedAt: null, lines: log, questId: questIds[0] ?? null, ...(questIds.length ? { questIds } : {}) };
   const nights = [...routine.nights.filter((n) => n.day !== today), night].slice(-14);
   writes.push({ path: ["routine"], data: plain({ org: orgState, nights, updatedAt: now } satisfies RoutineDoc), mode: "replace" });
   return { kind: "done", writes, log, night };
@@ -347,52 +348,68 @@ function sizedBy(semester: Semester, calendar: CalendarAhead | null, busy: numbe
 }
 
 async function writeTomorrow(semester: Semester | null, calendar: CalendarAhead | null, records: QuestRecord[], mastery: MasteryData, tomorrow: Day, now: number, d: DeferredAsk, log: string[]) {
-  const out = { pending: false, record: null as QuestRecord | null };
+  const out = { pending: false, records: [] as QuestRecord[] };
   if (!semester) {
-    log.push("No semester yet, so no quest was written.");
+    log.push("No semester yet, so nothing was planned.");
     return out;
   }
   if (semester.source === "onboarding" && !semester.placementQuestId) {
-    log.push("The placement check comes first, so tomorrow's quest is written when you open StudyDesk.");
+    log.push("The placement check comes first, so tomorrow is planned when you open StudyDesk.");
     return out;
   }
-  if (records.some((r) => r.quest.date === tomorrow && !r.progress.replacedAt)) {
-    log.push("Tomorrow's quest already exists.");
+  if (recordsOnDay(records, tomorrow, semester.placementQuestId).length) {
+    log.push("Tomorrow's blocks already exist.");
     return out;
   }
-  // Calendar data is live: tomorrow is sized from the latest read of the calendar.
-  const calendarBusyMinutes = semester.calendarSync ? busyFromAhead(calendar, tomorrow) : undefined;
-  const res = planQuest({
-    calendarBusyMinutes,
+  // The same day plan as the page: homework due next, prep for every exam
+  // ahead, reviews; calendar data is live, so tomorrow is sized from the latest read.
+  const nowLocal = `${tomorrow}T00:00`;
+  const plan = planDays({
     semester,
     today: tomorrow,
-    nowLocal: `${tomorrow}T00:00`,
+    nowLocal,
     attempts: mastery.attempts,
     reviews: mastery.reviews,
-    doneTaskIds: doneTasks(records),
-    blockerSkillIds: recentBlockers(records, tomorrow),
-    questId: `qst_${tomorrow}_${now.toString(36)}`,
-  });
-  if (res.kind !== "quest") {
-    log.push(res.kind === "no_time" ? "Tomorrow has no study time planned, so there's no quest." : "Nothing to do tomorrow, so there's no quest.");
+    records,
+    days: 1,
+    calendarBusy: (day) => (semester.calendarSync ? busyFromAhead(calendar, day) : undefined),
+  }).days[0];
+  const list = questsForDay(plan, { semester, nowLocal, attempts: mastery.attempts, reviews: mastery.reviews, records, now });
+  const checks = plan.blocks.filter((b) => b.kind === "check").length;
+  if (!list.length) {
+    log.push(plan.budget <= 0 ? "Tomorrow has no study time planned, so there are no blocks." : checks ? `Tomorrow is ${checks} placement check ${checks === 1 ? "part" : "parts"}; nothing else to write.` : "Nothing to do tomorrow, so there are no blocks.");
     return out;
   }
   const { states } = replay(mastery.skills, mastery.attempts, mastery.reviews);
   const knownIds = [...states.values()].filter((s) => s.stage === "mastered" || s.stage === "retained").map((s) => s.skillId);
   const feel = recentFeel(records, (id) => semester.skills.find((s) => s.id === id)?.name, tomorrow);
-  const carried = carriedOver(records, res.quest);
-  if (carried.length) res.quest.notes.unshift(`Carried over from ${weekdayName(carried[0].from)}, when the quest wasn't finished: ${carried.map((c) => c.label).join(", ")}.`);
-  const course = semester.courses.find((c) => c.id === res.quest.courseId);
-  const writer = claudeWriter(semester, res.quest, knownIds, d.ask(`Writing tomorrow's quest (${course?.name ?? "quest"}, ${weekdayName(tomorrow)})`));
-  try {
-    // Every part at once: each call that still needs an answer is listed in one go.
-    const quest = await writeQuest(res.quest, writer, undefined, { concurrency: res.quest.parts.length });
-    out.record = { quest, progress: emptyProgress(quest.id) };
-    const minutes = quest.plannedMinutes;
-    log.push(`Wrote tomorrow's quest: ${course?.name ?? "quest"}, ${quest.parts.length} ${quest.parts.length === 1 ? "part" : "parts"}, about ${minutes} min. ${sizedBy(semester, calendar, calendarBusyMinutes, now)}`);
-  } catch (e) {
-    if (isPending(e)) out.pending = true;
-    else log.push(`Tomorrow's quest couldn't be written (${(e as Error)?.message ?? String(e)}). StudyDesk writes it when you open it.`);
+  const courseName = (id: string) => semester.courses.find((c) => c.id === id)?.name ?? "a course";
+  // Every part of every block at once: each call that still needs an answer is listed in one go.
+  const results = await Promise.all(
+    list.map(({ quest: planned }) =>
+      settle(
+        (async () => {
+          const carried = carriedOver(records, planned);
+          if (carried.length) planned.notes.unshift(`Carried over from ${weekdayName(carried[0].from)}, when it wasn't finished: ${carried.map((c) => c.label).join(", ")}.`);
+          const writer = claudeWriter(semester, planned, knownIds, d.ask(`Writing tomorrow's ${courseName(planned.courseId)} block (${weekdayName(tomorrow)})`), undefined, feel);
+          return writeQuest(planned, writer, undefined, { concurrency: planned.parts.length });
+        })(),
+      ),
+    ),
+  );
+  for (const [i, x] of results.entries()) {
+    if (!x.ok) {
+      if (isPending(x.e)) out.pending = true;
+      else log.push(`Tomorrow's ${courseName(list[i].quest.courseId)} block couldn't be written (${(x.e as Error)?.message ?? String(x.e)}). StudyDesk writes it when you open it.`);
+      continue;
+    }
+    out.records.push({ quest: x.v, progress: emptyProgress(x.v.id) });
+  }
+  if (out.pending) return { pending: true, records: [] as QuestRecord[] };
+  if (out.records.length) {
+    const minutes = out.records.reduce((s, r) => s + r.quest.plannedMinutes, 0);
+    const names = out.records.map((r) => courseName(r.quest.courseId)).join(", ");
+    log.push(`Planned tomorrow: ${out.records.length} ${out.records.length === 1 ? "block" : "blocks"} (${names}), about ${minutes} min${checks ? `, plus ${checks} placement check ${checks === 1 ? "part" : "parts"}` : ""}. ${sizedBy(semester, calendar, semester.calendarSync ? busyFromAhead(calendar, tomorrow) : undefined, now)}`);
   }
   return out;
 }
