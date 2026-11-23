@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-qo60fq",
   "branch": "claude/project-thread-qo60fq",
-  "notes": "Keep the Reply question box on screen on scrolled pages",
+  "notes": "Open the Reply question box above the passage when there's no room below",
   "dataVersion": 1,
-  "builtAt": "2026-11-23T19:18:08.381Z",
-  "commit": "d1832aa9a08a536fde20e3fb3823d00a39eedc0c"
+  "builtAt": "2026-11-23T19:38:32.033Z",
+  "commit": "360597661d6c2e7a7ed24a6f4885a1ce0fc5f095"
 }
