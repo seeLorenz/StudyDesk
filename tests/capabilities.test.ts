@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { capabilityBlock, WISH_URL } from "../src/agents/capabilities";
+import { readFileSync } from "node:fs";
+import { CAPABILITIES, capabilityBlock, WISH_URL, type Chat } from "../src/agents/capabilities";
+import * as orch from "../src/orchestrator/agent";
+import { READ_FILE_TOOL } from "../src/lib/keep";
 import { applyOps, undoChange, type Desk } from "../src/orchestrator/changes";
 import { applySheetUpdate } from "../src/onboarding/agent";
 import type { Profile, SemesterDraft } from "../src/onboarding/types";
@@ -11,7 +14,7 @@ describe("capabilities", () => {
   it("tells each chat what it can do, what only the other can, and what nobody can", () => {
     const panel = capabilityBlock("panel");
     expect(panel).toContain("- start a job");
-    expect(panel).toContain("read a kept file (in the Organize page)");
+    expect(panel).toContain("read the courses that changed again (in the Organize page)");
     expect(panel).toContain("change how the app looks");
     expect(capabilityBlock("organize")).toContain("start a job that reads new material or a course again (in the StudyDesk chat (Ctrl J))");
   });
@@ -27,5 +30,23 @@ describe("capabilities", () => {
     expect(decodeURIComponent(link)).not.toContain("TU");
     expect(undoChange(r.desk, r.change!).ok && profile.wishes).toBeUndefined();
     expect(applySheetUpdate(draft, profile, { wish: "dark mode" }, 2).profile.wishes).toEqual([{ text: "dark mode", at: 2 }]);
+  });
+});
+
+describe("each chat gets exactly the tools the list names", () => {
+  // Read the tools each chat really builds from its source, so a new tool can't skip the list.
+  const consts: Record<string, string> = { ...Object.fromEntries(Object.entries(orch).filter(([k]) => k.endsWith("_TOOL")).map(([k, v]) => [k, (v as { name: string }).name])), READ_FILE_TOOL: READ_FILE_TOOL.name };
+  const built = (file: string, chat: Chat) => {
+    const src = readFileSync(file, "utf8");
+    const block = src.slice(src.indexOf(`toolsFor("${chat}", [`), src.indexOf("]),", src.indexOf(`toolsFor("${chat}", [`)));
+    return [...block.matchAll(/^\s{12,14}(?:\{ )?(?:\.\.\.(\w+_TOOL)|name: "(\w+)")/gm)].map((m) => (m[1] ? consts[m[1]] : m[2]));
+  };
+  it.each([
+    ["src/orchestrator/OrchestratorPanel.tsx", "panel"],
+    ["src/onboarding/OnboardingPage.tsx", "organize"],
+  ] as const)("%s", (file, chat) => {
+    const names = built(file, chat);
+    expect(names.length).toBeGreaterThan(2);
+    expect(new Set(names)).toEqual(new Set(CAPABILITIES.flatMap((c) => (c.in[chat] ? [c.in[chat]] : []))));
   });
 });

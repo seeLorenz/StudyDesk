@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { toolsFor } from "../agents/capabilities";
 import { SentFiles } from "../chat/SentFiles";
 import { useSentToTop } from "../chat/useSentToTop";
 import { ImportProgress } from "../chat/ImportProgress";
@@ -722,7 +723,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
           earlierImages: earlier.images,
           tier: "default",
           onText: (t) => patchMsg(reply.id, { text: t }),
-          tools: [
+          tools: toolsFor("organize", [
             { name: "update_sheet", description: SHEET_TOOL_DESCRIPTION, inputSchema: SHEET_TOOL_SCHEMA as unknown as Claude.sample.SampleToolInputSchema, execute: (input) => applyUpdate(input) },
             { ...READ_FILE_TOOL, inputSchema: READ_FILE_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema, execute: (input) => readKeptFile(input, draftRef.current!.uploads, (id) => env.os.loadUploadContent(id)) },
             {
@@ -752,7 +753,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
                 return "Started. Tell the student in one line that you're reading their materials now, course by course, and that they can follow the progress below.";
               },
             },
-          ],
+          ]),
         });
         patchMsg(reply.id, { text: answer });
       }

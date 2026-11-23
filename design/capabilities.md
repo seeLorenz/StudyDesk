@@ -17,4 +17,6 @@ Why a list in the prompt and not a lookup step: the list is in front of Claude o
 
 ## Keeping it in sync
 
-Adding a feature means adding one entry to the list. Planned next step, after the setup-question work is merged: both chats build their tool lists from this file, and a test fails if a tool is missing from it.
+Each entry names, per chat, the tool that provides it there. Both chats pass their tools through `toolsFor(chat, tools)`. A chat only gets the tools the list grants it, and any mismatch is logged. A test reads the tools each chat really builds and fails when they differ from the list. Adding a feature (Anki export, say) means one entry plus its tool; a missing entry fails the test.
+
+The two chats still have different tools: Organize fills the sheet, and the StudyDesk chat makes changes and starts jobs. Giving them the same set is a separate choice.

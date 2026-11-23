@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toolsFor } from "../agents/capabilities";
 import { SentFiles } from "../chat/SentFiles";
 import { useSentToTop } from "../chat/useSentToTop";
 import { ImportProgress } from "../chat/ImportProgress";
@@ -510,7 +511,7 @@ export function OrchestratorPanel(props: Props) {
           images: imagesOk ? kept.images : [],
           earlierImages: earlier.images,
           onText: (t) => patch({ text: t }),
-          tools: [
+          tools: toolsFor("panel", [
             {
               ...CHANGE_TOOL,
               inputSchema: CHANGE_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema,
@@ -657,7 +658,7 @@ export function OrchestratorPanel(props: Props) {
                 }
               },
             },
-          ],
+          ]),
         });
         patch({ text: answer });
       }
