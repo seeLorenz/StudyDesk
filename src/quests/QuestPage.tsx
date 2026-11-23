@@ -26,7 +26,7 @@ import { busyMinutesFromEvents, readCalendar } from "../platform/calendar";
 import { publish, subscribe } from "../platform/deskBus";
 import { openOnboardingStore } from "../platform/onboardingStore";
 import { openRoutineStore } from "../platform/routineStore";
-import { mergeGrading, type GradingOutbox } from "../routine/apply";
+import { gradingFields, mergeGrading, type GradingOutbox } from "../routine/apply";
 import { ComingUp } from "../shell/ComingUp";
 
 // The quest page: builds today's quest on the first open of the day (the
@@ -586,7 +586,17 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
   const [progress, setProgress] = useState<QuestProgress>(() => {
     try {
       const d = JSON.parse(localStorage.getItem(draftKey) || "null") as QuestProgress | null;
-      if (d && d.questId === quest.id && d.updatedAt > record.progress.updatedAt) return d;
+      if (d && d.questId === quest.id) {
+        const rec = record.progress;
+        // Newer, or holding hand-ins the saved copy lacks (its last save didn't get through,
+        // and the saved copy was stamped newer since, say by the night's grades).
+        if (d.updatedAt > rec.updatedAt) return d;
+        if (!rec.replacedAt && d.handedIn.some((id) => !rec.handedIn.includes(id))) {
+          const work = { ...d.work };
+          for (const [pid, w] of Object.entries(rec.work)) if (w.verdict && !work[pid]?.verdict) work[pid] = { ...(work[pid] ?? w), ...gradingFields(w) };
+          return { ...d, work, handedIn: [...new Set([...rec.handedIn, ...d.handedIn])], finishedAt: rec.finishedAt ?? d.finishedAt, updatedAt: Date.now() };
+        }
+      }
     } catch {
       /* no draft */
     }
