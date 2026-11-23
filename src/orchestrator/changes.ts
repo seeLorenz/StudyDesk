@@ -11,7 +11,7 @@ import { assessmentAttempts } from "../mastery/grades";
 import type { AssessmentResult, Attempt, CourseTarget } from "../mastery/types";
 import { buildSemester } from "../onboarding/setup";
 import { setupTodo } from "../onboarding/todo";
-import type { CourseSetup, DraftCourse, Profile, SemesterDraft } from "../onboarding/types";
+import type { CourseSetup, DraftCourse, Profile, SemesterDraft, StudentFact } from "../onboarding/types";
 import type { Assignment, KeyDate, Semester, TimetableEntry } from "../quests/types";
 import { QUEST_SETTING_LIMITS, questSettingsNow, type QuestSettings } from "../quests/config";
 import type { Change, Operation } from "./types";
@@ -94,6 +94,9 @@ function setPart(desk: Desk, key: string, value: unknown): Desk {
   return { ...desk, draft: { ...desk.draft, [key]: value } };
 }
 
+const OWN_WORD = " (set by the student in StudyDesk)";
+const dateLabel = (k: Pick<KeyDate, "kind" | "title">) => `${k.kind === "quiz" ? "Quiz" : "Exam"} "${k.title}"`;
+
 const clone = <T>(x: T): T => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
@@ -148,6 +151,14 @@ export function applyOps(
   };
   const fact = (c: DraftCourse | null, text: string) =>
     touch("facts", [...desk.draft.facts, { id: uid(), courseId: c?.id ?? null, text, addedAt: now }]);
+  // Dates the student sets are also kept as their own word (replacing the older one), so a re-read
+  // or the nightly check can't undo them; the organization agent may not change them.
+  const isOwn = (c: DraftCourse, label: string) => (f: StudentFact) => f.courseId === c.id && f.text.startsWith(`${label}:`) && f.text.endsWith(OWN_WORD);
+  const studentSet = (c: DraftCourse, label: string) => o.by === "organization" && desk.draft.facts.some(isOwn(c, label));
+  const ownWord = (c: DraftCourse, label: string, value: string) => {
+    if (o.by === "organization") return;
+    touch("facts", [...desk.draft.facts.filter((f) => !isOwn(c, label)(f)), { id: uid(), courseId: c.id, text: `${label}: ${value}${OWN_WORD}`, addedAt: now }]);
+  };
 
   for (const op of ops) {
     if (CONFIRM_FIRST.has(op.op) && !o.confirmed) {
@@ -189,10 +200,16 @@ export function applyOps(
         const j = i >= 0 ? i : list.filter((k) => k.kind === kind).length === 1 && !op.title ? list.findIndex((k) => k.kind === kind) : -1;
         if (j >= 0) {
           if (list[j].date === date) break;
+          if (studentSet(c, dateLabel(list[j]))) {
+            errors.push(`set_exam_date: the student set ${c.name}, ${list[j].title} to ${list[j].date} themselves; not changed.`);
+            break;
+          }
           touch(`results.${c.id}.keyDates`, list.map((k, n) => (n === j ? { ...k, date } : k)));
+          ownWord(c, dateLabel(list[j]), date);
           lines.push(`${c.name}, ${list[j].title}: ${shortDate(list[j].date)} → ${shortDate(date)}`);
         } else {
           touch(`results.${c.id}.keyDates`, [...list, { courseId: c.id, date, kind, title, skillIds: [] }]);
+          ownWord(c, dateLabel({ kind, title }), date);
           lines.push(`${c.name}, ${title}: added on ${shortDate(date)}`);
         }
         break;
@@ -208,6 +225,7 @@ export function applyOps(
           break;
         }
         touch(`results.${c.id}.keyDates`, r.keyDates.filter((x) => x !== k));
+        ownWord(c, dateLabel(k), "removed, there is no such date");
         lines.push(`${c.name}, ${k.title} on ${shortDate(k.date)}: removed`);
         break;
       }
@@ -226,7 +244,12 @@ export function applyOps(
           errors.push(`set_due: "${str(op.dueAt)}" isn't a date (YYYY-MM-DD or YYYY-MM-DDTHH:MM).`);
           break;
         }
+        if (studentSet(c, `Homework "${a.title}"`)) {
+          errors.push(`set_due: the student set ${c.name}, ${a.title} themselves; not changed.`);
+          break;
+        }
         touch(`results.${c.id}.assignments`, r.assignments.map((x) => (x.id === a.id ? { ...x, dueAt: due } : x)));
+        ownWord(c, `Homework "${a.title}"`, `due ${due}`);
         lines.push(`${c.name}, ${a.title} due: ${shortDate(a.dueAt)} → ${shortDate(due)}`);
         break;
       }
@@ -264,6 +287,7 @@ export function applyOps(
         }
         const a: Assignment = { id, courseId: c.id, title, dueAt: due, tasks };
         touch(`results.${c.id}.assignments`, [...r.assignments, a]);
+        ownWord(c, `Homework "${title}"`, `due ${due}, ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}`);
         lines.push(`${c.name}, ${title}: added, ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"}, due ${shortDate(due)}`);
         break;
       }
@@ -278,6 +302,7 @@ export function applyOps(
           break;
         }
         touch(`results.${c.id}.assignments`, r.assignments.filter((x) => x.id !== a.id));
+        ownWord(c, `Homework "${a.title}"`, "removed, it doesn't count");
         lines.push(`${c.name}, ${a.title}: removed`);
         break;
       }

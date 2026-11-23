@@ -79,7 +79,13 @@ function cloudQuestStore(db: DB, uid: string): QuestStore {
       return (await readBig(semester, parts)) as unknown as Semester | null;
     },
     saveSemester(s) {
-      const next = semWrites.catch(() => undefined).then(() => writeBig("semester", plain(s), semester, parts, written));
+      const next = semWrites
+        .catch(() => undefined)
+        .then(async () => {
+          // Another tab or device may have saved what only the semester knows (the placement check, the workload decision): keep it.
+          const stored = (await readBig(semester, parts).catch(() => null)) as unknown as Semester | null;
+          return writeBig("semester", plain(keepSemesterOnly(s, stored)), semester, parts, written);
+        });
       semWrites = next;
       return next;
     },
@@ -118,6 +124,21 @@ function cloudQuestStore(db: DB, uid: string): QuestStore {
       return done;
     },
   };
+}
+
+/**
+ * The semester to save, with what only the semester knows taken from the
+ * stored one when that is newer: the placement check's id and the student's
+ * answer to the workload recommendation. Everything else is rebuilt from the
+ * semester setup, which has its own version check. Pure, so it is tested.
+ */
+export function keepSemesterOnly(s: Semester, stored: Semester | null): Semester {
+  if (!stored || stored.id !== s.id) return s;
+  let out = s;
+  if (!out.placementQuestId && stored.placementQuestId) out = { ...out, placementQuestId: stored.placementQuestId };
+  if ((stored.studyGoalDecidedAt ?? 0) > (out.studyGoalDecidedAt ?? 0))
+    out = { ...out, studyGoal: [...stored.studyGoal], studyGoalSource: stored.studyGoalSource, studyGoalDecidedAt: stored.studyGoalDecidedAt };
+  return out;
 }
 
 function localQuestStore(): QuestStore {

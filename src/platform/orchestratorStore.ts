@@ -35,6 +35,42 @@ export function trimState(s: OrchState): OrchState {
   return out;
 }
 
+type Keyed = { id?: string; key?: string };
+const keyOf = (x: Keyed) => x.id ?? x.key ?? JSON.stringify(x);
+
+/** One list merged three ways: ours wins for items both have; the other device's new items are kept; items we removed stay removed. */
+function mergeList<T extends Keyed>(base: T[], ours: T[], theirs: T[]): T[] {
+  const mine = new Set(ours.map(keyOf));
+  const known = new Set(base.map(keyOf));
+  const added = theirs.filter((x) => !mine.has(keyOf(x)) && !known.has(keyOf(x)));
+  if (!added.length) return ours;
+  return [...ours, ...added].sort((a, b) => stamp(a) - stamp(b));
+}
+const stamp = (x: unknown) => {
+  const r = x as { at?: number; startedAt?: number; createdAt?: number };
+  return r.at ?? r.startedAt ?? r.createdAt ?? 0;
+};
+
+/**
+ * The state to save when another tab or device may have saved in the
+ * meantime: `base` is what this screen last loaded or saved, `ours` what it
+ * wants to save now, `theirs` what is stored now. Nothing the other one added
+ * (a change card, a job, a notification) is lost. Pure, so it is tested.
+ */
+export function mergeState(base: OrchState, ours: OrchState, theirs: OrchState): OrchState {
+  if (theirs.updatedAt === base.updatedAt) return ours;
+  return {
+    ...ours,
+    memory: (theirs.memory?.updatedAt ?? 0) > (ours.memory?.updatedAt ?? 0) ? theirs.memory : ours.memory,
+    changes: mergeList(base.changes, ours.changes, theirs.changes ?? []),
+    confirms: mergeList(base.confirms, ours.confirms, theirs.confirms ?? []),
+    jobs: mergeList(base.jobs, ours.jobs, theirs.jobs ?? []),
+    notifications: mergeList(base.notifications, ours.notifications, theirs.notifications ?? []),
+    notes: mergeList(base.notes ?? [], ours.notes ?? [], theirs.notes ?? []),
+    updatedAt: Math.max(ours.updatedAt, theirs.updatedAt),
+  };
+}
+
 let shared: Promise<OrchestratorStore> | null = null;
 
 export function openOrchestratorStore(): Promise<OrchestratorStore> {
@@ -84,13 +120,24 @@ function queue<T>(write: (v: T) => Promise<void>) {
 function cloudStore(db: DB, uid: string): OrchestratorStore {
   const root = db.doc(`data/users/${uid}/orchestrator`);
   const days = root.collection("days");
-  const writeState = queue<OrchState>((s) => root.set(plain(trimState(s))));
+  const read = async () => {
+    const s = await root.get();
+    return s.exists ? { ...emptyState(), ...(s.data() as unknown as OrchState) } : emptyState();
+  };
+  // What this page last loaded or saved: the base for merging with what another tab or device saved since.
+  let base: OrchState | null = null;
+  const writeState = queue<OrchState>(async (s) => {
+    const merged = base ? mergeState(base, s, await read()) : s;
+    await root.set(plain(trimState(merged)));
+    base = s;
+  });
   const dayWriters = new Map<string, (m: OrchMessage[]) => Promise<void>>();
   return {
     mode: "cloud",
     async loadState() {
-      const s = await root.get();
-      return s.exists ? { ...emptyState(), ...(s.data() as unknown as OrchState) } : emptyState();
+      const s = await read();
+      base = s;
+      return s;
     },
     saveState: writeState,
     async loadMessages(semesterId) {

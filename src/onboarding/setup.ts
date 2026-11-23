@@ -27,7 +27,7 @@ export type FileForSetup = { upload: Upload; text: string | null; image: Blob | 
 
 export type SetupInput = {
   profile: Profile;
-  draft: Pick<SemesterDraft, "name" | "startDate" | "endDate">;
+  draft: Pick<SemesterDraft, "name" | "startDate" | "endDate"> & Partial<Pick<SemesterDraft, "results">>;
   course: DraftCourse;
   facts: StudentFact[];
   files: FileForSetup[];
@@ -146,6 +146,12 @@ export function setupTurns(input: SetupInput, opts: SetupTurnOptions = {}): { tu
   const prior = input.priorFundamentals.length
     ? `\nFundamentals this student already mastered in earlier semesters (reuse these exact ids when a fundamental here is the same skill; don't list them again otherwise):\n${input.priorFundamentals.map((p) => `- ${p.id}: ${p.name}`).join("\n")}\n`
     : "";
+  // A re-read (deep sweep, new material) must keep the ids of the skills the
+  // course already has: attempts, streaks and reviews are stored under them.
+  const known = currentSkills(input);
+  const current = known.length
+    ? `\nSkills this course already has (the student's progress is stored under these ids). When a skill in your map is one of these, write its id exactly as given here. Never give one of these ids to a different skill; drop a skill only if it really isn't part of the course:\n${known.map((k) => `- ${k.id}: ${k.name}`).join("\n")}\n`
+    : "";
 
   const content = `You are StudyDesk's organization agent. You set up one course for one student: you turn their real course materials into the list of skills StudyDesk teaches, practices and tracks. Everything later (daily quests, grading) depends on this map, so be thorough and precise.
 
@@ -161,7 +167,7 @@ export function setupTurns(input: SetupInput, opts: SetupTurnOptions = {}): { tu
 
 ## What the student said about it (word for word; if a file disagrees, the student's word wins, and you list the disagreement under CONFLICTS)
 ${facts.length ? facts.map((f) => `- "${f.text}"`).join("\n") : "- nothing"}
-${prior}
+${prior}${current}
 ## Files
 ${
     files.length
@@ -250,14 +256,38 @@ const rows = (s: string | undefined) =>
     .filter((l) => l.includes("|") && !/^\(/.test(l))
     .map((l) => l.split("|").map((x) => x.trim()));
 
+/** The course's skills from an earlier reading, if it was read before (not counting fundamentals carried over from earlier semesters). */
+function currentSkills(input: Pick<SetupInput, "course" | "priorFundamentals"> & { draft?: SetupInput["draft"] }): Skill[] {
+  const prior = new Set(input.priorFundamentals.map((p) => p.id));
+  return (input.draft?.results?.[input.course.id]?.skills ?? []).filter((s) => !prior.has(s.id));
+}
+
+const sameName = (a: string, b: string) => a.trim().toLowerCase().replace(/\s+/g, " ") === b.trim().toLowerCase().replace(/\s+/g, " ");
+
 /** Turns the agent's reply into records. Ids are made unique per course. */
-export function parseSetup(reply: string, input: Pick<SetupInput, "course" | "profile" | "today" | "priorFundamentals">, fileKeys: Map<string, string>, now = Date.now()): CourseSetup {
+export function parseSetup(reply: string, input: Pick<SetupInput, "course" | "profile" | "today" | "priorFundamentals"> & { draft?: SetupInput["draft"] }, fileKeys: Map<string, string>, now = Date.now()): CourseSetup {
   const { course, profile } = input;
   const sec = parseSections(reply);
   const cid = course.id;
   const priorIds = new Set(input.priorFundamentals.map((p) => p.id));
   const topicId = (id: string) => `${cid}-t-${slug(id)}`;
-  const skillId = (id: string) => (priorIds.has(id) ? id : `${cid}-${slug(id)}`);
+  // Ids already in use for this course: an id the agent keeps stays; a new
+  // skill never takes over an old id that meant something else.
+  const known = new Map(currentSkills(input).map((s) => [s.id, s]));
+  const given = new Map<string, string>();
+  const baseId = (id: string) => (priorIds.has(id) || known.has(id) ? id : `${cid}-${slug(id)}`);
+  const newId = (id: string, name: string) => {
+    let sid = baseId(id);
+    const old = known.get(sid);
+    if (old && sid !== id && !sameName(old.name, name)) {
+      let n = 2;
+      while (known.has(`${sid}-${n}`)) n++;
+      sid = `${sid}-${n}`;
+    }
+    given.set(id, sid);
+    return sid;
+  };
+  const skillId = (id: string) => given.get(id) ?? baseId(id);
 
   const topics: Topic[] = [];
   for (const [id, name, taught] of rows(sec.get("TOPICS"))) {
@@ -274,7 +304,7 @@ export function parseSetup(reply: string, input: Pick<SetupInput, "course" | "pr
   for (const r of rows(sec.get("SKILLS"))) {
     const [id, tid, name, kind, tier, diff, minutes, weight, prereqs] = r;
     if (!id || !name) continue;
-    const sid = skillId(id);
+    const sid = newId(id, name);
     if (skills.some((s) => s.id === sid)) continue;
     if (priorIds.has(id)) {
       // A fundamental already mastered in an earlier semester: keep its record and history.
