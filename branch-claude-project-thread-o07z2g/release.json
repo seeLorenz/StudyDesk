@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-o07z2g",
   "branch": "claude/project-thread-o07z2g",
-  "notes": "Chats get exactly the tools the capability list names; a test catches drift",
+  "notes": "Name the chats right: the setup page, and the StudyDesk chat (also on Organize)",
   "dataVersion": 1,
-  "builtAt": "2026-11-23T21:23:54.454Z",
-  "commit": "2c46b87e76e557de4957e7ba03596e16f35dece5"
+  "builtAt": "2026-11-23T21:24:51.356Z",
+  "commit": "bd0a00f9bd4d142c56725c22d1324264fe50d152"
 }
