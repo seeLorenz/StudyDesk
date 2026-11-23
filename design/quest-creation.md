@@ -130,7 +130,7 @@ Because grading now happens once, the gate no longer stops the quest mid-way. A 
 | Shape and length | Whatever fits the budget; for the sample's first day that's learn, practice (gate), learn, homework at about 59 min |
 | The gate | With one grading run per quest, a missed fundamental goes first in the next day's quest instead of pausing today's (the fix-it code is kept for the grading window) |
 | Check question after learn parts | Each lesson ends with "In one line: what's the key rule?"; the student writes it, then compares with Claude's one-liner (not graded) |
-| One course per quest | One quest per day, for the course with the most urgent homework |
+| One course per quest | One course per quest, several quests (blocks) a day, shared between courses by the day plan ([day-plan.md](day-plan.md), 2026-11-23). Before: one quest a day, for the course with the most urgent homework |
 | Hints | 3 hints, then a solved similar problem (no streak credit for that problem) |
 | Reviews | Placed first as a warm-up, after urgent homework in priority |
 | Learn part time | 6 min plus 3 per skill, not scaled by the student's speed |
@@ -166,3 +166,8 @@ Because grading now happens once, the gate no longer stops the quest mid-way. A 
 - **Grading run at 22:00:** built as part of the nightly run ([scheduled-runs.md](scheduled-runs.md)), with the same `handIn` code. Still open: the grading results opening as their own window, with the mistake review in it.
 - **Orchestrator:** let the student change hints per task, lesson length and the daily budget by talking; all live in `src/quests/config.ts`.
 - **Onboarding (built, see onboarding.md):** replaces the sample semester (`seed.ts`) with real courses, homework and dates; the quest code reads the same `Semester` record. The sample stays available from the welcome screen for looking around.
+
+## The day plan (2026-11-23)
+
+A day is no longer one quest for the course with the most urgent homework. The day plan ([day-plan.md](day-plan.md)) shares each day's study time between courses (homework due next, the placement check, prep for every exam in the next four weeks, reviews, something new) and places each block on the clock. Each block is a quest as described here, planned by `planQuest` for one course and sized to the block (`budgetOverride`), with `Quest.block` saying what it's for. Everything else in this file (parts, hints, grading once per quest, carry-over, ratings) applies to each block. "Grade me early" grades the open block; the nightly run grades every block handed in that day.
+
