@@ -939,6 +939,10 @@ function dedupe(skills) {
   const seen = /* @__PURE__ */ new Set();
   return skills.filter((s) => seen.has(s.id) ? false : (seen.add(s.id), true));
 }
+const WISH_URL = "https://github.com/seeLorenz/StudyDesk/issues/new";
+const wishLink = (text) => `[Send to developer](${WISH_URL}?title=${encodeURIComponent(`Wish: ${text.slice(0, 80)}`)}&body=${encodeURIComponent(`${text}
+
+(Sent from StudyDesk.)`)})`;
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 function atLeastAsGood(scale, a, b) {
   return scale.best < scale.worst ? a <= b : a >= b;
@@ -1480,6 +1484,13 @@ function applyOps(desk0, ops, o) {
         cur[c.id] = date;
         touch("sweepDates", cur);
         lines.push(`${c.name}: deep sweep (full re-read) on the night of ${shortDate(date)}`);
+        break;
+      }
+      case "add_wish": {
+        const text = str(op.text);
+        if (!text) break;
+        touch("profile", { ...desk.profile, wishes: [...desk.profile.wishes ?? [], { text, at: now }] });
+        lines.push(`Wish saved: "${text}" ${wishLink(text)}`);
         break;
       }
       case "set_profile": {

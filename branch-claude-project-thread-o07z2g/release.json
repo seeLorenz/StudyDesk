@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-o07z2g",
   "branch": "claude/project-thread-o07z2g",
-  "notes": "Keep homework ids and exam titles on re-reads; no duplicate homework ids",
+  "notes": "One capability list for both chats; say \"can't\" plainly and save a wish with a Send to developer link",
   "dataVersion": 1,
-  "builtAt": "2026-11-23T20:11:05.034Z",
-  "commit": "92b0a83b6688cb561dd0698c3b6143639ba53811"
+  "builtAt": "2026-11-23T21:19:27.139Z",
+  "commit": "afef195f4142693ad4bd3934b24bf0ceb7d4de91"
 }
