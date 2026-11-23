@@ -2,6 +2,7 @@
 // student's own dates, and two devices saving must not lose each other's work.
 import { describe, expect, it } from "vitest";
 import { parseSetup } from "../src/onboarding/setup";
+import { sheetSnapshot } from "../src/onboarding/agent";
 import { applyOps, undoChange, type Desk } from "../src/orchestrator/changes";
 import { emptyState, type Change, type OrchState } from "../src/orchestrator/types";
 import { mergeState } from "../src/platform/orchestratorStore";
@@ -119,5 +120,16 @@ describe("two devices saving", () => {
     const stored = { ...sem, placementQuestId: "q1", studyGoal: [0, 90, 90, 90, 90, 90, 0], studyGoalSource: "recommended", studyGoalDecidedAt: 5 } as Semester;
     expect(keepSemesterOnly(sem, stored)).toMatchObject({ placementQuestId: "q1", studyGoal: stored.studyGoal, studyGoalDecidedAt: 5 });
     expect(keepSemesterOnly(sem, { ...stored, id: "old" })).toBe(sem);
+  });
+});
+
+describe("Organize sees the to-do list", () => {
+  it("lists the to-do items and the course's questions while a course is being read again", () => {
+    const d = desk().draft;
+    const draft = { ...d, setupStep: "running", results: { c1: { ...d.results.c1, questions: ["How long is each Teilklausur?", "Which aids are allowed?"] } } } as SemesterDraft;
+    const sheet = JSON.parse(sheetSnapshot(draft, profile, "2026-11-23"));
+    expect(sheet.courses[0].questionsFromReading).toHaveLength(2);
+    const q = sheet.toDo.find((t: { key: string }) => t.key === "q-c1");
+    expect(q.parts.map((x: { text: string }) => x.text)).toEqual(["How long is each Teilklausur?", "Which aids are allowed?"]);
   });
 });

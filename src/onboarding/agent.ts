@@ -39,6 +39,8 @@ export function sheetSnapshot(d: SemesterDraft, p: Profile, today: string, cloud
         language: d.results[c.id]?.teachingLanguage || c.teachingLanguage || null,
         facts: d.facts.filter((f) => f.courseId === c.id).map((f) => f.text),
         files: courseFileList(d.uploads, d.zips, c.id),
+        // The organization agent's questions, word for word, so "the 3 GET VO questions" can be answered (the to-do list shows them per course).
+        ...(d.results[c.id]?.questions?.length ? { questionsFromReading: d.results[c.id].questions } : {}),
       })),
       unsortedFiles: unsortedList(d.uploads, d.zips),
       generalFacts: d.facts.filter((f) => !f.courseId).map((f) => f.text),
@@ -47,7 +49,7 @@ export function sheetSnapshot(d: SemesterDraft, p: Profile, today: string, cloud
       calendarImported: !!d.calendarImportedAt,
       readyToStart: setupReady(d),
       setupDone: d.setupStep === "done",
-      ...(d.setupStep === "done" ? { toDo: setupTodo(d).map((t) => ({ key: t.key, title: t.title, done: t.done, ...(t.subs ? { parts: t.subs.map((x) => ({ key: x.key, text: x.text, done: x.done })) } : {}) })) } : {}),
+      ...(d.setupStep === "done" || d.status === "active" ? { toDo: setupTodo(d).map((t) => ({ key: t.key, title: t.title, done: t.done, ...(t.subs ? { parts: t.subs.map((x) => ({ key: x.key, text: x.text, done: x.done })) } : {}) })) } : {}),
       cloudSessions,
     },
     null,

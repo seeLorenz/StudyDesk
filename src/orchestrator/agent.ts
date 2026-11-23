@@ -60,6 +60,7 @@ export function deskSnapshot(i: SnapshotInput): string {
           }
         : {}),
       nextExam: exams[0] ? `${exams[0].title} ${exams[0].date}` : null,
+      ...(r?.questions?.length ? { questionsFromReading: r.questions } : {}),
     };
   });
   const homework = Object.values(results)
