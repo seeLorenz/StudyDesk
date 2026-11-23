@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseSetup, buildSemester, localSetup, setupTurns, liveProgress, type SetupInput } from "../src/onboarding/setup";
-import { ASKS_PER_DAY, setupTodo, staleCourses, asksForFiles } from "../src/onboarding/todo";
+import { ASKS_PER_DAY, dropUnneeded, openAsks, trimPrompt, setupTodo, staleCourses, asksForFiles } from "../src/onboarding/todo";
 import { planPlacement, recommendWorkload, studyDaysUntil } from "../src/onboarding/placement";
 import { gradeSteps } from "../src/onboarding/scales";
 import { applySheetUpdate, chatTurns, setupReady, sheetSnapshot } from "../src/onboarding/agent";
@@ -401,6 +401,15 @@ describe("setup to-do list", () => {
     expect(open(ticked, TODAY)).toHaveLength(ASKS_PER_DAY - 1);
     expect(open(ticked, "2026-11-21")).toHaveLength(ASKS_PER_DAY);
     expect(setupTodo(d, TODAY).map((i) => i.key)).not.toContain("dates");
+  });
+  it("drops the asks Claude doesn't keep, once", () => {
+    const d = withQuestions(["When is the exam?", "How is it graded?"]);
+    d.results.c1.conflicts = ["file says oral exam"];
+    const asks = openAsks(d, TODAY);
+    expect(trimPrompt(asks)).toContain("disagreement: file says oral exam");
+    const after = dropUnneeded(d, asks, "2");
+    expect(after.asksTrimmed).toBe(true);
+    expect(openAsks(after, TODAY).map((a) => a.text)).toEqual([asks[1].text]);
   });
   it("ticks single questions off and updates the item live", () => {
     const d = { ...withQuestions(["When is the exam?", "How is it graded?", "Is a calculator allowed?"]), setupStep: "done" as const };

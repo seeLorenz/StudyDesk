@@ -30,6 +30,7 @@ import { openQuestStore, type QuestStore } from "../platform/questStore";
 import { compressImage } from "../quests/images";
 import type { QuestRecord, Semester } from "../quests/types";
 import type { Profile, SemesterDraft, Upload } from "../onboarding/types";
+import { dropUnneeded, openAsks, trimPrompt } from "../onboarding/todo";
 import { NIGHTLY_TOOL, UPDATE_TOOL, ASK_TOOL, CALENDAR_TOOL, CHANGE_TOOL, checkinTurns, deskSnapshot, JOB_TOOL, jobTitle, localCheckin, LOOKUP_TOOL, needsSummary, orchTurns, questStarted, PLACEMENT_TOOL, REBUILD_TOOL, summaryTurns, todaysQuest } from "./agent";
 import { PASS_ON_EVENT, type PassOn } from "./passOn";
 import { applyOps, canUndo, findCourse, syncSemester, undoChange, type Desk } from "./changes";
@@ -742,6 +743,11 @@ export function OrchestratorPanel(props: Props) {
       await loadData(env);
       const semester = semesterRef.current;
       if (!semester || semester.id !== draftRef.current!.id) return;
+      if (env.live && profileRef.current && !draftRef.current!.asksTrimmed) {
+        const asks = openAsks(draftRef.current!, today);
+        const reply = asks.length ? await askClaude([{ role: "user", content: trimPrompt(asks) }], { background: true }) : "";
+        await commitDesk({ draft: dropUnneeded(draftRef.current!, asks, reply), profile: profileRef.current! });
+      }
       const triggers = checkinTriggers({
         semester,
         draft: draftRef.current!,
@@ -764,7 +770,7 @@ export function OrchestratorPanel(props: Props) {
     } finally {
       checking.current = false;
     }
-  }, [env, ready, busy, loadData, today, snapshot, saveMessages, saveState, open, applyNight]);
+  }, [env, ready, busy, loadData, today, snapshot, saveMessages, saveState, open, applyNight, commitDesk]);
 
   useEffect(() => {
     if (!ready) return;

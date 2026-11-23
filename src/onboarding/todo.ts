@@ -56,6 +56,46 @@ const label = (c: DraftCourse) => (c.short || c.name).trim();
 /** Disagreements and questions shown per day, so the student is never handed a pile. */
 export const ASKS_PER_DAY = 3;
 
+type Ask = { key: string; sub: string; text: string; course: string; at: string };
+
+/** Every disagreement and question, those of the course with the nearest exam or deadline first. */
+function asksOf(draft: SemesterDraft, today: Day): Ask[] {
+  return draft.courses
+    .filter((c) => draft.results[c.id])
+    .flatMap((c) => {
+      const r = draft.results[c.id];
+      const at = [...r.keyDates.map((k) => k.date), ...r.assignments.map((x) => x.dueAt)].filter((d) => d >= today).sort()[0] ?? "~";
+      const ask = (key: string, text: string) => ({ key, sub: `${key}:${subId(text)}`, text, course: c.name, at });
+      return [
+        ...r.conflicts.map((t) => ask("conflicts", `**${label(c)}:** ${t}`)),
+        ...r.questions.filter((q) => !asksForFiles(q)).slice(0, MAX_QUESTIONS).map((q) => ask(`q-${c.id}`, q)),
+      ];
+    })
+    .sort((x, y) => (x.at < y.at ? -1 : x.at > y.at ? 1 : 0));
+}
+
+/**
+ * Once per desk (draft.asksTrimmed): the open disagreements and questions,
+ * for one call that keeps only what really needs the student. It clears
+ * what setup asked before it asked only what's necessary.
+ */
+export function openAsks(draft: SemesterDraft, today: Day = toDay()): Ask[] {
+  const done = new Set(draft.todoDone ?? []);
+  return asksOf(draft, today).filter((a) => !done.has(a.key) && !done.has(a.sub));
+}
+
+export const trimPrompt = (asks: Ask[]) => `A student's study planner set up their courses and wrote these open items for them to check. "Disagreement" means a file contradicted what the student said and the student's word was used.
+
+${asks.map((a, i) => `${i + 1}. ${a.course}: ${a.key === "conflicts" ? "disagreement: " : ""}${a.text.replace(/^\*\*[^*]*\*\*\s*/, "")}`).join("\n")}
+
+Keep only the items that really need the student: a real contradiction on a date, the grading or what the course covers, or something the planner can't reasonably decide itself that changes what or when the student studies. Drop everything a sensible default covers. Reply with only the numbers to keep, separated by commas, or "none".`;
+
+/** Ticks off every ask whose number isn't in Claude's reply, and marks the trim done. */
+export function dropUnneeded(draft: SemesterDraft, asks: Ask[], reply: string): SemesterDraft {
+  const keep = new Set((reply.match(/\d+/g) ?? []).map((n) => asks[+n - 1]?.sub));
+  return { ...draft, asksTrimmed: true, todoDone: [...new Set([...(draft.todoDone ?? []), ...asks.filter((a) => !keep.has(a.sub)).map((a) => a.sub)])] };
+}
+
 export function setupTodo(draft: SemesterDraft, today: Day = toDay()): TodoItem[] {
   const done = new Set(draft.todoDone ?? []);
   const items: TodoItem[] = [];
@@ -76,22 +116,11 @@ export function setupTodo(draft: SemesterDraft, today: Day = toDay()): TodoItem[
     });
   }
 
-  // Disagreements and questions, a few a day: those of the course with the
-  // nearest exam or deadline first. Exam dates aren't listed: the Orchestrator
-  // checks each one in the two weeks before it.
-  const asks = results
-    .flatMap((c) => {
-      const r = draft.results[c.id];
-      const at = [...r.keyDates.map((k) => k.date), ...r.assignments.map((x) => x.dueAt)].filter((d) => d >= today).sort()[0] ?? "~";
-      return [
-        ...r.conflicts.map((t) => ({ key: "conflicts", text: `**${label(c)}:** ${t}`, at })),
-        ...r.questions.filter((q) => !asksForFiles(q)).slice(0, MAX_QUESTIONS).map((text) => ({ key: `q-${c.id}`, text, at })),
-      ];
-    })
-    .sort((x, y) => (x.at < y.at ? -1 : x.at > y.at ? 1 : 0));
+  // Disagreements and questions, a few a day, nearest exam first. Exam dates
+  // aren't listed: the Orchestrator checks each one in the two weeks before it.
   let left = ASKS_PER_DAY - Object.entries(draft.todoDoneOn ?? {}).filter(([k, d]) => d === today && done.has(k)).length;
   const groups = new Map<string, string[]>();
-  for (const x of asks) if (done.has(x.key) || done.has(`${x.key}:${subId(x.text)}`) || left-- > 0) groups.set(x.key, [...(groups.get(x.key) ?? []), x.text]);
+  for (const x of asksOf(draft, today)) if (done.has(x.key) || done.has(x.sub) || left-- > 0) groups.set(x.key, [...(groups.get(x.key) ?? []), x.text]);
 
   for (const [key, lines] of groups) {
     if (key === "conflicts") {
