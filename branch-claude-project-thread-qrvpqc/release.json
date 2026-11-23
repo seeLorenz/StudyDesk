@@ -1,0 +1,8 @@
+{
+  "version": "branch-claude-project-thread-qrvpqc",
+  "branch": "claude/project-thread-qrvpqc",
+  "notes": "Setup asks fewer questions, a few a day, nearest exam first",
+  "dataVersion": 1,
+  "builtAt": "2026-11-23T20:13:18.585Z",
+  "commit": "4ff7a32cf429aaacc8599bf1f3913e925d59a8ae"
+}
