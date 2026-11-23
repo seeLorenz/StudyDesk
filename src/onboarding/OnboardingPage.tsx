@@ -723,7 +723,7 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
           earlierImages: earlier.images,
           tier: "default",
           onText: (t) => patchMsg(reply.id, { text: t }),
-          tools: toolsFor("organize", [
+          tools: toolsFor("setup", [
             { name: "update_sheet", description: SHEET_TOOL_DESCRIPTION, inputSchema: SHEET_TOOL_SCHEMA as unknown as Claude.sample.SampleToolInputSchema, execute: (input) => applyUpdate(input) },
             { ...READ_FILE_TOOL, inputSchema: READ_FILE_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema, execute: (input) => readKeptFile(input, draftRef.current!.uploads, (id) => env.os.loadUploadContent(id)) },
             {

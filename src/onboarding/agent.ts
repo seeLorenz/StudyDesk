@@ -90,7 +90,7 @@ After setup (setupDone is true):
 - Don't ask the next item yourself. Keep the list current as the student answers: each item in toDo lists its parts (single questions, disagreements) with their own keys. Tick off every part that is answered or confirmed with update_sheet's todoDone, in the same call that records the answer, even when it's only one of three; the item ticks itself off once all its parts are done. Tick a whole item (its own key) only when it has no parts (files: once they're dropped and assigned). Say in one line what you ticked and what's left. Never ask the student to tick something off.
 - Once answers or files changed something, offer to update those courses. Only when they say yes, call start_setup: it re-reads just the courses that changed.
 
-${capabilityBlock("organize")}`
+${capabilityBlock("setup")}`
 }
 
 const SHEET_SCHEMA = {

@@ -3,8 +3,8 @@
 // what StudyDesk can't do at all (then it says so and saves a wish).
 // design/capabilities.md.
 
-export type Chat = "panel" | "organize";
-const NAMES: Record<Chat, string> = { panel: "the StudyDesk chat (Ctrl J)", organize: "the Organize page" };
+export type Chat = "panel" | "setup";
+const NAMES: Record<Chat, string> = { panel: "the StudyDesk chat (Ctrl J, and on the Organize page)", setup: "the semester setup page" };
 
 /** Each capability names, per chat, the tool that provides it there. A chat gets exactly the tools listed here (toolsFor). */
 export const CAPABILITIES: Array<{ what: string; in: Partial<Record<Chat, string>> }> = [
@@ -17,12 +17,12 @@ export const CAPABILITIES: Array<{ what: string; in: Partial<Record<Chat, string
   { what: "redo the placement check", in: { panel: "redo_placement" } },
   { what: "check for and install StudyDesk updates", in: { panel: "update_studydesk" } },
   { what: "open a learning question in Ask (the tutor)", in: { panel: "open_ask" } },
-  { what: "fill the semester sheet: profile, semester dates, courses, weekly slots, the study goal, facts and which course a file is for", in: { organize: "update_sheet" } },
-  { what: "read the courses that changed again", in: { organize: "start_setup" } },
-  { what: "read a kept file", in: { panel: "read_file", organize: "read_file" } },
-  { what: "read the student's Google Calendar", in: { panel: "read_calendar", organize: "read_calendar" } },
-  { what: "tick off the student's to-do items", in: { panel: "change", organize: "update_sheet" } },
-  { what: "save a wish for something StudyDesk can't do yet", in: { panel: "change", organize: "update_sheet" } },
+  { what: "fill the semester sheet: profile, semester dates, courses, weekly slots, the study goal, facts and which course a file is for", in: { setup: "update_sheet" } },
+  { what: "read the courses that changed again", in: { setup: "start_setup" } },
+  { what: "read a kept file", in: { panel: "read_file", setup: "read_file" } },
+  { what: "read the student's Google Calendar", in: { panel: "read_calendar", setup: "read_calendar" } },
+  { what: "tick off the student's to-do items", in: { panel: "change", setup: "update_sheet" } },
+  { what: "save a wish for something StudyDesk can't do yet", in: { panel: "change", setup: "update_sheet" } },
 ];
 
 /**

@@ -14,9 +14,9 @@ describe("capabilities", () => {
   it("tells each chat what it can do, what only the other can, and what nobody can", () => {
     const panel = capabilityBlock("panel");
     expect(panel).toContain("- start a job");
-    expect(panel).toContain("read the courses that changed again (in the Organize page)");
+    expect(panel).toContain("read the courses that changed again (in the semester setup page)");
     expect(panel).toContain("change how the app looks");
-    expect(capabilityBlock("organize")).toContain("start a job that reads new material or a course again (in the StudyDesk chat (Ctrl J))");
+    expect(capabilityBlock("setup")).toContain("start a job that reads new material or a course again (in the StudyDesk chat (Ctrl J, and on the Organize page))");
   });
 
   it("saves a wish from either chat on the profile", () => {
@@ -43,7 +43,7 @@ describe("each chat gets exactly the tools the list names", () => {
   };
   it.each([
     ["src/orchestrator/OrchestratorPanel.tsx", "panel"],
-    ["src/onboarding/OnboardingPage.tsx", "organize"],
+    ["src/onboarding/OnboardingPage.tsx", "setup"],
   ] as const)("%s", (file, chat) => {
     const names = built(file, chat);
     expect(names.length).toBeGreaterThan(2);
