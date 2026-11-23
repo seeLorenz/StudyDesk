@@ -107,13 +107,15 @@ The quest module is in `src/quests/` and the quest page is reachable from **Toda
 
 **How a quest is made**
 
-1. **Code plans it** (`plan.ts`). Today's budget comes from the timing rules in the grading spec (study goal minus lectures, then 80% of that or 1.2 × recent pace, half of it for a new student). Then it fills the budget in this order:
+1. **Code plans it** (`plan.ts`). **Which course:** homework due within 2 days wins if it's due before the nearest exam; otherwise an exam or quiz in the next 7 days, and with two of them the one with the most open skills (not known yet, or due for their check) per day left, so both get days; otherwise the earliest homework. An exam without a skill list covers every skill of its course the target grade needs. Today's budget comes from the timing rules in the grading spec (study goal minus lectures, then 80% of that or 1.2 × recent pace, half of it for a new student). Then it fills the budget in this order:
    1. fundamentals a recent grading named as the cause of a mistake,
    2. homework due within 2 days, task by task; each task brings the fundamentals it needs (a gate), the concepts it builds on, and an explanation of its own skill if the student hasn't learned it yet,
    3. skills coming back today (still learning, lapsed, or due on the review ladder) as a short warm-up,
-   4. homework due later in the week,
-   5. if there's no homework at all, the next one or two new skills, those on the nearest exam first.
-   A group is only added if it fits (10% over budget is allowed rather than splitting a task from what it needs). Urgent homework always gets at least one task. Anything left out is named, with a warning if the sheet is due tomorrow.
+   4. **in the week before an exam of this course:** its skills the student hasn't started, as Learn & try, as many as fit (they're on the exam, so they don't count as new material),
+   5. homework due later in the week,
+   6. if there's no homework at all, the next one or two new skills, those on the nearest exam first. In an exam week none that aren't on the exam, unless the student asked for some (quest setting "new skills before exams", default 0).
+
+   In an exam week, reviews (step 3) only take that exam's skills; the others wait until after it. A group is only added if it fits (10% over budget is allowed rather than splitting a task from what it needs). Urgent homework always gets at least one task. Anything left out is named, with a warning if the sheet is due tomorrow.
 2. **Claude writes it** (`write.ts`). One call per part, in parallel: learn parts get the StudyDesk explanation style and what comes later in the quest; practice parts get one fresh problem and worked answer per skill; homework gets three hints, a worked answer and a solved similar problem. Replies use plain `=== SECTION ===` blocks instead of JSON (math breaks JSON), are checked, and retried once.
 3. **The nightly run** writes the next day's quest at 22:00 ([scheduled-runs.md](scheduled-runs.md)); the page builds it on the first open of the day only if none is there.
 

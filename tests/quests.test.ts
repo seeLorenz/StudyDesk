@@ -3,6 +3,7 @@ import { planQuest, type PlanInput, doneTasks, recentBlockers, formatDue, busyMi
 import { parseSections, writeQuest, QuestIncomplete, claudeWriter, type Ask } from "../src/quests/write";
 import { handIn, lockedParts, gateFailed, emptyProgress, isFinished, ungraded } from "../src/quests/handin";
 import { sampleSemester, sampleWriter, sampleGradingAsk, SAMPLE_SKILLS } from "../src/quests/seed";
+import { addDays } from "../src/mastery/days";
 import type { Attempt } from "../src/mastery/types";
 import type { ProblemPart, Quest } from "../src/quests/types";
 
@@ -80,6 +81,37 @@ describe("planQuest", () => {
     const q = plan({ blockerSkillIds: ["sk_nth-root-limits"] });
     const gate = q.parts.find((p) => p.kind === "practice") as ProblemPart;
     expect(gate.problems[0].skillId).toBe("sk_nth-root-limits");
+  });
+});
+
+describe("exams shape the quest", () => {
+  const allDone = new Set(sem.assignments.flatMap((a) => a.tasks.map((t) => t.id)));
+  const examSem = (skillIds: string[], days = 3, questSettings = {}) => ({
+    ...sem,
+    questSettings,
+    keyDates: [{ courseId: "calc", date: addDays(TUE, days), kind: "exam" as const, title: "Quiz 1", skillIds }],
+  });
+  const skillsOf = (q: Quest) => q.parts.flatMap((p) => (p as ProblemPart).problems.map((x) => x.skillId));
+
+  it("covers only the exam's skills, no new material unless asked", () => {
+    const exam = ["sk_series-def", "sk_geometric"];
+    const q = plan({ semester: examSem(exam), doneTaskIds: allDone });
+    expect(new Set(skillsOf(q))).toEqual(new Set(exam));
+    expect(q.reason).toContain("Quiz 1 is Friday");
+    const asked = plan({ semester: examSem(exam, 3, { newSkillsBeforeExams: 1 }), doneTaskIds: allDone, budgetOverride: 90 });
+    expect(skillsOf(asked).filter((id) => !exam.includes(id))).toHaveLength(1);
+  });
+
+  it("homework due before the exam wins the day, otherwise the exam does", () => {
+    const lin = { ...sem.courses[0], id: "lin", name: "Linear algebra" };
+    const two = (days: number) => ({
+      ...sem,
+      courses: [...sem.courses, lin],
+      skills: [...sem.skills, { ...sem.skills[0], id: "sk_lin", courseId: "lin", topicId: "t_fund", prereqSkillIds: [] }],
+      keyDates: [{ courseId: "lin", date: addDays(TUE, days), kind: "exam" as const, title: "LA exam", skillIds: [] }],
+    });
+    expect(plan({ semester: two(3) }).courseId).toBe("calc"); // Sheet 4 is due tomorrow
+    expect(plan({ semester: two(1) }).courseId).toBe("lin");
   });
 });
 
