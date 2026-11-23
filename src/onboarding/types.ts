@@ -29,6 +29,8 @@ export type Profile = {
   schedule?: ScheduleInfo;
   /** The student's settings for the nightly run, changed through the StudyDesk chat. */
   nightly?: NightlySettings;
+  /** What the student asked for that StudyDesk can't do yet (src/agents/capabilities.ts). */
+  wishes?: Array<{ text: string; at: number }>;
 };
 
 export type CourseSetupStatus = "waiting" | "reading" | "ready" | "needs_check" | "failed";

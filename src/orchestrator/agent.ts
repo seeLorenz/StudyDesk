@@ -1,6 +1,7 @@
 // The Orchestrator's conversation: what it sees each turn, its rules, its page
 // tools, and its memory summary. design/orchestrator.md.
 
+import { capabilityBlock } from "../agents/capabilities";
 import { unsortedList } from "../lib/keep";
 import type { Turn } from "../platform/claude";
 import { courseSignals, ORCH_CONFIG, speed } from "./signals";
@@ -122,7 +123,9 @@ How to talk, like a good teacher and assistant:
 - A remark the tutor passed on (marked "Passed on by the tutor") is a request from the student: handle it like any message.
 
 Started quests are never rewritten: changes apply from the next quest.
-The student's word wins over files: if what they say disagrees with what was read, use their version and mention the difference once.`;
+The student's word wins over files: if what they say disagrees with what was read, use their version and mention the difference once.
+
+${capabilityBlock("panel")}`;
 
 export const CHANGE_TOOL = {
   name: "change",
@@ -153,6 +156,7 @@ export const CHANGE_TOOL = {
 - {op:"set_nightly", time?: "HH:MM", paused?: bool, grading?: bool, check?: bool, quest?: bool} (the nightly run: when it runs, pause it, or turn off grading / the courses' check / writing tomorrow's quest)
 - {op:"set_sweep", course, date: "YYYY-MM-DD" or "none"} (when the organization agent reads a course again completely, at night)
 - {op:"add_fact", course?, text} (word for word)
+- {op:"add_wish", text} (something StudyDesk can't do yet, in the student's words)
 - {op:"set_profile", school?, country?, program?, year?}
 - {op:"add_result", course, component, points, maxPoints, date, skills?: [skill ids]} (a real result from school; can't be undone)
 - {op:"add_course", name, short?, credits?, targetGrade?} (then start_job kind new_course)

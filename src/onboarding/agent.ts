@@ -6,6 +6,7 @@
 // the setup run when the student confirms (start_setup). Everything Claude
 // changes is visible and editable in the sheet beside the chat.
 
+import { capabilityBlock, wishLink } from "../agents/capabilities";
 import { courseFileList, filesOf, unsortedList } from "../lib/keep";
 import { uid } from "../chat/types";
 import type { Turn } from "../platform/claude";
@@ -86,7 +87,9 @@ How to use update_sheet:
 After setup (setupDone is true):
 - The student works through a short to-do list below the chat, one item at a time; an item's questions appear in the chat as your message. Record every answer right away as a fact of its course, word for word, and assign new files to their course.
 - Don't ask the next item yourself. Keep the list current as the student answers: each item in toDo lists its parts (single questions, dates, disagreements) with their own keys. Tick off every part that is answered or confirmed with update_sheet's todoDone, in the same call that records the answer, even when it's only one of three; the item ticks itself off once all its parts are done. Tick a whole item (its own key) only when it has no parts (files: once they're dropped and assigned). Say in one line what you ticked and what's left. Never ask the student to tick something off.
-- Once answers or files changed something, offer to update those courses. Only when they say yes, call start_setup: it re-reads just the courses that changed.`
+- Once answers or files changed something, offer to update those courses. Only when they say yes, call start_setup: it re-reads just the courses that changed.
+
+${capabilityBlock("organize")}`
 }
 
 const SHEET_SCHEMA = {
@@ -118,6 +121,7 @@ const SHEET_SCHEMA = {
     files: { type: "array", description: "Assign files to courses: uploadId is a file's id, or a zip's id (zip_…) for all files of that zip.", items: { type: "object", properties: { uploadId: { type: "string" }, course: { type: "string" }, note: { type: "string" } }, required: ["uploadId", "course"] } },
     studyGoalMinutes: { type: "object", description: "Minutes per weekday, lectures included, e.g. {Mon: 180, Sun: 0}. Only days that change.", properties: Object.fromEntries(DAY.map((d) => [d, { type: "number" }])) },
     todoDone: { type: "array", description: "After setup: keys of to-do items or of their parts that are now done (from toDo in the sheet, including parts[].key). Tick them yourself as soon as they're answered; the student doesn't have to.", items: { type: "string" } },
+    wish: { type: "string", description: "Something the student asked for that StudyDesk can't do yet, in their words. Saved for the developer." },
     todoOpen: { type: "array", description: "After setup: keys of to-do items or parts to open again (only when the student says one isn't done after all).", items: { type: "string" } },
   },
 } as const;
@@ -275,6 +279,11 @@ export function applySheetUpdate(d: SemesterDraft, p: Profile, input: Record<str
     draft.todoDone = [...done];
     const ticked = tickKeys.filter((k) => known.has(k));
     if (ticked.length) notes.push(`Ticked off: ${ticked.join(", ")}.`);
+  }
+  const wish = str(input.wish);
+  if (wish) {
+    profile = { ...profile, wishes: [...(profile.wishes ?? []), { text: wish, at: now }] };
+    notes.push(`Wish saved. Show the student this link exactly: ${wishLink(wish)}`);
   }
   draft = { ...draft, updatedAt: now };
   const parts = ["Saved."];
