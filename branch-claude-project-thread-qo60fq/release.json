@@ -1,0 +1,8 @@
+{
+  "version": "branch-claude-project-thread-qo60fq",
+  "branch": "claude/project-thread-qo60fq",
+  "notes": "Keep the Reply question box on screen on scrolled pages",
+  "dataVersion": 1,
+  "builtAt": "2026-11-23T19:18:08.381Z",
+  "commit": "d1832aa9a08a536fde20e3fb3823d00a39eedc0c"
+}
