@@ -155,9 +155,9 @@ export function checkinTriggers(input: TriggerInput): Trigger[] {
   };
 
   // Needs: questions from the organization agent, finished jobs.
-  for (const item of setupTodo(draft)) {
-    // Dates and file conflicts are for the student to look over on the to-do list; exam dates get their own check-in below.
-    if (item.done || item.key === "dates" || item.key === "conflicts") continue;
+  for (const item of setupTodo(draft, today)) {
+    // File conflicts are for the student to look over on the to-do list; exam dates get their own check-in below.
+    if (item.done || item.key === "conflicts") continue;
     const cid = item.key.startsWith("q-") ? item.key.slice(2) : null;
     // Keyed by the question itself: a re-read that asks the same thing doesn't ask again.
     add({ key: `todo:${item.key}:${hash(item.body + (item.subs ?? []).map((x) => x.text).join("|"))}`, kind: "needs_answer", courseId: cid, facts: item.chatPrompt });

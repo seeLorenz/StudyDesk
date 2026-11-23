@@ -8,6 +8,7 @@
 
 import { courseFileList, filesOf, unsortedList } from "../lib/keep";
 import { uid } from "../chat/types";
+import { toDay } from "../mastery/days";
 import type { Turn } from "../platform/claude";
 import type { TimetableEntry } from "../quests/types";
 import type { DraftCourse, Profile, SemesterDraft, SetupMessage } from "./types";
@@ -85,7 +86,7 @@ How to use update_sheet:
 
 After setup (setupDone is true):
 - The student works through a short to-do list below the chat, one item at a time; an item's questions appear in the chat as your message. Record every answer right away as a fact of its course, word for word, and assign new files to their course.
-- Don't ask the next item yourself. Keep the list current as the student answers: each item in toDo lists its parts (single questions, dates, disagreements) with their own keys. Tick off every part that is answered or confirmed with update_sheet's todoDone, in the same call that records the answer, even when it's only one of three; the item ticks itself off once all its parts are done. Tick a whole item (its own key) only when it has no parts (files: once they're dropped and assigned). Say in one line what you ticked and what's left. Never ask the student to tick something off.
+- Don't ask the next item yourself. Keep the list current as the student answers: each item in toDo lists its parts (single questions, disagreements) with their own keys. Tick off every part that is answered or confirmed with update_sheet's todoDone, in the same call that records the answer, even when it's only one of three; the item ticks itself off once all its parts are done. Tick a whole item (its own key) only when it has no parts (files: once they're dropped and assigned). Say in one line what you ticked and what's left. Never ask the student to tick something off.
 - Once answers or files changed something, offer to update those courses. Only when they say yes, call start_setup: it re-reads just the courses that changed.`
 }
 
@@ -274,6 +275,7 @@ export function applySheetUpdate(d: SemesterDraft, p: Profile, input: Record<str
     }
     draft.todoDone = [...done];
     const ticked = tickKeys.filter((k) => known.has(k));
+    draft.todoDoneOn = { ...draft.todoDoneOn, ...Object.fromEntries(ticked.map((k) => [k, toDay(new Date(now))])) };
     if (ticked.length) notes.push(`Ticked off: ${ticked.join(", ")}.`);
   }
   draft = { ...draft, updatedAt: now };

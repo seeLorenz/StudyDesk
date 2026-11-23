@@ -164,6 +164,8 @@ export type SemesterDraft = {
   notes?: Note[];
   /** To-do items on the done screen the student ticked off ("upload", "q-<courseId>"). */
   todoDone?: string[];
+  /** The day each of those was ticked, so only a few new questions come each day. */
+  todoDoneOn?: Record<string, Day>;
   /** The student chose to set up without cloud sessions for now. */
   handoffSkipped?: boolean;
   /** Days without studying, set through the Orchestrator ("I'm sick tomorrow"). */
