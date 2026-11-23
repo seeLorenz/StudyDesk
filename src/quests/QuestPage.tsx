@@ -77,6 +77,22 @@ function nowLocal(d = new Date()): string {
   return `${toDay(d)}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+/**
+ * This browser's copy of the work against the saved one: the newer wins, but a browser copy
+ * holding hand-ins the saved copy lacks (its last save didn't get through, and the saved copy
+ * was stamped newer since, say by the night's grades) keeps them, with the saved grades merged in.
+ */
+function pickDraft(d: QuestProgress, rec: QuestProgress): QuestProgress {
+  if (d.updatedAt > rec.updatedAt) return d;
+  if (rec.replacedAt || d.handedIn.every((id) => rec.handedIn.includes(id))) return rec;
+  const work = { ...d.work };
+  for (const [pid, w] of Object.entries(rec.work)) {
+    if (w.verdict && !work[pid]?.verdict) work[pid] = { ...(work[pid] ?? w), ...gradingFields(w) };
+  }
+  const handedIn = [...new Set([...rec.handedIn, ...d.handedIn])];
+  return { ...d, work, handedIn, finishedAt: rec.finishedAt ?? d.finishedAt, updatedAt: Date.now() };
+}
+
 function message(e: unknown): string {
   if (e instanceof GradingFailed) return "The grading agent's answer couldn't be used, even after a retry. Try handing in again.";
   if (e && typeof e === "object" && typeof (e as { code?: unknown }).code === "string") return errorCopy(e as AskError);
@@ -586,17 +602,7 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
   const [progress, setProgress] = useState<QuestProgress>(() => {
     try {
       const d = JSON.parse(localStorage.getItem(draftKey) || "null") as QuestProgress | null;
-      if (d && d.questId === quest.id) {
-        const rec = record.progress;
-        // Newer, or holding hand-ins the saved copy lacks (its last save didn't get through,
-        // and the saved copy was stamped newer since, say by the night's grades).
-        if (d.updatedAt > rec.updatedAt) return d;
-        if (!rec.replacedAt && d.handedIn.some((id) => !rec.handedIn.includes(id))) {
-          const work = { ...d.work };
-          for (const [pid, w] of Object.entries(rec.work)) if (w.verdict && !work[pid]?.verdict) work[pid] = { ...(work[pid] ?? w), ...gradingFields(w) };
-          return { ...d, work, handedIn: [...new Set([...rec.handedIn, ...d.handedIn])], finishedAt: rec.finishedAt ?? d.finishedAt, updatedAt: Date.now() };
-        }
-      }
+      if (d && d.questId === quest.id) return pickDraft(d, record.progress);
     } catch {
       /* no draft */
     }
