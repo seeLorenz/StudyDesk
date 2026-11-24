@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { FileIcon } from "../chat/FileIcon";
 import { readAttachment } from "../lib/files";
 import type { AnswerFile } from "./types";
@@ -23,7 +23,6 @@ export function AnswerBox({ id, text, files, disabled, onText, onAddFile, onRemo
   const [over, setOver] = useState(false);
   const [reading, setReading] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const pickRef = useRef<HTMLInputElement>(null);
 
   const add = (list: File[]) => {
     onActivity();
@@ -93,21 +92,20 @@ export function AnswerBox({ id, text, files, disabled, onText, onAddFile, onRemo
         {reading.length > 0 && <span className="answer-note">Reading file…</span>}
         {error && <span className="answer-note is-error">{error}</span>}
         {!disabled && (
-          <button type="button" className="mini-btn" onClick={() => pickRef.current?.click()}>
+          <label className="mini-btn">
             Attach photo or file
-          </button>
+            <input
+              className="file-pick"
+              type="file"
+              multiple
+              accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,.heic,.heif,application/pdf,text/*,.md,.tex"
+              onChange={(e) => {
+                add(Array.from(e.target.files ?? []));
+                e.target.value = "";
+              }}
+            />
+          </label>
         )}
-        <input
-          ref={pickRef}
-          type="file"
-          multiple
-          hidden
-          accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,.heic,.heif,application/pdf,text/*,.md,.tex"
-          onChange={(e) => {
-            add(Array.from(e.target.files ?? []));
-            e.target.value = "";
-          }}
-        />
       </div>
     </div>
   );
