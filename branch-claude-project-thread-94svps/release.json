@@ -1,0 +1,8 @@
+{
+  "version": "branch-claude-project-thread-94svps",
+  "branch": "claude/project-thread-94svps",
+  "notes": "Quest saves merge only each page's own changes, so a second device can't wipe answers",
+  "dataVersion": 1,
+  "builtAt": "2026-11-24T12:34:32.731Z",
+  "commit": "9225ce61df397e5161a40a399d66fb0eef779eff"
+}
