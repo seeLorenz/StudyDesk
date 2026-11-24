@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-o07z2g",
   "branch": "claude/project-thread-o07z2g",
-  "notes": "After setup, the setup page hands over to the StudyDesk chat: one chat with all the tools",
+  "notes": "Capability list: Anki decks (on/off, Export deck button, no live sync)",
   "dataVersion": 1,
-  "builtAt": "2026-11-23T21:27:45.110Z",
-  "commit": "d7937cd1383e4f1ab31671850993124069a5b35a"
+  "builtAt": "2026-11-24T08:29:45.089Z",
+  "commit": "40d5dc39baad254a54a097d35a97d9bb9154d0a2"
 }
