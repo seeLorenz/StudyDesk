@@ -1,0 +1,8 @@
+{
+  "version": "branch-claude-project-thread-qmx5qe",
+  "branch": "claude/project-thread-qmx5qe",
+  "notes": "Attach buttons: put the file picker inside its label so a tap opens it in the Claude app",
+  "dataVersion": 1,
+  "builtAt": "2026-11-24T11:11:24.812Z",
+  "commit": "e7ccb17d23413854cc465266bb11f82bbc1549e5"
+}
