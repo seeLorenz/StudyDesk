@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-6jhww4",
   "branch": "claude/project-thread-6jhww4",
-  "notes": "Courses tab: a page per course, To do beside the Organize chat, files StudyDesk isn't sure about",
+  "notes": "Merge main (exam weighting) into the Courses tab",
   "dataVersion": 1,
-  "builtAt": "2026-11-24T09:05:00.221Z",
-  "commit": "c87c748d92d4520abb44079b688fe35618c3bd0b"
+  "builtAt": "2026-11-24T09:06:03.019Z",
+  "commit": "117df367bb692c9a20f983a8343450fcc0ca7f34"
 }

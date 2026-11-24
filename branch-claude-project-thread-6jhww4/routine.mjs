@@ -287,6 +287,8 @@ const QUEST_CONFIG = {
   lesson: { readMinutes: 4, problemShare: 0.5 },
   /** At most this many brand-new skills per quest when there's no homework to prepare. */
   maxNewSkills: 2,
+  /** The same in the week before an exam of the quest's course: only that exam's skills unless the student asks. */
+  newBeforeExams: 0,
   /** Practice problems are worth this many grading points each. */
   practiceMaxPoints: 2,
   /** Hints per assignment task before the solved similar problem is offered. */
@@ -300,15 +302,16 @@ function partMinutes(p) {
   if (p.kind === "learn") return p.estMinutes ?? 0;
   return (p.readMinutes ?? 0) + (p.problems ?? []).reduce((s, q) => s + q.expMinutes, 0);
 }
-const QUEST_SETTING_LIMITS = { hints: [0, 5], lessonMinutes: [2, 15], newSkillsPerQuest: [0, 4] };
-const DEFAULTS = { hints: QUEST_CONFIG.hints, lessonMinutes: QUEST_CONFIG.lesson.readMinutes, newSkillsPerQuest: QUEST_CONFIG.maxNewSkills };
+const QUEST_SETTING_LIMITS = { hints: [0, 5], lessonMinutes: [2, 15], newSkillsPerQuest: [0, 4], newSkillsBeforeExams: [0, 4] };
+const DEFAULTS = { hints: QUEST_CONFIG.hints, lessonMinutes: QUEST_CONFIG.lesson.readMinutes, newSkillsPerQuest: QUEST_CONFIG.maxNewSkills, newSkillsBeforeExams: QUEST_CONFIG.newBeforeExams };
 function applyQuestSettings(s) {
   QUEST_CONFIG.hints = s?.hints ?? DEFAULTS.hints;
   QUEST_CONFIG.lesson.readMinutes = s?.lessonMinutes ?? DEFAULTS.lessonMinutes;
   QUEST_CONFIG.maxNewSkills = s?.newSkillsPerQuest ?? DEFAULTS.newSkillsPerQuest;
+  QUEST_CONFIG.newBeforeExams = s?.newSkillsBeforeExams ?? DEFAULTS.newSkillsBeforeExams;
 }
 function questSettingsNow(s) {
-  return { hints: s?.hints ?? DEFAULTS.hints, lessonMinutes: s?.lessonMinutes ?? DEFAULTS.lessonMinutes, newSkillsPerQuest: s?.newSkillsPerQuest ?? DEFAULTS.newSkillsPerQuest, anki: s?.anki ?? null };
+  return { ...DEFAULTS, ...s, anki: s?.anki ?? null };
 }
 const STYLE = `How to explain (StudyDesk style):
 - Start from the very beginning. Before using a word or symbol, say in plain words what it is. Use the questions a confused beginner would ask as headings ("What is a series?", "What does converge mean?").
@@ -1415,7 +1418,7 @@ function applyOps(desk0, ops, o) {
       case "set_quest_settings": {
         const cur = { ...desk.draft.questSettings ?? {} };
         const now_ = questSettingsNow(cur);
-        const labels = { hints: "hints per task", lessonMinutes: "lesson reading minutes", newSkillsPerQuest: "new skills per quest" };
+        const labels = { hints: "hints per task", lessonMinutes: "lesson reading minutes", newSkillsPerQuest: "new skills per quest", newSkillsBeforeExams: "new skills per quest in exam weeks" };
         const changed = [];
         for (const k of Object.keys(QUEST_SETTING_LIMITS)) {
           if (op[k] === void 0) continue;
@@ -2137,22 +2140,40 @@ function upcomingAssignments(semester, today, nowLocal, done, courseId) {
   const until = addDays(today, QUEST_CONFIG.assignmentLookaheadDays);
   return semester.assignments.filter((a) => (!courseId || a.courseId === courseId) && a.dueAt >= nowLocal && a.dueAt.slice(0, 10) <= until).filter((a) => openTasks(a, done).length > 0).sort((a, b) => a.dueAt < b.dueAt ? -1 : 1);
 }
-function pickCourse(input) {
+function examsSoon(semester, today) {
+  const until = addDays(today, CONFIG.examCheckWindowDays);
+  return semester.keyDates.filter((k) => k.date >= today && k.date <= until).map((k) => {
+    const target = semester.targets.find((t) => t.courseId === k.courseId);
+    const ids = k.skillIds.length ? new Set(k.skillIds) : null;
+    const skillIds = semester.skills.filter((s) => s.courseId === k.courseId && (!ids || ids.has(s.id)) && (!target || isRequired(s, target))).map((s) => s.id);
+    return { ...k, skillIds };
+  });
+}
+function pickCourse(input, exam) {
   if (input.courseId) return input.courseId;
-  const urgent = upcomingAssignments(input.semester, input.today, input.nowLocal, input.doneTaskIds)[0];
-  return urgent?.courseId ?? input.semester.courses[0].id;
+  const hw = upcomingAssignments(input.semester, input.today, input.nowLocal, input.doneTaskIds)[0];
+  const hwDay = hw?.dueAt.slice(0, 10);
+  if (exam && !(hwDay && hwDay <= addDays(input.today, QUEST_CONFIG.urgentWithinDays) && hwDay < exam.date)) return exam.courseId;
+  return hw?.courseId ?? input.semester.courses[0].id;
 }
 function planQuest(input) {
   const { semester, today, attempts, reviews } = input;
   applyQuestSettings(semester.questSettings);
-  const courseId = pickCourse(input);
+  const skills = semester.skills;
+  const { states } = replay(skills, attempts, reviews);
+  const exams = examsSoon(semester, today);
+  const dueAll = new Set(dueSkills(skills, states, attempts, exams, today));
+  const open = (k) => k.skillIds.filter((id) => !known(states.get(id)) || dueAll.has(id)).length;
+  const load = (k) => open(k) / Math.max(1, daysBetween(today, k.date));
+  const exam = exams.filter((k) => open(k) > 0).sort((a, b) => load(b) - load(a) || (a.date < b.date ? -1 : 1))[0];
+  const courseId = pickCourse(input, exam);
   const course = semester.courses.find((c) => c.id === courseId);
   const target = semester.targets.find((t) => t.courseId === courseId);
-  const skills = semester.skills;
   const byId = new Map(skills.map((s) => [s.id, s]));
   const courseSkills = skills.filter((s) => s.courseId === courseId);
   const required = (s) => !target || isRequired(s, target);
-  const { states } = replay(skills, attempts, reviews);
+  const courseExams = exams.filter((k) => k.courseId === courseId);
+  const examSkills = new Set(courseExams.flatMap((k) => k.skillIds));
   const slowness = slownessFactor(skills, attempts);
   const expMin = (s) => Math.max(1, Math.round(expectedMinutes(s, attempts, slowness)));
   const weekday = weekdayOf(today);
@@ -2171,6 +2192,7 @@ function planQuest(input) {
   const newIds = [];
   const planned = /* @__PURE__ */ new Set();
   const leftOut = [];
+  const empty = () => !gate.length && !tasks.length && !reviewIds.length && !newIds.length;
   const lessonMin = (s) => Math.max(1, Math.round(expMin(s) * QUEST_CONFIG.lesson.problemShare));
   const minutes = () => {
     let m = 0;
@@ -2231,9 +2253,8 @@ function planQuest(input) {
     for (const t of tasks) planned.add(t.task.skillId);
   };
   addHomework(assignments.filter((a) => a.dueAt.slice(0, 10) <= urgentUntil), true);
-  const exams = semester.keyDates.map((k) => ({ courseId: k.courseId, date: k.date, skillIds: k.skillIds }));
   const stageOrder = { lapsed: 0, mastered: 1, learning: 2, retained: 3, new: 4 };
-  const due = dueSkills(courseSkills, states, attempts, exams, today).filter((id) => !planned.has(id)).sort((a, b) => stageOrder[states.get(a).stage] - stageOrder[states.get(b).stage]);
+  const due = courseSkills.filter((s) => dueAll.has(s.id) && !planned.has(s.id) && (!examSkills.size || examSkills.has(s.id))).sort((a, b) => stageOrder[states.get(a.id).stage] - stageOrder[states.get(b.id).stage] || b.weight - a.weight).map((s) => s.id);
   for (const id of due) {
     const ok = tryAdd(
       () => (reviewIds.push(id), planned.add(id)),
@@ -2241,26 +2262,32 @@ function planQuest(input) {
     );
     if (!ok) leftOut.push(`review: ${byId.get(id).name}`);
   }
+  const examRank = (s) => {
+    const e = semester.keyDates.filter((x) => x.date >= today && x.skillIds.includes(s.id)).sort((a, b) => a.date < b.date ? -1 : 1)[0];
+    return e ? daysBetween(today, e.date) : 9999;
+  };
+  const topicRank = (s) => course.topics.findIndex((t) => t.id === s.topicId);
+  const addNew = (list, max) => {
+    const fresh = list.filter((s) => required(s) && !planned.has(s.id) && (states.get(s.id)?.stage ?? "new") === "new").sort((a, b) => examRank(a) - examRank(b) || topicRank(a) - topicRank(b) || Number(b.isFundamental) - Number(a.isFundamental));
+    let added = 0;
+    for (const s of fresh) {
+      if (added >= max) break;
+      if (!s.prereqSkillIds.every((p) => known(states.get(p)) || planned.has(p) || !byId.has(p))) continue;
+      if (tryAdd(() => (newIds.push(s.id), planned.add(s.id)), () => (newIds.pop(), planned.delete(s.id)), empty())) added++;
+    }
+  };
+  addNew(courseSkills.filter((s) => examSkills.has(s.id)), Infinity);
   addHomework(
     assignments.filter((a) => a.dueAt.slice(0, 10) > urgentUntil),
-    !gate.length && !tasks.length && !reviewIds.length
+    empty()
   );
   if (tasks.length === 0) {
-    const examRank = (s) => {
-      const e = exams.filter((x) => x.date >= today && x.skillIds.includes(s.id)).sort((a, b) => a.date < b.date ? -1 : 1)[0];
-      return e ? daysBetween(today, e.date) : 9999;
-    };
-    const topicRank = (s) => course.topics.findIndex((t) => t.id === s.topicId);
-    const fresh = courseSkills.filter((s) => required(s) && !planned.has(s.id) && (states.get(s.id)?.stage ?? "new") === "new").filter((s) => s.prereqSkillIds.every((p) => known(states.get(p)) || planned.has(p) || !byId.has(p))).sort((a, b) => examRank(a) - examRank(b) || topicRank(a) - topicRank(b) || Number(b.isFundamental) - Number(a.isFundamental));
-    for (const s of fresh.slice(0, QUEST_CONFIG.maxNewSkills)) {
-      tryAdd(
-        () => (newIds.push(s.id), planned.add(s.id)),
-        () => (newIds.pop(), planned.delete(s.id)),
-        reviewIds.length === 0 && newIds.length === 0 && gate.length === 0
-      );
-    }
+    addNew(
+      courseSkills.filter((s) => !examSkills.has(s.id)),
+      examSkills.size ? QUEST_CONFIG.newBeforeExams : QUEST_CONFIG.maxNewSkills
+    );
   }
-  if (!gate.length && !tasks.length && !reviewIds.length && !newIds.length) return { kind: "nothing_to_do", courseId };
+  if (empty()) return { kind: "nothing_to_do", courseId };
   let pn = 0;
   let partN = 0;
   const names = (ids) => ids.map((id) => byId.get(id).name);
@@ -2320,7 +2347,9 @@ function planQuest(input) {
     });
   }
   let reason;
-  if (tasks.length) {
+  if (courseExams.length && !tasks.length) {
+    reason = `${courseExams.map((k) => `${k.title} is ${formatDue(k.date, today)}`).join(" and ")}, so today covers only exam skills.`;
+  } else if (tasks.length) {
     const a = tasks[0].assignment;
     const mine = tasks.filter((t) => t.assignment.id === a.id);
     const lower = (x) => x.charAt(0).toLowerCase() + x.slice(1);
