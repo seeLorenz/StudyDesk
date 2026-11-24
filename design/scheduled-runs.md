@@ -77,9 +77,22 @@ The Orchestrator sees the run's status, its settings, each course's next sweep a
 - **One part fails** (a grading answer that can't be read, a course reading that breaks off): that part is skipped and logged, the rest of the night goes on. Ungraded work stays for "Grade me early" or the next night; a failed sweep is tried again the next night.
 - **The run is fired twice** within a few hours: the second finds the night already done and stops.
 
+## Study times in the calendar
+
+After writing tomorrow's quest, the nightly run asks Claude **when** the student should do it: Claude gets tomorrow's events from the page's latest calendar read, the quest's length and parts, and the StudyDesk chat's memory of the student (so "I study best in the evening" counts), and answers one to three blocks. Code checks the times and saves the plan as `data/users/<uid>/calendarWant`. Only when the student follows their calendar (`calendarSync`).
+
+Writing the entries needs the calendar, and a scheduled task the page creates can't have connectors (tested 2026-11-23: claude.ai refuses connectors on tasks a page or its sessions create, and a task can't be given them later). So whoever can reach the calendar first writes them:
+
+- **The page**, whenever StudyDesk is open (it checks with every calendar refresh). This always works once the student has allowed StudyDesk to create and delete calendar events.
+- **The student's own "StudyDesk calendar" task**, if they set it up: a task created by a normal Claude Code session may use the student's Google Calendar. The Orchestrator posts the text to paste once the first plan exists (design/orchestrator.md). The task runs 90 minutes after the nightly run, so tomorrow's entries are there by morning even if StudyDesk stays closed. Its prompt only says "read calendarWant and do what its instructions say"; the steps themselves are written into `calendarWant` each night by the program, so an update never needs the task changed.
+
+Both record what they wrote in `data/users/<uid>/calendarWritten` (the plan's key and the event ids). A plan whose key is already written is skipped; a new plan first deletes the earlier entries by id, then creates the new ones, so a changed quest moves its entries instead of adding more. Every entry is titled "Study · <course>", its description starts with "[StudyDesk]", and it has a 10-minute reminder. Calendar reads drop entries marked "[StudyDesk]", so they never count as busy time. The calendar task also stamps `taskSeenAt` on every run; three quiet days count as "gone" and the Orchestrator says so once.
+
+Not covered yet: a quest the page writes itself (nightly run off or failed) and a quest replaced during the day get no entries, and entries stay when the quest is finished early.
+
 ## Limits, for now
 
-- **Calendar data is live, read by the page.** Scheduled tasks can't use connectors, so the nightly run can't read Google Calendar itself. Instead, whenever StudyDesk is open the page reads the next 14 days of the calendar again (at most every 3 hours, and on each new day) and saves the busy minutes per day in `data/users/<uid>/calendar`. The nightly run sizes tomorrow's quest from that latest read, with the weekly timetable as a floor, and its log says how old the read is. Only if tomorrow isn't covered by any read does it fall back to the weekly timetable alone. The page also reads today's calendar when it writes a quest itself.
+- **Calendar data is live, read by the page.** Scheduled tasks the page creates can't use connectors, so the nightly run can't read Google Calendar itself. Instead, whenever StudyDesk is open the page reads the next 14 days of the calendar again (at most every 3 hours, and on each new day) and saves the busy minutes and timed events per day in `data/users/<uid>/calendar`. The nightly run sizes tomorrow's quest from that latest read, with the weekly timetable as a floor, and its log says how old the read is. Only if tomorrow isn't covered by any read does it fall back to the weekly timetable alone. The page also reads today's calendar when it writes a quest itself.
 - **Files in deep sweeps** are opened by the session itself from the student's data and file store, like cloud setup runs (images and scans included).
 - **A new semester** creates no new task: the same one keeps running and reads whatever semester is current.
 - **Cost:** one Opus session a night on the student's own plan, longer on nights with a deep sweep.
@@ -91,5 +104,6 @@ The Orchestrator sees the run's status, its settings, each course's next sweep a
 - `src/routine/apply.ts`: merging the outbox into the desk, shared by the page and the run.
 - `src/routine/deferred.ts`: Claude calls answered by the session itself.
 - `src/routine/cli.ts`: the program the session runs (`routine.mjs`, built by `vite.routine.config.ts`).
+- `src/quests/times.ts`: study times (Claude's pick, the saved plan, writing it, the calendar task's setup text).
 - `src/platform/schedule.ts`: creating the scheduled task; `src/platform/routineStore.ts`: the outbox in the page.
 - Tests: `tests/routine.test.ts` plays whole nights with a stand-in session.

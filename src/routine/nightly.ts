@@ -23,6 +23,7 @@ import { emptyProgress, handIn, ungraded } from "../quests/handin";
 import { carriedOver, doneTasks, planQuest, recentBlockers, recentFeel } from "../quests/plan";
 import type { QuestRecord, Semester } from "../quests/types";
 import { claudeWriter, writeQuest } from "../quests/write";
+import { calendarWant, pickTimes } from "../quests/times";
 import { applyShallow, applySweep, gradingFields, mergeGrading, outboxId, outboxOrder, type GradingOutbox, type OutboxDoc, type ShallowOutbox, type SweepOutbox } from "./apply";
 import { isPending, type DeferredAsk } from "./deferred";
 import { nextOrgState, parseShallow, shallowTurns, sweepsDue, type OrgState, type ShallowResult } from "./org";
@@ -85,6 +86,10 @@ export type NightInput = {
   semester: Semester | null;
   /** The page's latest read of the calendar's coming days (the run itself can't reach the calendar). */
   calendar?: CalendarAhead | null;
+  /** The StudyDesk link, for the study entries' descriptions. */
+  url?: string | null;
+  /** The StudyDesk chat's running summary of what the student said about themselves. */
+  notes?: string;
   records: QuestRecord[];
   mastery: MasteryData;
   outbox: OutboxDoc[];
@@ -191,6 +196,9 @@ export async function runNightly(input: NightInput, d: DeferredAsk): Promise<Nig
   if (q.record) {
     questId = q.record.quest.id;
     writes.push({ path: ["quests", "records", questId], data: plain(q.record), mode: "create" });
+    const want = semester?.calendarSync ? await studyTimes(input, semester, q.record.quest, d, log) : null;
+    if (want === "pending") return { kind: "pending", log };
+    if (want) writes.push({ path: ["calendarWant"], data: plain(want), mode: "replace" });
   }
 
   const night: NightLog = { day: today, status: "done", startedAt: now, finishedAt: null, lines: log, questId };
@@ -334,6 +342,32 @@ async function organize(input: NightInput, desk: Desk, org: OrgState, mastery: M
   log.push(`Checked the courses: ${s.v.note || "nothing new."}${s.v.ops.length ? ` ${s.v.ops.length} ${s.v.ops.length === 1 ? "change" : "changes"} to look at.` : ""}${s.v.questions.length ? ` ${s.v.questions.length} ${s.v.questions.length === 1 ? "question" : "questions"} for you.` : ""}`);
   for (const k of s.v.skipped) log.push(`Left for you: ${k}.`);
   return out;
+}
+
+// ---------- tomorrow's study times ----------
+
+/** Claude picks when to do tomorrow's quest; the plan goes into the calendar when the page or the calendar task can reach it. */
+async function studyTimes(input: NightInput, semester: Semester, quest: QuestRecord["quest"], d: DeferredAsk, log: string[]) {
+  const courseName = semester.courses.find((c) => c.id === quest.courseId)?.name ?? "Quest";
+  try {
+    const times = await pickTimes(d.ask("Picking tomorrow's study times for the calendar"), {
+      quest,
+      courseName,
+      weekday: weekdayName(quest.date),
+      events: input.calendar?.events?.[quest.date] ?? [],
+      notes: input.notes ?? "",
+    });
+    if (!times.length) {
+      log.push("No study times were picked for tomorrow, so nothing goes into your calendar.");
+      return null;
+    }
+    log.push(`Study times for tomorrow: ${times.map((t) => `${t.start}-${t.end}`).join(", ")}. They go into your calendar.`);
+    return calendarWant({ day: quest.date, times, courseName, reason: quest.reason, timeZone: input.profile?.schedule?.timeZone ?? "UTC", url: input.url ?? null });
+  } catch (e) {
+    if (isPending(e)) return "pending" as const;
+    log.push(`Tomorrow's study times couldn't be picked (${(e as Error)?.message ?? String(e)}).`);
+    return null;
+  }
 }
 
 // ---------- tomorrow's quest ----------

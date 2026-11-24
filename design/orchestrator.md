@@ -112,6 +112,7 @@ The Orchestrator speaks first, like a good teacher or assistant would. **Code de
 | A date the student should check is near | "The Analysis exam is in 14 days. Is 4 Feb still right?" |
 | After each grading run | One short note on the day: what went well, what to look at in the mistake review. |
 
+- **One fixed message, not written by Claude: the calendar task.** Once the nightly run has planned study times for the first time, the Orchestrator posts the steps and the exact text the student pastes into a new Claude Code session to set up their own "StudyDesk calendar" task (design/scheduled-runs.md, "Study times in the calendar"). It's fixed text so the setup prompt can't be reworded. If that task has run before and then goes quiet for 3 days (deleted or broken), the message comes again, once.
 - **Where it shows.** A badge on the Orchestrator button on every screen, and the message waiting in the chat. A question from the organization agent stays marked until it's answered.
 - **Not nagging.** At most one unprompted message per kind per day, the post-grading note included. Needs (questions, finished jobs) always show.
 - **The margins** (how slow is "too slow", what counts as "exceptionally good") are tunable numbers in code, like the other mastery settings.

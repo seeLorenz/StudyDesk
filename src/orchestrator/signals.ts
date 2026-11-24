@@ -34,6 +34,8 @@ export const ORCH_CONFIG = {
   checkDateWithinDays: 14,
   /** A check-in of the same kind (and course) comes back at the earliest after this many days. */
   repeatDays: { too_slow: 3, off_track: 3, doing_great: 7 } as Partial<Record<NotificationKind, number>>,
+  /** The student's calendar task counts as gone after this many days without a run. */
+  calendarTaskQuietDays: 3,
   /** Memory: summarize once this many words aren't covered yet, and each new day. */
   memoryWords: 6000,
   /** Messages sent with every call, besides the summary. */
@@ -225,6 +227,35 @@ export function checkinTriggers(input: TriggerInput): Trigger[] {
     });
   }
   return out;
+}
+
+/**
+ * Study times reach the calendar only while StudyDesk is open, unless the
+ * student set up their own "StudyDesk calendar" task (a page may not create
+ * tasks that use connectors). Says so once when the first plan exists, and
+ * again when a task that used to run has gone quiet (deleted or broken).
+ */
+export function calendarTaskNotice(o: { planned: boolean; taskSeenAt: number | null | undefined; setup: string | null; sent: Notification[]; today: Day }): { key: string; text: string } | null {
+  if (!o.planned || !o.setup) return null;
+  const seen = o.taskSeenAt ? dayOf(o.taskSeenAt) : null;
+  if (seen && daysBetween(seen, o.today) < ORCH_CONFIG.calendarTaskQuietDays) return null;
+  const key = seen ? `calendar-task:${seen}` : "calendar-task";
+  if (o.sent.some((n) => n.key === key)) return null;
+  const lead = seen
+    ? `**Your calendar task hasn't run since ${seen}.** It may have been deleted. Until it's set up again, your study times only go into your calendar while StudyDesk is open.`
+    : "**Your study times go into your calendar while StudyDesk is open.** To have them added at night too, even when StudyDesk is closed:";
+  return {
+    key,
+    text: `${lead}
+
+1. Open a new session at claude.ai/code.
+2. Paste the text below and send it.
+3. Allow Google Calendar when Claude asks.
+
+\`\`\`
+${o.setup}
+\`\`\``,
+  };
 }
 
 const dayOf = (ts: number) => {

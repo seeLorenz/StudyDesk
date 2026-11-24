@@ -7,7 +7,8 @@ import { openStore, type ChatStore } from "./platform/store";
 import { QuestPage, type QuestCommand } from "./quests/QuestPage";
 import { OnboardingPage } from "./onboarding/OnboardingPage";
 import { openQuestStore } from "./platform/questStore";
-import { aheadIsStale, readCalendarAhead } from "./platform/calendar";
+import { aheadIsStale, createEntry, deleteEntries, readCalendarAhead } from "./platform/calendar";
+import { applyWant } from "./quests/times";
 import { OrchestratorPanel, type OrchStatus } from "./orchestrator/OrchestratorPanel";
 import { subscribe } from "./platform/deskBus";
 import type { Semester } from "./quests/types";
@@ -173,6 +174,14 @@ export function App() {
         const qs = await openQuestStore();
         if (qs.mode !== "cloud") return;
         const today = toDay();
+        // Study times the nightly run planned go into the calendar, unless the student's calendar task already did it.
+        try {
+          const { want, written } = await qs.loadEntries();
+          const next = await applyWant(want, written, today, { create: createEntry, remove: deleteEntries });
+          if (next && !stopped) await qs.saveWritten(next);
+        } catch {
+          /* writing not allowed or not reachable right now: tried again on the next refresh */
+        }
         if (!aheadIsStale(await qs.loadCalendar(), today, Date.now())) return;
         const ahead = await readCalendarAhead(today);
         if (!stopped) await qs.saveCalendar(ahead);

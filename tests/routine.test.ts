@@ -21,6 +21,7 @@ const NOW = Date.UTC(2026, 10, 3, 21, 0);
 async function answer(label: string, turns: Turn[]): Promise<string> {
   const last = turns[turns.length - 1].content;
   if (label.startsWith("Grading")) return sampleGradingAsk(turns);
+  if (label.startsWith("Picking tomorrow's study times")) return last.includes("10:00-11:00 Lecture") ? "Best: 13:00-14:00 and 14:15-14:30" : "none";
   if (label.startsWith("Tonight's short check"))
     return `=== CHANGES ===\n[{"op":"set_exam_date","course":"c1","title":"Final exam","date":"2027-02-12","kind":"exam","source":"course page"}]\n=== QUESTIONS ===\nnone\n=== NEXT DEEP SWEEP ===\nc1: 2026-11-20\n=== NOTE ===\nThe final exam moved to 12 Feb.`;
   const keys = [...new Set([...turns[0].content.matchAll(/^===\s*(.+?)\s*===\s*$/gm)].map((m) => m[1]))];
@@ -361,5 +362,27 @@ describe("the schedule", () => {
     expect(p).toContain("--key k123");
     expect(p).toContain("routine.mjs");
     expect(p).toContain("https://claude.ai/artifact/abc");
+  });
+});
+
+describe("study times for the calendar", () => {
+  it("lets Claude pick tomorrow's times from the calendar and saves the plan for the calendar", async () => {
+    const semester = { ...sampleSemester(TUE, 0), calendarSync: true };
+    const calendar = { readAt: NOW, from: TUE, days: 14, busy: { "2026-11-04": 60 }, events: { "2026-11-04": ["10:00-11:00 Lecture"] } };
+    const profile = { schedule: { triggerId: "t", key: "k", timeZone: "Europe/Vienna", time: "22:00", createdAt: 0 } } as unknown as Profile;
+    const { result } = await playNight(input({ semester, calendar, profile, url: "https://claude.ai/artifact/x" }));
+    if (result.kind !== "done") throw new Error("not done");
+    const want = result.writes.find((w) => w.path.join("/") === "calendarWant")?.data as { day: string; entries: { start: string; end: string; timeZone: string; description: string }[]; instructions: string };
+    expect(want.day).toBe("2026-11-04");
+    expect(want.entries.map((e) => `${e.start}-${e.end}`)).toEqual(["13:00-14:00", "14:15-14:30"]);
+    expect(want.entries[0].timeZone).toBe("Europe/Vienna");
+    expect(want.entries[0].description).toMatch(/^\[StudyDesk\]/);
+    expect(want.instructions).toContain("create_event");
+  });
+
+  it("saves no plan when the calendar isn't followed", async () => {
+    const { result } = await playNight(input());
+    if (result.kind !== "done") throw new Error("not done");
+    expect(result.writes.some((w) => w.path[0] === "calendarWant")).toBe(false);
   });
 });
