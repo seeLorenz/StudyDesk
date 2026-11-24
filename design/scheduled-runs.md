@@ -86,9 +86,11 @@ Writing the entries needs the calendar, and a scheduled task the page creates ca
 - **The page**, whenever StudyDesk is open (it checks with every calendar refresh). This always works once the student has allowed StudyDesk to create and delete calendar events.
 - **The student's own "StudyDesk calendar" task**, if they set it up: a task created by a normal Claude Code session may use the student's Google Calendar. The Orchestrator posts the text to paste once the first plan exists (design/orchestrator.md). The task runs 90 minutes after the nightly run, so tomorrow's entries are there by morning even if StudyDesk stays closed. Its prompt only says "read calendarWant and do what its instructions say"; the steps themselves are written into `calendarWant` each night by the program, so an update never needs the task changed.
 
-Both record what they wrote in `data/users/<uid>/calendarWritten` (the plan's key and the event ids). A plan whose key is already written is skipped; a new plan first deletes the earlier entries by id, then creates the new ones, so a changed quest moves its entries instead of adding more. Every entry is titled "Study · <course>", its description starts with "[StudyDesk]", and it has a 10-minute reminder. Calendar reads drop entries marked "[StudyDesk]", so they never count as busy time. The calendar task also stamps `taskSeenAt` on every run; three quiet days count as "gone" and the Orchestrator says so once.
+**Quests the page writes.** When today's quest wasn't planned at night (the nightly run was off or failed, or the student asked the Orchestrator for a new quest), the page asks Claude for times for the rest of today the same way, with the current time as the earliest start, and saves that plan. The quest page nudges this within a minute of writing a quest; otherwise it happens with the next calendar refresh. Tomorrow's plan, once the nightly run made it, is never replaced this way.
 
-Not covered yet: a quest the page writes itself (nightly run off or failed) and a quest replaced during the day get no entries, and entries stay when the quest is finished early.
+**Finished early.** Once every part of today's quest is handed in, the entries still ahead are dropped from the plan, so they disappear from the calendar; entries that already started stay as a record.
+
+Both record what they wrote in `data/users/<uid>/calendarWritten` (the plan's key, and each entry's event id). A plan whose key is already written is skipped. A changed plan keeps the events of entries that didn't change, deletes the rest by id and creates the new ones, so entries move instead of piling up. Every entry is titled "Study · <course>", its description starts with "[StudyDesk]", and it has a 10-minute reminder. Calendar reads drop entries marked "[StudyDesk]", so they never count as busy time. The calendar task also stamps `taskSeenAt` on every run; three quiet days count as "gone" and the Orchestrator says so once.
 
 ## Limits, for now
 
@@ -104,6 +106,6 @@ Not covered yet: a quest the page writes itself (nightly run off or failed) and 
 - `src/routine/apply.ts`: merging the outbox into the desk, shared by the page and the run.
 - `src/routine/deferred.ts`: Claude calls answered by the session itself.
 - `src/routine/cli.ts`: the program the session runs (`routine.mjs`, built by `vite.routine.config.ts`).
-- `src/quests/times.ts`: study times (Claude's pick, the saved plan, writing it, the calendar task's setup text).
+- `src/quests/times.ts`: study times (Claude's pick, the saved plan, what today's quest needs, writing it, the calendar task's setup text); `src/platform/studyEntries.ts`: the page's side of it.
 - `src/platform/schedule.ts`: creating the scheduled task; `src/platform/routineStore.ts`: the outbox in the page.
 - Tests: `tests/routine.test.ts` plays whole nights with a stand-in session.

@@ -23,7 +23,7 @@ import { emptyProgress, handIn, ungraded } from "../quests/handin";
 import { carriedOver, doneTasks, planQuest, recentBlockers, recentFeel } from "../quests/plan";
 import type { QuestRecord, Semester } from "../quests/types";
 import { claudeWriter, writeQuest } from "../quests/write";
-import { calendarWant, pickTimes } from "../quests/times";
+import { calendarWant, pickTimes, studyEntries } from "../quests/times";
 import { applyShallow, applySweep, gradingFields, mergeGrading, outboxId, outboxOrder, type GradingOutbox, type OutboxDoc, type ShallowOutbox, type SweepOutbox } from "./apply";
 import { isPending, type DeferredAsk } from "./deferred";
 import { nextOrgState, parseShallow, shallowTurns, sweepsDue, type OrgState, type ShallowResult } from "./org";
@@ -362,7 +362,7 @@ async function studyTimes(input: NightInput, semester: Semester, quest: QuestRec
       return null;
     }
     log.push(`Study times for tomorrow: ${times.map((t) => `${t.start}-${t.end}`).join(", ")}. They go into your calendar.`);
-    return calendarWant({ day: quest.date, times, courseName, reason: quest.reason, timeZone: input.profile?.schedule?.timeZone ?? "UTC", url: input.url ?? null });
+    return calendarWant(quest.date, quest.id, studyEntries({ day: quest.date, times, courseName, reason: quest.reason, timeZone: input.profile?.schedule?.timeZone ?? "UTC", url: input.url ?? null }));
   } catch (e) {
     if (isPending(e)) return "pending" as const;
     log.push(`Tomorrow's study times couldn't be picked (${(e as Error)?.message ?? String(e)}).`);

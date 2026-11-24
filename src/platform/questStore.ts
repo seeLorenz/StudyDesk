@@ -34,6 +34,7 @@ export interface QuestStore {
   /** The planned study entries and those already written (cloud only: the nightly run plans them). */
   loadEntries(): Promise<{ want: CalendarWant | null; written: CalendarWritten | null }>;
   saveWritten(w: CalendarWritten): Promise<void>;
+  saveWant(w: CalendarWant): Promise<void>;
 }
 
 const plain = <T>(x: T) => JSON.parse(JSON.stringify(x)) as Record<string, unknown>;
@@ -108,6 +109,9 @@ function cloudQuestStore(db: DB, uid: string): QuestStore {
     },
     async saveWritten(w) {
       await db.doc(`data/users/${uid}/calendarWritten`).set(plain(w));
+    },
+    async saveWant(w) {
+      await db.doc(`data/users/${uid}/calendarWant`).set(plain(w));
     },
     async loadRecords() {
       return (await records.get()).docs.filter((d) => d.exists).map((d) => d.data() as unknown as QuestRecord);
@@ -201,6 +205,7 @@ function localQuestStore(): QuestStore {
       return { want: null, written: null };
     },
     async saveWritten() {},
+    async saveWant() {},
     async loadReviewChats() {
       return read().reviews ?? {};
     },

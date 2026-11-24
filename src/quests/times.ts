@@ -1,37 +1,46 @@
 // Study times in the calendar. design/scheduled-runs.md, "Study times in the calendar".
 //
-// At night Claude picks when the student should do tomorrow's quest (it knows
-// tomorrow's calendar and what the student said about themselves). The plan is
-// saved as data/users/<uid>/calendarWant. Whoever can reach the calendar first
-// writes the entries and records them in data/users/<uid>/calendarWritten: the
-// page whenever it's open, or the student's own "StudyDesk calendar" task. Both
-// delete their earlier entries by id, so a changed plan replaces the old one.
+// Claude picks when the student should do the quest: at night for tomorrow's,
+// or on the page for a quest the page writes (or a replacement) for the rest of
+// today. It knows that day's calendar and what the student said about
+// themselves. The plan is saved as data/users/<uid>/calendarWant. Whoever can
+// reach the calendar first writes the entries and records them in
+// data/users/<uid>/calendarWritten: the page whenever it's open, or the
+// student's own "StudyDesk calendar" task. A changed plan replaces the old
+// entries; a quest finished early drops its entries still ahead.
 
 import { ENTRY_MARK, type StudyEntry } from "../platform/calendar";
 import type { Turn } from "../platform/claude";
 import type { Day } from "../mastery/types";
-import type { Quest } from "./types";
+import { allHandedIn } from "./handin";
+import type { Quest, QuestRecord } from "./types";
 import type { Ask } from "./write";
 
-export type CalendarWant = { day: Day; key: string; entries: StudyEntry[]; instructions: string };
-export type CalendarWritten = { key: string; day: Day; ids: string[]; taskSeenAt?: number };
+/** Window event the quest page sends when today's quest was written or a part handed in. */
+export const QUEST_CHANGED = "studydesk:quest-changed";
 
-export function timesTurns(o: { quest: Quest; courseName: string; weekday: string; events: string[]; notes: string }): Turn[] {
+export type CalendarWant = { day: Day; questId: string; key: string; entries: StudyEntry[]; instructions: string };
+/** ids[i] is the event written for sigs[i]. */
+export type CalendarWritten = { key: string; day: Day; ids: string[]; sigs?: string[]; taskSeenAt?: number };
+
+/** `after`: the time now, when the quest is for today. */
+export function timesTurns(o: { quest: Quest; courseName: string; weekday: string; events: string[]; notes: string; after?: string }): Turn[] {
+  const when = o.after ? "today" : "tomorrow";
   return [
     {
       role: "user",
-      content: `Pick when the student should study tomorrow (${o.weekday}). StudyDesk puts these times into their Google Calendar.
+      content: `Pick when the student should study ${when} (${o.weekday}). StudyDesk puts these times into their Google Calendar.${o.after ? ` It's already ${o.after}, so only times after that.` : ""}
 
-Tomorrow's quest: ${o.courseName}, about ${o.quest.plannedMinutes} min in total, in ${o.quest.parts.length} parts: ${o.quest.parts.map((p) => p.title).join("; ")}.
+The quest: ${o.courseName}, about ${o.quest.plannedMinutes} min in total, in ${o.quest.parts.length} parts: ${o.quest.parts.map((p) => p.title).join("; ")}.
 
-Tomorrow in their calendar:
+${when === "today" ? "Today" : "Tomorrow"} in their calendar:
 ${o.events.length ? o.events.join("\n") : "(nothing)"}
 
 What the student has told StudyDesk about themselves:
 ${o.notes.trim() || "(nothing yet)"}
 
 Rules: only free time; leave about 15 min between a commitment and study; one to three blocks, none shorter than 25 min, adding up to about the quest's time; follow anything the student said about when or where they like to study; otherwise prefer daytime and the gaps between commitments, and nothing after 22:00.
-Reply with only the blocks, one per line, as HH:MM-HH:MM.`,
+Reply with only the blocks, one per line, as HH:MM-HH:MM, or "none" if there's no good time left.`,
     },
   ];
 }
@@ -52,21 +61,28 @@ export function parseTimes(reply: string): { start: string; end: string }[] {
   return out.filter((t, i) => i === 0 || hm(t.start) >= hm(out[i - 1].end)).slice(0, 3);
 }
 
-/** Asks Claude for tomorrow's study times. An unusable reply gives none (the quest is fine without them). */
+/** Asks Claude for the study times. An unusable reply gives none (the quest is fine without them). */
 export async function pickTimes(ask: Ask, o: Parameters<typeof timesTurns>[0]): Promise<{ start: string; end: string }[]> {
   return parseTimes(await ask(timesTurns(o), { tier: "default" }));
 }
 
-/** Pure: the plan to save, with the steps the calendar task follows (kept in the data, so an update can change them). */
-export function calendarWant(o: { day: Day; times: { start: string; end: string }[]; courseName: string; reason: string; timeZone: string; url: string | null }): CalendarWant {
-  const entries: StudyEntry[] = o.times.map((t) => ({
+/** Pure: the calendar entries for the picked times. */
+export function studyEntries(o: { day: Day; times: { start: string; end: string }[]; courseName: string; reason: string; timeZone: string; url: string | null }): StudyEntry[] {
+  return o.times.map((t) => ({
     day: o.day,
     ...t,
     title: `Study · ${o.courseName}`,
     description: `${ENTRY_MARK} ${o.reason}${o.url ? `\nOpen StudyDesk: ${o.url}` : ""}`,
     timeZone: o.timeZone,
   }));
-  const key = `${o.day}|${entries.map((e) => `${e.start}-${e.end} ${e.title}`).join("|")}`;
+}
+
+const sig = (e: StudyEntry) => `${e.day} ${e.start}-${e.end} ${e.title}`;
+
+/** Pure: the plan to save, with the steps the calendar task follows (kept in the data, so an update can change them). */
+export function calendarWant(day: Day, questId: string, entries: StudyEntry[]): CalendarWant {
+  const sigs = entries.map(sig);
+  const key = `${day}|${sigs.join("|")}`;
   const events = entries.map((e) => ({
     summary: e.title,
     description: e.description,
@@ -79,15 +95,30 @@ export function calendarWant(o: { day: Day; times: { start: string; end: string 
   const instructions = `1. Get the document calendarWritten from the same collection (it may not exist). Get the time now in milliseconds with \`date +%s%3N\`.
 2. If its key is ${JSON.stringify(key)}, only update calendarWritten with {"taskSeenAt": <now>} and end.
 3. Delete every event id in its "ids" with mcp__Google_Calendar__delete_event (notificationLevel "NONE"). An event that is already gone is fine.
-4. If ${o.day} is already over in ${o.timeZone}, create nothing. Otherwise create each of these events with mcp__Google_Calendar__create_event, using exactly these arguments: ${JSON.stringify(events)}
-5. Set calendarWritten to {"key": ${JSON.stringify(key)}, "day": "${o.day}", "ids": [the ids you created], "taskSeenAt": <now>}. Never touch any other event.`;
-  return { day: o.day, key, entries, instructions };
+4. Create each of these events with mcp__Google_Calendar__create_event, in this order, using exactly these arguments: ${JSON.stringify(events)}
+5. Set calendarWritten to {"key": ${JSON.stringify(key)}, "day": "${day}", "ids": [the ids you created, in order], "sigs": ${JSON.stringify(sigs)}, "taskSeenAt": <now>}. Never touch any other event.`;
+  return { day, questId, key, entries, instructions };
 }
 
 /**
- * Writes the plan if it isn't written yet: deletes the earlier entries, creates
- * the new ones. Returns the new record, or null when there's nothing to do. A
- * failure part-way is saved with no key, so the next try starts clean.
+ * Pure: what today's quest needs from the plan. "pick" when the plan isn't
+ * for this quest (the page wrote it, or it replaced another); a trimmed plan
+ * when the quest is finished and entries are still ahead; otherwise null.
+ * Tomorrow's plan, once the nightly run made it, is never touched.
+ */
+export function planStep(want: CalendarWant | null, rec: QuestRecord | null, today: Day, now: string): "pick" | CalendarWant | null {
+  if (!rec || (want && want.day > today)) return null;
+  const done = allHandedIn(rec.quest, rec.progress);
+  if (want?.day !== today || want.questId !== rec.quest.id) return done ? null : "pick";
+  const left = want.entries.filter((e) => e.start <= now);
+  return done && left.length < want.entries.length ? calendarWant(today, rec.quest.id, left) : null;
+}
+
+/**
+ * Writes the plan if it isn't written yet: entries that stay keep their event,
+ * the rest are deleted, new ones are created. Returns the new record, or null
+ * when there's nothing to do. A failure part-way is saved with no key, so the
+ * next try finishes the job.
  */
 export async function applyWant(
   want: CalendarWant | null,
@@ -97,14 +128,16 @@ export async function applyWant(
 ): Promise<CalendarWritten | null> {
   if (!want || want.key === written?.key || want.day < today) return null;
   const seen = written?.taskSeenAt ? { taskSeenAt: written.taskSeenAt } : {};
-  await cal.remove(written?.ids ?? []);
+  const had = new Map((written?.sigs ?? []).map((s, i) => [s, written!.ids[i]]));
+  const sigs = want.entries.map(sig);
+  await cal.remove((written?.ids ?? []).filter((id, i) => !sigs.includes(written?.sigs?.[i] ?? "")));
   const ids: string[] = [];
   try {
-    for (const e of want.entries) ids.push(await cal.create(e));
+    for (const e of want.entries) ids.push(had.get(sig(e)) ?? (await cal.create(e)));
   } catch {
-    return { key: "", day: want.day, ids, ...seen };
+    return { key: "", day: want.day, ids, sigs: sigs.slice(0, ids.length), ...seen };
   }
-  return { key: want.key, day: want.day, ids, ...seen };
+  return { key: want.key, day: want.day, ids, sigs, ...seen };
 }
 
 /** What the student pastes into a new Claude Code session to let the nightly plan reach the calendar while StudyDesk is closed. */
