@@ -298,6 +298,7 @@ const QUEST_CONFIG = {
   /** Model size for each kind of writing. */
   tiers: { learn: "default", lesson: "default", practice: "default", assignment: "default" }
 };
+const ankiMinutes = (cards) => cards ? Math.round(QUEST_CONFIG.anki.baseMinutes + QUEST_CONFIG.anki.perCard * cards) : 0;
 function partMinutes(p) {
   if (p.kind === "learn") return p.estMinutes ?? 0;
   return (p.readMinutes ?? 0) + (p.problems ?? []).reduce((s, q) => s + q.expMinutes, 0);
@@ -2019,11 +2020,15 @@ function decks(quests) {
     }
   return new Map([...out].map(([id, d]) => [id, [...d.values()]]));
 }
+function deckSizes(records, semester) {
+  if (!semester.questSettings?.anki) return void 0;
+  return new Map([...decks(records.map((r) => r.quest))].map(([id, d]) => [id, d.length]));
+}
 function addAnki(quest, records, semester) {
   if (!semester.questSettings?.anki) return;
   const all = decks(records.map((r) => r.quest));
   const tested = /* @__PURE__ */ new Set();
-  const { cardsPerTest, baseMinutes, perCard } = QUEST_CONFIG.anki;
+  const { cardsPerTest } = QUEST_CONFIG.anki;
   let cards = 0;
   for (const part of quest.parts) {
     if (part.kind !== "lesson" && part.kind !== "practice") continue;
@@ -2042,7 +2047,7 @@ function addAnki(quest, records, semester) {
     }
   }
   if (!tested.size) return;
-  const minutes = Math.round(baseMinutes + perCard * cards);
+  const minutes = ankiMinutes(cards);
   const names = [...tested].map((id) => semester.skills.find((s) => s.id === id)?.name ?? id);
   const first = quest.parts.findIndex((x) => x.kind !== "learn" && x.problems.some((p) => p.cards));
   quest.parts.splice(first, 0, {
@@ -2053,7 +2058,7 @@ function addAnki(quest, records, semester) {
     estMinutes: minutes,
     body: `Study these cards in Anki for about ${minutes} minutes: ${names.join(", ")}. If they aren't in Anki yet, use **Export deck** at the top and import the file first. Then take the short test below; that test is what counts for your progress.`
   });
-  quest.plannedMinutes += minutes;
+  quest.plannedMinutes = quest.parts.reduce((s, p) => s + partMinutes(p), 0);
 }
 const timed = (attempts) => sortAttempts(attempts).filter((a) => a.part !== "assessment" && a.activeSeconds > 0);
 function slownessFactor(skills, attempts) {
@@ -2161,12 +2166,13 @@ function planQuest(input) {
   const leftOut = [];
   const empty = () => !gate.length && !tasks.length && !reviewIds.length && !newIds.length;
   const lessonMin = (s) => Math.max(1, Math.round(expMin(s) * QUEST_CONFIG.lesson.problemShare));
+  const cards = (id) => Math.min(QUEST_CONFIG.anki.cardsPerTest, input.deckSizes?.get(id) ?? 0);
   const minutes = () => {
     let m = 0;
-    for (const id of [...concepts, ...taskLearn, ...newIds]) m += QUEST_CONFIG.lesson.readMinutes + lessonMin(byId.get(id));
+    for (const id of [...concepts, ...taskLearn, ...newIds]) m += (cards(id) ? 0 : QUEST_CONFIG.lesson.readMinutes) + lessonMin(byId.get(id));
     for (const id of [...gate, ...reviewIds]) m += expMin(byId.get(id));
     for (const t of tasks) m += expMin(byId.get(t.task.skillId));
-    return m;
+    return m + ankiMinutes([...concepts, ...taskLearn, ...newIds, ...gate, ...reviewIds].reduce((n, id) => n + cards(id), 0));
   };
   const tryAdd = (apply, rollback, force = false) => {
     apply();
@@ -2950,6 +2956,7 @@ async function writeTomorrow(semester, calendar, records, mastery, tomorrow, now
     attempts: mastery.attempts,
     reviews: mastery.reviews,
     doneTaskIds: doneTasks(records),
+    deckSizes: deckSizes(records, semester),
     blockerSkillIds: recentBlockers(records, tomorrow),
     questId: `qst_${tomorrow}_${now.toString(36)}`
   });
