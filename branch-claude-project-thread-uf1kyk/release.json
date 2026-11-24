@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-uf1kyk",
   "branch": "claude/project-thread-uf1kyk",
-  "notes": "Study entries for page-written quests, and drop them when a quest is finished early",
+  "notes": "Keep study blocks off lectures",
   "dataVersion": 1,
-  "builtAt": "2026-11-24T07:40:52.356Z",
-  "commit": "0c772a97dec18bad7cc088c5f8c5dd3a9824488a"
+  "builtAt": "2026-11-24T09:39:26.784Z",
+  "commit": "5b343027aef55aad9799f8eeaecf52464feee378"
 }

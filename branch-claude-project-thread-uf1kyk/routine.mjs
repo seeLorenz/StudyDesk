@@ -287,26 +287,32 @@ const QUEST_CONFIG = {
   lesson: { readMinutes: 4, problemShare: 0.5 },
   /** At most this many brand-new skills per quest when there's no homework to prepare. */
   maxNewSkills: 2,
+  /** The same in the week before an exam of the quest's course: only that exam's skills unless the student asks. */
+  newBeforeExams: 0,
   /** Practice problems are worth this many grading points each. */
   practiceMaxPoints: 2,
   /** Hints per assignment task before the solved similar problem is offered. */
   hints: 3,
+  /** Anki step before a deck test: minutes = base + per card tested; at most this many cards per skill in one test. */
+  anki: { baseMinutes: 5, perCard: 0.5, cardsPerTest: 8 },
   /** Model size for each kind of writing. */
   tiers: { learn: "default", lesson: "default", practice: "default", assignment: "default" }
 };
+const ankiMinutes = (cards) => cards ? Math.round(QUEST_CONFIG.anki.baseMinutes + QUEST_CONFIG.anki.perCard * cards) : 0;
 function partMinutes(p) {
   if (p.kind === "learn") return p.estMinutes ?? 0;
   return (p.readMinutes ?? 0) + (p.problems ?? []).reduce((s, q) => s + q.expMinutes, 0);
 }
-const QUEST_SETTING_LIMITS = { hints: [0, 5], lessonMinutes: [2, 15], newSkillsPerQuest: [0, 4] };
-const DEFAULTS = { hints: QUEST_CONFIG.hints, lessonMinutes: QUEST_CONFIG.lesson.readMinutes, newSkillsPerQuest: QUEST_CONFIG.maxNewSkills };
+const QUEST_SETTING_LIMITS = { hints: [0, 5], lessonMinutes: [2, 15], newSkillsPerQuest: [0, 4], newSkillsBeforeExams: [0, 4] };
+const DEFAULTS = { hints: QUEST_CONFIG.hints, lessonMinutes: QUEST_CONFIG.lesson.readMinutes, newSkillsPerQuest: QUEST_CONFIG.maxNewSkills, newSkillsBeforeExams: QUEST_CONFIG.newBeforeExams };
 function applyQuestSettings(s) {
   QUEST_CONFIG.hints = s?.hints ?? DEFAULTS.hints;
   QUEST_CONFIG.lesson.readMinutes = s?.lessonMinutes ?? DEFAULTS.lessonMinutes;
   QUEST_CONFIG.maxNewSkills = s?.newSkillsPerQuest ?? DEFAULTS.newSkillsPerQuest;
+  QUEST_CONFIG.newBeforeExams = s?.newSkillsBeforeExams ?? DEFAULTS.newSkillsBeforeExams;
 }
 function questSettingsNow(s) {
-  return { hints: s?.hints ?? DEFAULTS.hints, lessonMinutes: s?.lessonMinutes ?? DEFAULTS.lessonMinutes, newSkillsPerQuest: s?.newSkillsPerQuest ?? DEFAULTS.newSkillsPerQuest };
+  return { ...DEFAULTS, ...s, anki: s?.anki ?? null };
 }
 const STYLE = `How to explain (StudyDesk style):
 - Start from the very beginning. Before using a word or symbol, say in plain words what it is. Use the questions a confused beginner would ask as headings ("What is a series?", "What does converge mean?").
@@ -341,6 +347,7 @@ class WritingFailed extends Error {
 function context(semester, quest, knownSkillIds, feel = []) {
   return {
     feel,
+    anki: semester.questSettings?.anki,
     course: semester.courses.find((c) => c.id === quest.courseId),
     skills: new Map(semester.skills.map((s) => [s.id, s])),
     known: knownSkillIds.map((id) => semester.skills.find((s) => s.id === id)?.name).filter(Boolean)
@@ -355,6 +362,12 @@ const header = (ctx) => `Course: ${ctx.course.name}. Write in ${ctx.course.teach
 ${ctx.known.length ? `The student can already do: ${ctx.known.join(", ")}.` : "Assume the student knows only school basics unless a skill says otherwise."}${ctx.feel.length ? `
 How recent quest parts felt to the student (adjust: "too hard" means slower, smaller steps and an easier own problem; "too easy" means brisker and a harder own problem):
 ${ctx.feel.map((f) => `- ${f}`).join("\n")}` : ""}`;
+function parseCards(text = "") {
+  return text.split("\n").flatMap((l) => {
+    const [front, ...back] = l.replace(/^\s*[-*]\s*/, "").split(" | ");
+    return back.length && front.trim() ? [{ front: front.trim(), back: back.join(" | ").trim() }] : [];
+  });
+}
 function upcoming(quest, part, ctx) {
   const skillIds = part.skillIds ?? [];
   const i = quest.parts.findIndex((p) => p === part || p.id === part.id);
@@ -405,7 +418,9 @@ ${skillLine(ctx, id)}
 ${upcoming(quest, part, ctx)}
 
 ${STYLE}
-(Here the checklist at the end is 2 or 3 lines at most.)
+(Here the checklist at the end is 2 or 3 lines at most.)${ctx.anki ? `
+
+The student learns by heart with Anki. If this idea is vocabulary or other things learned purely by heart (terms and their meaning, names, fixed facts), list every item in CARDS as "front | back", one per line: the word or term in front, its meaning or translation on the back. These cards become the student's deck for this idea, so make it complete. Never methods or problem solving. If there is nothing to learn by heart, write NONE.` : ""}
 
 Then write the student's own problem (${p.id}): like the worked example but with different numbers, solvable in about ${p.expMinutes} min, with one clear final answer.
 
@@ -421,12 +436,14 @@ the one key rule of this idea, in one plain sentence (the student writes theirs 
 === ${p.id} PROMPT ===
 the student's problem, Markdown
 === ${p.id} ANSWER ===
-worked solution with the final result`
+worked solution with the final result${ctx.anki ? "\n=== CARDS ===\nfront | back lines, or NONE" : ""}`
     }
   ];
 }
 function practiceTurns(part, ctx) {
-  const slots = part.problems.map((p) => `${p.id}: skill "${ctx.skills.get(p.skillId).name}"${ctx.skills.get(p.skillId).isFundamental ? " (fundamental)" : ""}, solvable in about ${p.expMinutes} min`).join("\n");
+  const slots = part.problems.map(
+    (p) => p.cards ? `${p.id}: a recall test on "${ctx.skills.get(p.skillId).name}" from the student's Anki deck, about ${p.expMinutes} min. Ask for exactly these cards, mixed order, some from the back to the front: ${p.cards.map((c) => `${c.front} = ${c.back}`).join("; ")}` : `${p.id}: skill "${ctx.skills.get(p.skillId).name}"${ctx.skills.get(p.skillId).isFundamental ? " (fundamental)" : ""}, solvable in about ${p.expMinutes} min`
+  ).join("\n");
   return [
     {
       role: "user",
@@ -513,11 +530,12 @@ function claudeWriter(semester, quest, knownSkillIds, ask, signal, feel = []) {
       const s = await askSections(
         ask,
         lessonTurns(q, part, ctx),
-        ["TITLE", "EXPLANATION", "WORKED EXAMPLE", "KEY RULE", `${pid} PROMPT`, `${pid} ANSWER`],
+        ["TITLE", "EXPLANATION", "WORKED EXAMPLE", "KEY RULE", `${pid} PROMPT`, `${pid} ANSWER`, ...ctx.anki ? ["CARDS"] : []],
         `the lesson "${part.title}"`,
         t.lesson,
         signal
       );
+      const cards = parseCards(s.get("CARDS"));
       return {
         title: s.get("TITLE").replace(/^#+\s*/, ""),
         body: `${s.get("EXPLANATION")}
@@ -526,6 +544,7 @@ function claudeWriter(semester, quest, knownSkillIds, ask, signal, feel = []) {
 
 ${s.get("WORKED EXAMPLE")}`,
         keyRule: s.get("KEY RULE"),
+        ...cards.length && { cards },
         problems: [{ id: part.problems[0].id, prompt: s.get(`${pid} PROMPT`), answerKey: s.get(`${pid} ANSWER`) }]
       };
     },
@@ -567,7 +586,7 @@ class QuestIncomplete extends Error {
 }
 async function writeQuest(plan, writer, onStatus, opts = {}) {
   const quest = JSON.parse(JSON.stringify(plan));
-  const written = new Set(opts.skip ?? []);
+  const written = /* @__PURE__ */ new Set([...opts.skip ?? [], ...plan.parts.filter((p) => p.kind === "learn" && p.body).map((p) => p.id)]);
   for (const id of written) onStatus?.({ partId: id, state: "done" });
   const queue = quest.parts.filter((p) => !written.has(p.id));
   let failure = null;
@@ -580,6 +599,7 @@ async function writeQuest(plan, writer, onStatus, opts = {}) {
         part.title = l.title;
         part.body = l.body;
         if (l.keyRule) part.keyRule = l.keyRule;
+        if (l.cards) part.cards = l.cards;
         for (const f of l.problems) Object.assign(part.problems.find((p) => p.id === f.id), f);
       } else {
         const filled = part.kind === "practice" ? await writer.practice(plan, part) : await writer.assignment(plan, part);
@@ -602,10 +622,10 @@ const MAX_COURSE_CHARS = 15e4;
 const MAX_QUESTIONS = 3;
 const CUT_SHORT = "The answer was cut short";
 const INLINE_OUTLINES = 2e4;
-function inventoryLine(key, f, markNew = false) {
+function inventoryLine(key2, f, markNew = false) {
   const u = f.upload;
   const what = u.state === "agent" ? `a scan, ${u.pages ?? "?"} pages, no text` : u.type === "video" ? "a video (Claude can't watch or listen)" : u.state === "listed" ? "a file StudyDesk can't open, name only" : u.type === "image" ? "an image" : `${u.type === "office" ? "Office file" : u.type}${u.pages ? `, ${u.pages} ${u.type === "office" ? "slides/sheets" : "pages"}` : ""}`;
-  return `- ${key}: ${markNew && u.cataloguedAt === null ? "NEW " : ""}${u.path ?? u.fileName} (${what})${u.studentNote ? ` the student says: "${u.studentNote}"` : ""}`;
+  return `- ${key2}: ${markNew && u.cataloguedAt === null ? "NEW " : ""}${u.path ?? u.fileName} (${what})${u.studentNote ? ` the student says: "${u.studentNote}"` : ""}`;
 }
 const NAVIGATE = `## How to read: by reason, like a careful student on the first day
 You get an inventory, not the files' text. Open only what you need, and say why.
@@ -634,10 +654,10 @@ function setupTurns(input, opts = {}) {
   const reread = files.some((f) => f.upload.cataloguedAt !== null) && files.some((f) => f.upload.cataloguedAt === null);
   const fileBlocks = navigate ? [
     files.map((f, i) => {
-      const key = `F${i + 1}`;
-      fileKeys.set(key, f.upload.id);
+      const key2 = `F${i + 1}`;
+      fileKeys.set(key2, f.upload.id);
       if (navigate === "page" && f.image) images.push(f.image);
-      const line = inventoryLine(key, f, reread) + (navigate === "page" && f.image ? ` Attached as image ${images.length}.` : "") + (navigate === "cloud" ? ` [upload ${f.upload.id}${f.upload.assetId ? `, asset ${f.upload.assetId}` : ""}]` : "");
+      const line = inventoryLine(key2, f, reread) + (navigate === "page" && f.image ? ` Attached as image ${images.length}.` : "") + (navigate === "cloud" ? ` [upload ${f.upload.id}${f.upload.assetId ? `, asset ${f.upload.assetId}` : ""}]` : "");
       return outlineTotal <= INLINE_OUTLINES && f.outline && f.upload.type !== "image" ? `${line}
   Outline:
 ${f.outline.replace(/^/gm, "    ")}` : line;
@@ -648,13 +668,13 @@ ${f.outline.replace(/^/gm, "    ")}` : line;
 Use the tools: outline(file) gives a file's outline; open(file, part, why) gives the text of pages "3-5" or "3,7-9", slides or sheets the same way, or lines "l. 40-80" of a text file. Ask for a few pages at a time. A scan has no text here: note it in the LOG and work from its name.` : CLOUD_FILES,
     NAVIGATE
   ].filter(Boolean) : files.map((f, i) => {
-    const key = `F${i + 1}`;
-    fileKeys.set(key, f.upload.id);
-    const head = `### ${key}: ${f.upload.fileName}${f.upload.studentNote ? ` (the student says: "${f.upload.studentNote}")` : ""}`;
+    const key2 = `F${i + 1}`;
+    fileKeys.set(key2, f.upload.id);
+    const head = `### ${key2}: ${f.upload.fileName}${f.upload.studentNote ? ` (the student says: "${f.upload.studentNote}")` : ""}`;
     if (f.image) {
       images.push(f.image);
       return `${head}
-Image ${images.length} of the attached images. Refer to it as "${key}, image".`;
+Image ${images.length} of the attached images. Refer to it as "${key2}, image".`;
     }
     let text = f.text ?? "";
     if (text.length > budget) {
@@ -677,6 +697,12 @@ ${input.priorFundamentals.map((p) => `- ${p.id}: ${p.name}`).join("\n")}
 Skills this course already has (the student's progress is stored under these ids). When a skill in your map is one of these, write its id exactly as given here. Never give one of these ids to a different skill; drop a skill only if it really isn't part of the course:
 ${known2.map((k) => `- ${k.id}: ${k.name}`).join("\n")}
 ` : "";
+  const prev = input.draft.results?.[input.course.id];
+  const items = [...(prev?.assignments ?? []).map((a) => `- homework "${a.title}", due ${a.dueAt}`), ...(prev?.keyDates ?? []).map((k) => `- ${k.kind} "${k.title}" on ${k.date}`)];
+  const listed = items.length ? `
+Homework and exams this course already has. When you list one of these again, write its title exactly as given here:
+${items.join("\n")}
+` : "";
   const content = `You are StudyDesk's organization agent. You set up one course for one student: you turn their real course materials into the list of skills StudyDesk teaches, practices and tracks. Everything later (daily quests, grading) depends on this map, so be thorough and precise.
 
 ## The student
@@ -691,7 +717,7 @@ ${known2.map((k) => `- ${k.id}: ${k.name}`).join("\n")}
 
 ## What the student said about it (word for word; if a file disagrees, the student's word wins, and you list the disagreement under CONFLICTS)
 ${facts.length ? facts.map((f) => `- "${f.text}"`).join("\n") : "- nothing"}
-${prior}${current}
+${prior}${current}${listed}
 ## Files
 ${files.length ? fileBlocks.join("\n\n") : opts.web ? "No files. Search the web for the official description of this course at this school (curriculum, course catalogue entry, syllabus, weekly schedule, exam rules) and build the map from it. If nothing official turns up, use what a course with this name usually covers in this program and country, and say which in the summary. Don't ask for files under QUESTIONS: StudyDesk asks for missing materials itself." : "No files. Use what a course with this name usually covers in this program and country, and say so in the summary. Don't ask for files under QUESTIONS: StudyDesk asks for missing materials itself."}${opts.web ? "\n\n## Web research\nYou can search the web. Before writing, look this course up: its official page or catalogue entry at the student's school, for topics, schedule, grading and exam dates. Prefer official sources. The student's words and files win where they say something; the web fills what they don't. Name the sites you used in the SUMMARY (site names, no links)." : ""}
 
@@ -862,7 +888,9 @@ function parseSetup(reply, input, fileKeys, now = Date.now()) {
     const [title, due] = head.split("|").map((x) => x.trim());
     const dueAt2 = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/.test(due ?? "") ? due.length === 10 ? `${due}T23:59` : due : null;
     if (!title || !dueAt2 || dueAt2.slice(0, 10) < input.today) continue;
-    const aid = `${cid}-hw-${slug(title)}`;
+    const base = input.draft?.results?.[cid]?.assignments.find((a) => sameName(a.title, title))?.id ?? `${cid}-hw-${slug(title)}`;
+    let aid = base;
+    for (let n = 2; assignments.some((a) => a.id === aid); n++) aid = `${base}-${n}`;
     const tasks = [];
     for (const tb of rest.join("\n").split(/^####\s*/m).slice(1)) {
       const [th, ...body] = tb.split("\n");
@@ -876,9 +904,9 @@ function parseSetup(reply, input, fileKeys, now = Date.now()) {
     if (tasks.length) assignments.push({ id: aid, courseId: cid, title, dueAt: dueAt2, tasks });
   }
   const catalog = [];
-  for (const [sk, key, where] of rows(sec.get("CATALOG"))) {
+  for (const [sk, key2, where] of rows(sec.get("CATALOG"))) {
     const sid = skillId(sk ?? "");
-    const uploadId = fileKeys.get((key ?? "").toUpperCase());
+    const uploadId = fileKeys.get((key2 ?? "").toUpperCase());
     if (!uploadId || !skills.some((s) => s.id === sid)) continue;
     catalog.push({ skillId: sid, uploadId, where: where || "whole file" });
   }
@@ -938,6 +966,10 @@ function dedupe(skills) {
   const seen = /* @__PURE__ */ new Set();
   return skills.filter((s) => seen.has(s.id) ? false : (seen.add(s.id), true));
 }
+const WISH_URL = "https://github.com/seeLorenz/StudyDesk/issues/new";
+const wishLink = (text) => `[Send to developer](${WISH_URL}?title=${encodeURIComponent(`Wish: ${text.slice(0, 80)}`)}&body=${encodeURIComponent(`${text}
+
+(Sent from StudyDesk.)`)})`;
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 function atLeastAsGood(scale, a, b) {
   return scale.best < scale.worst ? a <= b : a >= b;
@@ -968,13 +1000,13 @@ function subId(text) {
   for (let i = 0; i < text.length; i++) h = (h << 5) + h + text.charCodeAt(i) | 0;
   return (h >>> 0).toString(36);
 }
-function withSubs(done, key, lines, make) {
+function withSubs(done, key2, lines, make) {
   const subs = lines.map((text) => {
-    const k = `${key}:${subId(text)}`;
-    return { key: k, text, done: done.has(k) || done.has(key) };
+    const k = `${key2}:${subId(text)}`;
+    return { key: k, text, done: done.has(k) || done.has(key2) };
   });
   const open = subs.filter((x) => !x.done).map((x) => x.text);
-  return { key, ...make(open.length ? open : lines, lines.length), done: done.has(key) || open.length === 0, subs };
+  return { key: key2, ...make(open.length ? open : lines, lines.length), done: done.has(key2) || open.length === 0, subs };
 }
 const asksForFiles = (q) => /\b(upload|share|send)\b|\bsyllabus\b|LV-Beschreibung/i.test(q);
 const label = (c) => (c.short || c.name).trim();
@@ -983,7 +1015,7 @@ function asksOf(draft, today) {
   return draft.courses.filter((c) => draft.results[c.id]).flatMap((c) => {
     const r = draft.results[c.id];
     const at = [...r.keyDates.map((k) => k.date), ...r.assignments.map((x) => x.dueAt)].filter((d) => d >= today).sort()[0] ?? "~";
-    const ask = (key, text) => ({ key, sub: `${key}:${subId(text)}`, text, course: c.name, at });
+    const ask = (key2, text) => ({ key: key2, sub: `${key2}:${subId(text)}`, text, course: c.name, at });
     return [
       ...r.conflicts.map((t) => ask("conflicts", `**${label(c)}:** ${t}`)),
       ...r.questions.filter((q) => !asksForFiles(q)).slice(0, MAX_QUESTIONS).map((q) => ask(`q-${c.id}`, q))
@@ -992,7 +1024,15 @@ function asksOf(draft, today) {
 }
 function setupTodo(draft, today = toDay()) {
   const done = new Set(draft.todoDone ?? []);
-  const items = [];
+  const items = [
+    {
+      key: "anki",
+      title: "Do you use Anki?",
+      body: "If you do, quests that teach vocabulary or other things to learn by heart come with a deck to import into Anki.",
+      chatPrompt: "Next on your list: do you use Anki? If you do, quests that teach vocabulary or other things to learn by heart come with a deck you can import. You can change this any time.",
+      done: draft.questSettings?.anki !== void 0 || done.has("anki")
+    }
+  ];
   const results = draft.courses.filter((c) => draft.results[c.id]);
   const needFiles = results.filter((c) => {
     const r = draft.results[c.id];
@@ -1008,13 +1048,28 @@ function setupTodo(draft, today = toDay()) {
       done: done.has("upload")
     });
   }
-  let left = ASKS_PER_DAY - Object.entries(draft.todoDoneOn ?? {}).filter(([k, d]) => d === today && done.has(k)).length;
+  const unsure = draft.uploads.filter((u) => u.courseUnsure && u.courseId);
+  if (unsure.length) {
+    const list = unsure.map((u) => `- ${u.fileName} → ${draft.courses.find((c) => c.id === u.courseId)?.name ?? "?"} (${u.courseUnsure})`).join("\n");
+    items.push({
+      key: "unsure",
+      title: `${unsure.length} ${unsure.length === 1 ? "file" : "files"} StudyDesk isn't sure about`,
+      body: `Say whether each belongs to the course it was put in:
+
+${list}`,
+      chatPrompt: `Next on your list: files I wasn't sure about. Does each belong to the course I put it in?
+
+${list}`,
+      done: done.has("unsure")
+    });
+  }
+  let left = ASKS_PER_DAY - Object.entries(draft.todoDoneOn ?? {}).filter(([k, d]) => k !== "anki" && d === today && done.has(k)).length;
   const groups = /* @__PURE__ */ new Map();
   for (const x of asksOf(draft, today)) if (done.has(x.key) || done.has(x.sub) || left-- > 0) groups.set(x.key, [...groups.get(x.key) ?? [], x.text]);
-  for (const [key, lines] of groups) {
-    if (key === "conflicts") {
+  for (const [key2, lines] of groups) {
+    if (key2 === "conflicts") {
       items.push(
-        withSubs(done, key, lines, (open) => ({
+        withSubs(done, key2, lines, (open) => ({
           title: `${open.length} ${open.length === 1 ? "place where your files disagree" : "places where your files disagree"} with you`,
           body: "Your word was used. Say if the file was right instead.",
           chatPrompt: `Next on your list: where your files disagree with what you told me. I went with your word; tell me if a file was right instead:
@@ -1024,9 +1079,9 @@ ${open.map((l) => `- ${l}`).join("\n")}`
       );
       continue;
     }
-    const c = results.find((x) => `q-${x.id}` === key);
+    const c = results.find((x) => `q-${x.id}` === key2);
     items.push(
-      withSubs(done, key, lines, (open, total) => ({
+      withSubs(done, key2, lines, (open, total) => ({
         title: `${label(c)}: ${open.length === total ? `${total} ${total === 1 ? "question" : "questions"}` : `${open.length} of ${total} questions left`}`,
         body: "Answer whatever you know, skip the rest.",
         chatPrompt: `Next on your list: ${c.name}. ${open.length === 1 ? "One question" : `${open.length} quick questions`}. Answer whatever you know, skip the rest:
@@ -1036,6 +1091,10 @@ ${open.map((q, i) => `${i + 1}. ${q}`).join("\n")}`
     );
   }
   return items;
+}
+function filesOf(ref, uploads) {
+  if (ref.startsWith("zip_")) return uploads.filter((u) => u.zipId === ref).map((u) => u.id);
+  return uploads.some((u) => u.id === ref) ? [ref] : [];
 }
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const CONFIRM_FIRST = /* @__PURE__ */ new Set(["drop_course"]);
@@ -1072,21 +1131,21 @@ function findCourse(draft, ref) {
   if (!r) return void 0;
   return draft.courses.find((c) => c.id.toLowerCase() === r) ?? draft.courses.find((c) => c.name.toLowerCase() === r) ?? draft.courses.find((c) => c.short.toLowerCase() === r) ?? (draft.courses.filter((c) => c.name.toLowerCase().includes(r)).length === 1 ? draft.courses.find((c) => c.name.toLowerCase().includes(r)) : void 0);
 }
-function getPart(desk, key) {
-  if (key === "profile") return desk.profile;
-  const r = /^results\.([^.]+)\.(\w+)$/.exec(key);
+function getPart(desk, key2) {
+  if (key2 === "profile") return desk.profile;
+  const r = /^results\.([^.]+)\.(\w+)$/.exec(key2);
   if (r) return desk.draft.results[r[1]]?.[r[2]];
-  return desk.draft[key];
+  return desk.draft[key2];
 }
-function setPart(desk, key, value) {
-  if (key === "profile") return { ...desk, profile: value };
-  const r = /^results\.([^.]+)\.(\w+)$/.exec(key);
+function setPart(desk, key2, value) {
+  if (key2 === "profile") return { ...desk, profile: value };
+  const r = /^results\.([^.]+)\.(\w+)$/.exec(key2);
   if (r) {
     const cur = desk.draft.results[r[1]];
     if (!cur) return desk;
     return { ...desk, draft: { ...desk.draft, results: { ...desk.draft.results, [r[1]]: { ...cur, [r[2]]: value } } } };
   }
-  return { ...desk, draft: { ...desk.draft, [key]: value } };
+  return { ...desk, draft: { ...desk.draft, [key2]: value } };
 }
 const OWN_WORD = " (set by the student in StudyDesk)";
 const dateLabel = (k) => `${k.kind === "quiz" ? "Quiz" : "Exam"} "${k.title}"`;
@@ -1103,9 +1162,9 @@ function applyOps(desk0, ops, o) {
   const attempts = [];
   const targets = [];
   let undoable = true;
-  const touch = (key, value) => {
-    touched.add(key);
-    desk = setPart(desk, key, value);
+  const touch = (key2, value) => {
+    touched.add(key2);
+    desk = setPart(desk, key2, value);
   };
   const course = (op) => {
     const c = findCourse(desk.draft, op.course);
@@ -1360,7 +1419,7 @@ function applyOps(desk0, ops, o) {
       case "set_quest_settings": {
         const cur = { ...desk.draft.questSettings ?? {} };
         const now_ = questSettingsNow(cur);
-        const labels = { hints: "hints per task", lessonMinutes: "lesson reading minutes", newSkillsPerQuest: "new skills per quest" };
+        const labels = { hints: "hints per task", lessonMinutes: "lesson reading minutes", newSkillsPerQuest: "new skills per quest", newSkillsBeforeExams: "new skills per quest in exam weeks" };
         const changed = [];
         for (const k of Object.keys(QUEST_SETTING_LIMITS)) {
           if (op[k] === void 0) continue;
@@ -1373,6 +1432,10 @@ function applyOps(desk0, ops, o) {
           if (now_[k] === v) continue;
           changed.push(`${labels[k]} ${now_[k]} → ${v}`);
           cur[k] = v;
+        }
+        if (typeof op.anki === "boolean" && op.anki !== cur.anki) {
+          changed.push(`Anki decks ${op.anki ? "on" : "off"}`);
+          cur.anki = op.anki;
         }
         if (changed.length) {
           touch("questSettings", cur);
@@ -1406,13 +1469,27 @@ function applyOps(desk0, ops, o) {
         lines.push(v ? "Calendar: followed live again, each day's quest is sized from it" : "Calendar: no longer followed day by day, quests go by the weekly timetable");
         break;
       }
+      case "set_file_course": {
+        const c = course(op);
+        const ref = str(op.file);
+        const ids = new Set(filesOf(ref, desk.draft.uploads));
+        if (!c) break;
+        if (!ids.size) {
+          errors.push(`set_file_course: no file or zip "${ref}" (look_up files).`);
+          break;
+        }
+        touch("uploads", desk.draft.uploads.map((u) => ids.has(u.id) ? { ...u, courseId: c.id, courseUnsure: void 0 } : u));
+        if (ref.startsWith("zip_")) touch("zips", (desk.draft.zips ?? []).map((z) => z.id === ref ? { ...z, courseId: c.id } : z));
+        lines.push(`${ids.size === 1 ? desk.draft.uploads.find((u) => ids.has(u.id)).fileName : `${ids.size} files`} → ${c.name}`);
+        break;
+      }
       case "tick_todo": {
-        const key = str(op.key);
+        const key2 = str(op.key);
         const todo = setupTodo(desk.draft, toDay(new Date(now)));
-        const item = todo.find((t) => t.key === key || t.title === key);
-        const sub = item ? void 0 : todo.flatMap((t) => t.subs ?? []).find((x) => x.key === key);
+        const item = todo.find((t) => t.key === key2 || t.title === key2);
+        const sub = item ? void 0 : todo.flatMap((t) => t.subs ?? []).find((x) => x.key === key2);
         if (!item && !sub) {
-          errors.push(`tick_todo: no to-do "${key}"; use a key from openToDo (an item or one of its parts).`);
+          errors.push(`tick_todo: no to-do "${key2}"; use a key from openToDo (an item or one of its parts).`);
           break;
         }
         const target = item ? { key: item.key, label: item.title, done: item.done } : { key: sub.key, label: sub.text.replace(/\*\*/g, ""), done: sub.done };
@@ -1475,6 +1552,13 @@ function applyOps(desk0, ops, o) {
         cur[c.id] = date;
         touch("sweepDates", cur);
         lines.push(`${c.name}: deep sweep (full re-read) on the night of ${shortDate(date)}`);
+        break;
+      }
+      case "add_wish": {
+        const text = str(op.text);
+        if (!text) break;
+        touch("profile", { ...desk.profile, wishes: [...desk.profile.wishes ?? [], { text, at: now }] });
+        lines.push(`Wish saved: "${text}" ${wishLink(text)}`);
         break;
       }
       case "set_profile": {
@@ -1956,6 +2040,59 @@ function ungraded(quest, progress) {
 function isFinished(quest, progress) {
   return allHandedIn(quest, progress) && ungraded(quest, progress).length === 0;
 }
+const flat = (s) => s.replace(/\s+/g, " ").trim();
+const key = (c) => flat(c.front).toLowerCase();
+function decks(quests) {
+  const out = /* @__PURE__ */ new Map();
+  for (const quest of [...quests].sort((a, b) => a.createdAt - b.createdAt))
+    for (const p of quest.parts) {
+      if (p.kind !== "lesson" || !p.cards?.length) continue;
+      const deck = out.get(p.skillIds[0]) ?? /* @__PURE__ */ new Map();
+      for (const c of p.cards) deck.set(key(c), c);
+      out.set(p.skillIds[0], deck);
+    }
+  return new Map([...out].map(([id, d]) => [id, [...d.values()]]));
+}
+function deckSizes(records, semester) {
+  if (!semester.questSettings?.anki) return void 0;
+  return new Map([...decks(records.map((r) => r.quest))].map(([id, d]) => [id, d.length]));
+}
+function addAnki(quest, records, semester) {
+  if (!semester.questSettings?.anki) return;
+  const all = decks(records.map((r) => r.quest));
+  const tested = /* @__PURE__ */ new Set();
+  const { cardsPerTest } = QUEST_CONFIG.anki;
+  let cards = 0;
+  for (const part of quest.parts) {
+    if (part.kind !== "lesson" && part.kind !== "practice") continue;
+    for (const p of part.problems) {
+      const deck = all.get(p.skillId);
+      if (!deck) continue;
+      const past = records.flatMap((r) => r.quest.parts).filter((x) => x.kind !== "learn" && x.problems.some((y) => y.skillId === p.skillId && y.cards)).length;
+      const start = past * cardsPerTest % deck.length;
+      p.cards = [...deck, ...deck].slice(start, start + Math.min(cardsPerTest, deck.length));
+      cards += p.cards.length;
+      tested.add(p.skillId);
+    }
+    if (part.kind === "lesson" && part.problems[0].cards) {
+      const test = { kind: "practice", id: part.id, title: `Test: ${part.title}`, gate: false, problems: part.problems };
+      quest.parts[quest.parts.indexOf(part)] = test;
+    }
+  }
+  if (!tested.size) return;
+  const minutes = ankiMinutes(cards);
+  const names = [...tested].map((id) => semester.skills.find((s) => s.id === id)?.name ?? id);
+  const first = quest.parts.findIndex((x) => x.kind !== "learn" && x.problems.some((p) => p.cards));
+  quest.parts.splice(first, 0, {
+    kind: "learn",
+    id: "anki",
+    title: `Study in Anki: ${names.join(", ")}`,
+    skillIds: [...tested],
+    estMinutes: minutes,
+    body: `Study these cards in Anki for about ${minutes} minutes: ${names.join(", ")}. If they aren't in Anki yet, use **Export deck** at the top and import the file first. Then take the short test below; that test is what counts for your progress.`
+  });
+  quest.plannedMinutes = quest.parts.reduce((s, p) => s + partMinutes(p), 0);
+}
 const timed = (attempts) => sortAttempts(attempts).filter((a) => a.part !== "assessment" && a.activeSeconds > 0);
 function slownessFactor(skills, attempts) {
   const est = new Map(skills.map((s) => [s.id, s.estMinutes]));
@@ -2008,22 +2145,40 @@ function upcomingAssignments(semester, today, nowLocal, done, courseId) {
   const until = addDays(today, QUEST_CONFIG.assignmentLookaheadDays);
   return semester.assignments.filter((a) => (!courseId || a.courseId === courseId) && a.dueAt >= nowLocal && a.dueAt.slice(0, 10) <= until).filter((a) => openTasks(a, done).length > 0).sort((a, b) => a.dueAt < b.dueAt ? -1 : 1);
 }
-function pickCourse(input) {
+function examsSoon(semester, today) {
+  const until = addDays(today, CONFIG.examCheckWindowDays);
+  return semester.keyDates.filter((k) => k.date >= today && k.date <= until).map((k) => {
+    const target = semester.targets.find((t) => t.courseId === k.courseId);
+    const ids = k.skillIds.length ? new Set(k.skillIds) : null;
+    const skillIds = semester.skills.filter((s) => s.courseId === k.courseId && (!ids || ids.has(s.id)) && (!target || isRequired(s, target))).map((s) => s.id);
+    return { ...k, skillIds };
+  });
+}
+function pickCourse(input, exam) {
   if (input.courseId) return input.courseId;
-  const urgent = upcomingAssignments(input.semester, input.today, input.nowLocal, input.doneTaskIds)[0];
-  return urgent?.courseId ?? input.semester.courses[0].id;
+  const hw = upcomingAssignments(input.semester, input.today, input.nowLocal, input.doneTaskIds)[0];
+  const hwDay = hw?.dueAt.slice(0, 10);
+  if (exam && !(hwDay && hwDay <= addDays(input.today, QUEST_CONFIG.urgentWithinDays) && hwDay < exam.date)) return exam.courseId;
+  return hw?.courseId ?? input.semester.courses[0].id;
 }
 function planQuest(input) {
   const { semester, today, attempts, reviews } = input;
   applyQuestSettings(semester.questSettings);
-  const courseId = pickCourse(input);
+  const skills = semester.skills;
+  const { states } = replay(skills, attempts, reviews);
+  const exams = examsSoon(semester, today);
+  const dueAll = new Set(dueSkills(skills, states, attempts, exams, today));
+  const open = (k) => k.skillIds.filter((id) => !known(states.get(id)) || dueAll.has(id)).length;
+  const load = (k) => open(k) / Math.max(1, daysBetween(today, k.date));
+  const exam = exams.filter((k) => open(k) > 0).sort((a, b) => load(b) - load(a) || (a.date < b.date ? -1 : 1))[0];
+  const courseId = pickCourse(input, exam);
   const course = semester.courses.find((c) => c.id === courseId);
   const target = semester.targets.find((t) => t.courseId === courseId);
-  const skills = semester.skills;
   const byId = new Map(skills.map((s) => [s.id, s]));
   const courseSkills = skills.filter((s) => s.courseId === courseId);
   const required = (s) => !target || isRequired(s, target);
-  const { states } = replay(skills, attempts, reviews);
+  const courseExams = exams.filter((k) => k.courseId === courseId);
+  const examSkills = new Set(courseExams.flatMap((k) => k.skillIds));
   const slowness = slownessFactor(skills, attempts);
   const expMin = (s) => Math.max(1, Math.round(expectedMinutes(s, attempts, slowness)));
   const weekday = weekdayOf(today);
@@ -2042,13 +2197,15 @@ function planQuest(input) {
   const newIds = [];
   const planned = /* @__PURE__ */ new Set();
   const leftOut = [];
+  const empty = () => !gate.length && !tasks.length && !reviewIds.length && !newIds.length;
   const lessonMin = (s) => Math.max(1, Math.round(expMin(s) * QUEST_CONFIG.lesson.problemShare));
+  const cards = (id) => Math.min(QUEST_CONFIG.anki.cardsPerTest, input.deckSizes?.get(id) ?? 0);
   const minutes = () => {
     let m = 0;
-    for (const id of [...concepts, ...taskLearn, ...newIds]) m += QUEST_CONFIG.lesson.readMinutes + lessonMin(byId.get(id));
+    for (const id of [...concepts, ...taskLearn, ...newIds]) m += (cards(id) ? 0 : QUEST_CONFIG.lesson.readMinutes) + lessonMin(byId.get(id));
     for (const id of [...gate, ...reviewIds]) m += expMin(byId.get(id));
     for (const t of tasks) m += expMin(byId.get(t.task.skillId));
-    return m;
+    return m + ankiMinutes([...concepts, ...taskLearn, ...newIds, ...gate, ...reviewIds].reduce((n, id) => n + cards(id), 0));
   };
   const tryAdd = (apply, rollback, force = false) => {
     apply();
@@ -2102,9 +2259,8 @@ function planQuest(input) {
     for (const t of tasks) planned.add(t.task.skillId);
   };
   addHomework(assignments.filter((a) => a.dueAt.slice(0, 10) <= urgentUntil), true);
-  const exams = semester.keyDates.map((k) => ({ courseId: k.courseId, date: k.date, skillIds: k.skillIds }));
   const stageOrder = { lapsed: 0, mastered: 1, learning: 2, retained: 3, new: 4 };
-  const due = dueSkills(courseSkills, states, attempts, exams, today).filter((id) => !planned.has(id)).sort((a, b) => stageOrder[states.get(a).stage] - stageOrder[states.get(b).stage]);
+  const due = courseSkills.filter((s) => dueAll.has(s.id) && !planned.has(s.id) && (!examSkills.size || examSkills.has(s.id))).sort((a, b) => stageOrder[states.get(a.id).stage] - stageOrder[states.get(b.id).stage] || b.weight - a.weight).map((s) => s.id);
   for (const id of due) {
     const ok = tryAdd(
       () => (reviewIds.push(id), planned.add(id)),
@@ -2112,26 +2268,32 @@ function planQuest(input) {
     );
     if (!ok) leftOut.push(`review: ${byId.get(id).name}`);
   }
+  const examRank = (s) => {
+    const e = semester.keyDates.filter((x) => x.date >= today && x.skillIds.includes(s.id)).sort((a, b) => a.date < b.date ? -1 : 1)[0];
+    return e ? daysBetween(today, e.date) : 9999;
+  };
+  const topicRank = (s) => course.topics.findIndex((t) => t.id === s.topicId);
+  const addNew = (list, max) => {
+    const fresh = list.filter((s) => required(s) && !planned.has(s.id) && (states.get(s.id)?.stage ?? "new") === "new").sort((a, b) => examRank(a) - examRank(b) || topicRank(a) - topicRank(b) || Number(b.isFundamental) - Number(a.isFundamental));
+    let added = 0;
+    for (const s of fresh) {
+      if (added >= max) break;
+      if (!s.prereqSkillIds.every((p) => known(states.get(p)) || planned.has(p) || !byId.has(p))) continue;
+      if (tryAdd(() => (newIds.push(s.id), planned.add(s.id)), () => (newIds.pop(), planned.delete(s.id)), empty())) added++;
+    }
+  };
+  addNew(courseSkills.filter((s) => examSkills.has(s.id)), Infinity);
   addHomework(
     assignments.filter((a) => a.dueAt.slice(0, 10) > urgentUntil),
-    !gate.length && !tasks.length && !reviewIds.length
+    empty()
   );
   if (tasks.length === 0) {
-    const examRank = (s) => {
-      const e = exams.filter((x) => x.date >= today && x.skillIds.includes(s.id)).sort((a, b) => a.date < b.date ? -1 : 1)[0];
-      return e ? daysBetween(today, e.date) : 9999;
-    };
-    const topicRank = (s) => course.topics.findIndex((t) => t.id === s.topicId);
-    const fresh = courseSkills.filter((s) => required(s) && !planned.has(s.id) && (states.get(s.id)?.stage ?? "new") === "new").filter((s) => s.prereqSkillIds.every((p) => known(states.get(p)) || planned.has(p) || !byId.has(p))).sort((a, b) => examRank(a) - examRank(b) || topicRank(a) - topicRank(b) || Number(b.isFundamental) - Number(a.isFundamental));
-    for (const s of fresh.slice(0, QUEST_CONFIG.maxNewSkills)) {
-      tryAdd(
-        () => (newIds.push(s.id), planned.add(s.id)),
-        () => (newIds.pop(), planned.delete(s.id)),
-        reviewIds.length === 0 && newIds.length === 0 && gate.length === 0
-      );
-    }
+    addNew(
+      courseSkills.filter((s) => !examSkills.has(s.id)),
+      examSkills.size ? QUEST_CONFIG.newBeforeExams : QUEST_CONFIG.maxNewSkills
+    );
   }
-  if (!gate.length && !tasks.length && !reviewIds.length && !newIds.length) return { kind: "nothing_to_do", courseId };
+  if (empty()) return { kind: "nothing_to_do", courseId };
   let pn = 0;
   let partN = 0;
   const names = (ids) => ids.map((id) => byId.get(id).name);
@@ -2191,7 +2353,9 @@ function planQuest(input) {
     });
   }
   let reason;
-  if (tasks.length) {
+  if (courseExams.length && !tasks.length) {
+    reason = `${courseExams.map((k) => `${k.title} is ${formatDue(k.date, today)}`).join(" and ")}, so today covers only exam skills.`;
+  } else if (tasks.length) {
     const a = tasks[0].assignment;
     const mine = tasks.filter((t) => t.assignment.id === a.id);
     const lower = (x) => x.charAt(0).toLowerCase() + x.slice(1);
@@ -2324,23 +2488,31 @@ function parseTimes(reply) {
   out.sort((a, b) => hm(a.start) - hm(b.start));
   return out.filter((t, i) => i === 0 || hm(t.start) >= hm(out[i - 1].end)).slice(0, 3);
 }
+function busyLines(events, timetable, weekday) {
+  const slots = timetable.filter((t) => t.weekday === weekday).map((t) => `${t.start}-${t.end} ${t.title}`);
+  return [...events, ...slots.filter((l) => !events.some((e) => e.slice(0, 11) === l.slice(0, 11)))].sort();
+}
 async function pickTimes(ask, o) {
-  return parseTimes(await ask(timesTurns(o), { tier: "default" }));
+  const busy = o.events.map((l) => /^(\d\d:\d\d)-(\d\d:\d\d)/.exec(l)).filter((m) => !!m).map((m) => [hm(m[1]), hm(m[2])]);
+  return parseTimes(await ask(timesTurns(o), { tier: "default" })).filter(
+    (t) => (!o.after || t.start >= o.after) && !busy.some(([s, e]) => hm(t.start) < e && hm(t.end) > s)
+  );
 }
 function studyEntries(o) {
   return o.times.map((t) => ({
     day: o.day,
     ...t,
     title: `Study · ${o.courseName}`,
-    description: `${ENTRY_MARK} ${o.reason}${o.url ? `
+    description: `${ENTRY_MARK} ${short(o.reason)}${o.url ? `
 Open StudyDesk: ${o.url}` : ""}`,
     timeZone: o.timeZone
   }));
 }
+const short = (t) => (/^.{1,200}?[.!?](\s|$)/.exec(t)?.[0] ?? t.slice(0, 200)).trim();
 const sig = (e) => `${e.day} ${e.start}-${e.end} ${e.title}`;
 function calendarWant(day, questId, entries) {
   const sigs = entries.map(sig);
-  const key = `${day}|${sigs.join("|")}`;
+  const key2 = `${day}|${sigs.join("|")}`;
   const events = entries.map((e) => ({
     summary: e.title,
     description: e.description,
@@ -2351,11 +2523,11 @@ function calendarWant(day, questId, entries) {
     notificationLevel: "NONE"
   }));
   const instructions = `1. Get the document calendarWritten from the same collection (it may not exist). Get the time now in milliseconds with \`date +%s%3N\`.
-2. If its key is ${JSON.stringify(key)}, only update calendarWritten with {"taskSeenAt": <now>} and end.
+2. If its key is ${JSON.stringify(key2)}, only update calendarWritten with {"taskSeenAt": <now>} and end.
 3. Delete every event id in its "ids" with mcp__Google_Calendar__delete_event (notificationLevel "NONE"). An event that is already gone is fine.
 4. Create each of these events with mcp__Google_Calendar__create_event, in this order, using exactly these arguments: ${JSON.stringify(events)}
-5. Set calendarWritten to {"key": ${JSON.stringify(key)}, "day": "${day}", "ids": [the ids you created, in order], "sigs": ${JSON.stringify(sigs)}, "taskSeenAt": <now>}. Never touch any other event.`;
-  return { day, questId, key, entries, instructions };
+5. Set calendarWritten to {"key": ${JSON.stringify(key2)}, "day": "${day}", "ids": [the ids you created, in order], "sigs": ${JSON.stringify(sigs)}, "taskSeenAt": <now>}. Never touch any other event.`;
+  return { day, questId, key: key2, entries, instructions };
 }
 const GRADE_FIELDS = ["attemptId", "verdict", "points", "feedback", "firstWrongStep", "slipQuestion", "slipAnswer", "fundamentalSkillId"];
 function gradingFields(w) {
@@ -2488,7 +2660,7 @@ One or two plain sentences on what you checked and found, for the student's log.
 function parseShallow(reply, draft, today) {
   const s = parseSections(reply);
   const errors = [];
-  for (const key of ["CHANGES", "QUESTIONS", "NEXT DEEP SWEEP", "NOTE"]) if (!s.has(key)) errors.push(`The section === ${key} === is missing.`);
+  for (const key2 of ["CHANGES", "QUESTIONS", "NEXT DEEP SWEEP", "NOTE"]) if (!s.has(key2)) errors.push(`The section === ${key2} === is missing.`);
   let raw = [];
   const changes = (s.get("CHANGES") ?? "[]").replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
   try {
@@ -2780,7 +2952,7 @@ async function studyTimes(input, semester, quest, d, log) {
       quest,
       courseName,
       weekday: weekdayName(quest.date),
-      events: input.calendar?.events?.[quest.date] ?? [],
+      events: busyLines(input.calendar?.events?.[quest.date] ?? [], semester.timetable, weekdayOf(quest.date)),
       notes: input.notes ?? ""
     });
     if (!times.length) {
@@ -2825,6 +2997,7 @@ async function writeTomorrow(semester, calendar, records, mastery, tomorrow, now
     attempts: mastery.attempts,
     reviews: mastery.reviews,
     doneTaskIds: doneTasks(records),
+    deckSizes: deckSizes(records, semester),
     blockerSkillIds: recentBlockers(records, tomorrow),
     questId: `qst_${tomorrow}_${now.toString(36)}`
   });
@@ -2835,6 +3008,7 @@ async function writeTomorrow(semester, calendar, records, mastery, tomorrow, now
   const { states } = replay(mastery.skills, mastery.attempts, mastery.reviews);
   const knownIds = [...states.values()].filter((s) => s.stage === "mastered" || s.stage === "retained").map((s) => s.skillId);
   recentFeel(records, (id) => semester.skills.find((s) => s.id === id)?.name, tomorrow);
+  addAnki(res.quest, records, semester);
   const carried = carriedOver(records, res.quest);
   if (carried.length) res.quest.notes.unshift(`Carried over from ${weekdayName(carried[0].from)}, when the quest wasn't finished: ${carried.map((c) => c.label).join(", ")}.`);
   const course = semester.courses.find((c) => c.id === res.quest.courseId);
@@ -3173,9 +3347,9 @@ function typeOk(v, t) {
 }
 function checkRecord(rec, rule, where) {
   const out = [];
-  for (const [key, t] of Object.entries(rule)) {
-    const optional = key.endsWith("?");
-    const name = optional ? key.slice(0, -1) : key;
+  for (const [key2, t] of Object.entries(rule)) {
+    const optional = key2.endsWith("?");
+    const name = optional ? key2.slice(0, -1) : key2;
     const v = rec[name];
     if (v === void 0) {
       if (!optional) out.push(`${where}: "${name}" is missing`);
@@ -3241,9 +3415,9 @@ function loadAll(root) {
       if (statSync(p).isDirectory()) walk(p);
       else if (name.endsWith(".json")) {
         const rel = relative(root, p).split(sep).join("/").replace(/\.json$/, "");
-        const key = rel.replace(/^(?:.*?\/)?data\/users\/[^/]+\//, `${ME}/`);
+        const key2 = rel.replace(/^(?:.*?\/)?data\/users\/[^/]+\//, `${ME}/`);
         try {
-          out.set(key, unwrap(JSON.parse(readFileSync(p, "utf8"))));
+          out.set(key2, unwrap(JSON.parse(readFileSync(p, "utf8"))));
         } catch {
         }
       }
@@ -3392,8 +3566,8 @@ function snapshotOf(all) {
 }
 async function main() {
   const dir = arg("dir");
-  const key = arg("key");
-  if (!dir || !key) {
+  const key2 = arg("key");
+  if (!dir || !key2) {
     say(["Usage: node routine.mjs --dir <work folder> --key <schedule key> [--url <StudyDesk url>] [--dry-run --tz <IANA zone>]"]);
     process.exitCode = 2;
     return;
@@ -3410,7 +3584,7 @@ async function main() {
   const profile = doc(all, "profile");
   const schedule = profile?.schedule;
   const dry = process.argv.includes("--dry-run");
-  if (!dry && (!schedule || schedule.key !== key)) {
+  if (!dry && (!schedule || schedule.key !== key2)) {
     say([
       "STOP. This scheduled task was replaced by a newer one (or the nightly run was turned off), so it does nothing tonight.",
       `Don't write anything. Reply "Replaced: nothing to do." and end. NIGHTLY RUN FINISHED`
