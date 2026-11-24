@@ -6,11 +6,11 @@
 import { CONFIG } from "../mastery/config";
 import { addDays, daysBetween } from "../mastery/days";
 import { isRequired } from "../mastery/mastery";
-import { dueSkills, replay, type Exam } from "../mastery/replay";
+import { dueSkills, replay } from "../mastery/replay";
 import { expectedMinutes, questBudget, slownessFactor } from "../mastery/timing";
 import type { Attempt, Day, ReviewItem, Skill, SkillState } from "../mastery/types";
 import { applyQuestSettings, QUEST_CONFIG, partMinutes } from "./config";
-import type { Assignment, AssignmentTask, ProblemPart, Quest, QuestProblem, Semester, TimetableEntry } from "./types";
+import type { Assignment, AssignmentTask, KeyDate, ProblemPart, Quest, QuestProblem, Semester, TimetableEntry } from "./types";
 
 export type PlanInput = {
   semester: Semester;
@@ -76,25 +76,59 @@ export function upcomingAssignments(semester: Semester, today: Day, nowLocal: st
     .sort((a, b) => (a.dueAt < b.dueAt ? -1 : 1));
 }
 
-/** The course that needs today's quest most: earliest homework due, else the first course. */
-export function pickCourse(input: PlanInput): string {
+/**
+ * Exams and quizzes in the next week. One without a skill list covers every
+ * skill of its course the student's target grade needs.
+ */
+function examsSoon(semester: Semester, today: Day): KeyDate[] {
+  const until = addDays(today, CONFIG.examCheckWindowDays);
+  return semester.keyDates
+    .filter((k) => k.date >= today && k.date <= until)
+    .map((k) => {
+      const target = semester.targets.find((t) => t.courseId === k.courseId);
+      const ids = k.skillIds.length ? new Set(k.skillIds) : null;
+      const skillIds = semester.skills
+        .filter((s) => s.courseId === k.courseId && (!ids || ids.has(s.id)) && (!target || isRequired(s, target)))
+        .map((s) => s.id);
+      return { ...k, skillIds };
+    });
+}
+
+/**
+ * The course that needs today's quest most. Homework due within a couple of
+ * days wins if it's due before the exam; otherwise the exam with the most open
+ * skills per day left; otherwise the earliest homework, else the first course.
+ */
+function pickCourse(input: PlanInput, exam: KeyDate | undefined): string {
   if (input.courseId) return input.courseId;
-  const urgent = upcomingAssignments(input.semester, input.today, input.nowLocal, input.doneTaskIds)[0];
-  return urgent?.courseId ?? input.semester.courses[0].id;
+  const hw = upcomingAssignments(input.semester, input.today, input.nowLocal, input.doneTaskIds)[0];
+  const hwDay = hw?.dueAt.slice(0, 10);
+  if (exam && !(hwDay && hwDay <= addDays(input.today, QUEST_CONFIG.urgentWithinDays) && hwDay < exam.date)) return exam.courseId;
+  return hw?.courseId ?? input.semester.courses[0].id;
 }
 
 export function planQuest(input: PlanInput): PlanResult {
   const { semester, today, attempts, reviews } = input;
   applyQuestSettings(semester.questSettings);
-  const courseId = pickCourse(input);
+  const skills = semester.skills;
+  const { states } = replay(skills, attempts, reviews);
+
+  // Open exam skills: not known yet, or known and due for their check before the exam.
+  const exams = examsSoon(semester, today);
+  const dueAll = new Set(dueSkills(skills, states, attempts, exams, today));
+  const open = (k: KeyDate) => k.skillIds.filter((id) => !known(states.get(id)) || dueAll.has(id)).length;
+  const load = (k: KeyDate) => open(k) / Math.max(1, daysBetween(today, k.date));
+  const exam = exams.filter((k) => open(k) > 0).sort((a, b) => load(b) - load(a) || (a.date < b.date ? -1 : 1))[0];
+
+  const courseId = pickCourse(input, exam);
   const course = semester.courses.find((c) => c.id === courseId)!;
   const target = semester.targets.find((t) => t.courseId === courseId);
-  const skills = semester.skills;
   const byId = new Map(skills.map((s) => [s.id, s]));
   const courseSkills = skills.filter((s) => s.courseId === courseId);
   const required = (s: Skill) => !target || isRequired(s, target);
-
-  const { states } = replay(skills, attempts, reviews);
+  // In the week before this course's exams, the quest covers only their skills.
+  const courseExams = exams.filter((k) => k.courseId === courseId);
+  const examSkills = new Set(courseExams.flatMap((k) => k.skillIds));
   const slowness = slownessFactor(skills, attempts);
   const expMin = (s: Skill) => Math.max(1, Math.round(expectedMinutes(s, attempts, slowness)));
 
@@ -119,6 +153,7 @@ export function planQuest(input: PlanInput): PlanResult {
   const newIds: string[] = [];
   const planned = new Set<string>();
   const leftOut: string[] = [];
+  const empty = () => !gate.length && !tasks.length && !reviewIds.length && !newIds.length;
 
   const lessonMin = (s: Skill) => Math.max(1, Math.round(expMin(s) * QUEST_CONFIG.lesson.problemShare));
   const minutes = () => {
@@ -187,11 +222,12 @@ export function planQuest(input: PlanInput): PlanResult {
   addHomework(assignments.filter((a) => a.dueAt.slice(0, 10) <= urgentUntil), true);
 
   // 3. Reviews: skills still being learned, lapsed, or due on the review ladder.
-  const exams: Exam[] = semester.keyDates.map((k) => ({ courseId: k.courseId, date: k.date, skillIds: k.skillIds }));
+  //    Before an exam only its skills; the rest wait until after it.
   const stageOrder = { lapsed: 0, mastered: 1, learning: 2, retained: 3, new: 4 } as const;
-  const due = dueSkills(courseSkills, states, attempts, exams, today)
-    .filter((id) => !planned.has(id))
-    .sort((a, b) => stageOrder[states.get(a)!.stage] - stageOrder[states.get(b)!.stage]);
+  const due = courseSkills
+    .filter((s) => dueAll.has(s.id) && !planned.has(s.id) && (!examSkills.size || examSkills.has(s.id)))
+    .sort((a, b) => stageOrder[states.get(a.id)!.stage] - stageOrder[states.get(b.id)!.stage] || b.weight - a.weight)
+    .map((s) => s.id);
   for (const id of due) {
     const ok = tryAdd(
       () => (reviewIds.push(id), planned.add(id)),
@@ -200,32 +236,41 @@ export function planQuest(input: PlanInput): PlanResult {
     if (!ok) leftOut.push(`review: ${byId.get(id)!.name}`);
   }
 
+  // 4. Skills the student hasn't started, those on the nearest exam first.
+  const examRank = (s: Skill) => {
+    const e = semester.keyDates.filter((x) => x.date >= today && x.skillIds.includes(s.id)).sort((a, b) => (a.date < b.date ? -1 : 1))[0];
+    return e ? daysBetween(today, e.date) : 9999;
+  };
+  const topicRank = (s: Skill) => course.topics.findIndex((t) => t.id === s.topicId);
+  const addNew = (list: Skill[], max: number) => {
+    const fresh = list
+      .filter((s) => required(s) && !planned.has(s.id) && (states.get(s.id)?.stage ?? "new") === "new")
+      .sort((a, b) => examRank(a) - examRank(b) || topicRank(a) - topicRank(b) || Number(b.isFundamental) - Number(a.isFundamental));
+    let added = 0;
+    for (const s of fresh) {
+      if (added >= max) break;
+      // Checked here, not up front, so a skill can build on one added just before it.
+      if (!s.prereqSkillIds.every((p) => known(states.get(p)) || planned.has(p) || !byId.has(p))) continue;
+      if (tryAdd(() => (newIds.push(s.id), planned.add(s.id)), () => (newIds.pop(), planned.delete(s.id)), empty())) added++;
+    }
+  };
+  // An exam's own skills aren't new material: they come before later homework, as many as fit.
+  addNew(courseSkills.filter((s) => examSkills.has(s.id)), Infinity);
+
   addHomework(
     assignments.filter((a) => a.dueAt.slice(0, 10) > urgentUntil),
-    !gate.length && !tasks.length && !reviewIds.length,
+    empty(),
   );
 
-  // 4. Nothing due at all: start the next new skills, those on the nearest exam first.
+  // 5. Nothing due at all: start the next new skills. Before an exam only if the student asked for that.
   if (tasks.length === 0) {
-    const examRank = (s: Skill) => {
-      const e = exams.filter((x) => x.date >= today && x.skillIds.includes(s.id)).sort((a, b) => (a.date < b.date ? -1 : 1))[0];
-      return e ? daysBetween(today, e.date) : 9999;
-    };
-    const topicRank = (s: Skill) => course.topics.findIndex((t) => t.id === s.topicId);
-    const fresh = courseSkills
-      .filter((s) => required(s) && !planned.has(s.id) && (states.get(s.id)?.stage ?? "new") === "new")
-      .filter((s) => s.prereqSkillIds.every((p) => known(states.get(p)) || planned.has(p) || !byId.has(p)))
-      .sort((a, b) => examRank(a) - examRank(b) || topicRank(a) - topicRank(b) || Number(b.isFundamental) - Number(a.isFundamental));
-    for (const s of fresh.slice(0, QUEST_CONFIG.maxNewSkills)) {
-      tryAdd(
-        () => (newIds.push(s.id), planned.add(s.id)),
-        () => (newIds.pop(), planned.delete(s.id)),
-        reviewIds.length === 0 && newIds.length === 0 && gate.length === 0,
-      );
-    }
+    addNew(
+      courseSkills.filter((s) => !examSkills.has(s.id)),
+      examSkills.size ? QUEST_CONFIG.newBeforeExams : QUEST_CONFIG.maxNewSkills,
+    );
   }
 
-  if (!gate.length && !tasks.length && !reviewIds.length && !newIds.length) return { kind: "nothing_to_do", courseId };
+  if (empty()) return { kind: "nothing_to_do", courseId };
 
   // ---- assemble the parts ----
   let pn = 0;
@@ -292,7 +337,9 @@ export function planQuest(input: PlanInput): PlanResult {
 
   // ---- why today ----
   let reason: string;
-  if (tasks.length) {
+  if (courseExams.length && !tasks.length) {
+    reason = `${courseExams.map((k) => `${k.title} is ${formatDue(k.date, today)}`).join(" and ")}, so today covers only exam skills.`;
+  } else if (tasks.length) {
     const a = tasks[0].assignment;
     const mine = tasks.filter((t) => t.assignment.id === a.id);
     const lower = (x: string) => x.charAt(0).toLowerCase() + x.slice(1);
