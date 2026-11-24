@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { applyWant, calendarTaskSetup, calendarWant, parseTimes, planStep, studyEntries, type CalendarWritten } from "../src/quests/times";
+import { applyWant, busyLines, calendarTaskSetup, calendarWant, parseTimes, pickTimes, planStep, studyEntries, type CalendarWritten } from "../src/quests/times";
+import { aheadIsStale } from "../src/platform/calendar";
 import type { QuestRecord } from "../src/quests/types";
 import { toEvents } from "../src/platform/calendar";
 import { calendarTaskNotice } from "../src/orchestrator/signals";
@@ -63,6 +64,37 @@ describe("study times", () => {
       { summary: "Lecture", start: { dateTime: "2026-11-24T08:00:00+01:00" }, end: { dateTime: "2026-11-24T10:00:00+01:00" } },
     ];
     expect(toEvents(raw).map((e) => e.title)).toEqual(["Lecture"]);
+  });
+});
+
+describe("never on top of a lecture (24 Nov: a block sat on the Physik VU)", () => {
+  const quest = { plannedMinutes: 180, parts: [{ title: "Lesson" }] } as never;
+
+  it("drops a picked block that overlaps something fixed, or starts before now", async () => {
+    const times = await pickTimes(async () => "10:30-11:30\n13:00-14:05\n15:00-16:00", { quest, courseName: "Math", weekday: "Tuesday", events: ["10:15-11:45 Physik VU"], notes: "", after: "10:20" });
+    expect(times.map((t) => t.start)).toEqual(["13:00", "15:00"]);
+    const early = await pickTimes(async () => "09:00-10:00\n12:00-13:00", { quest, courseName: "Math", weekday: "Tuesday", events: [], notes: "", after: "11:00" });
+    expect(early.map((t) => t.start)).toEqual(["12:00"]);
+  });
+
+  it("counts the weekly timetable too, once per slot", () => {
+    const timetable = [
+      { weekday: 2, start: "10:15", end: "11:45", kind: "lecture", title: "Physik VU", courseId: null },
+      { weekday: 2, start: "16:00", end: "17:30", kind: "exercise", title: "Math UE", courseId: null },
+      { weekday: 3, start: "08:00", end: "09:00", kind: "lecture", title: "Other day", courseId: null },
+    ] as never;
+    expect(busyLines(["10:15-11:45 Physik für EEE VU, Gruppe 5"], timetable, 2)).toEqual(["10:15-11:45 Physik für EEE VU, Gruppe 5", "16:00-17:30 Math UE"]);
+  });
+
+  it("reads the calendar again when the last read has no timed events (made before this update)", () => {
+    const now = Date.now();
+    expect(aheadIsStale({ readAt: now, from: "2026-11-24", days: 14, busy: {} }, "2026-11-24", now)).toBe(true);
+    expect(aheadIsStale({ readAt: now, from: "2026-11-24", days: 14, busy: {}, events: {} }, "2026-11-24", now)).toBe(false);
+  });
+
+  it("keeps the entry's note short", () => {
+    const [e] = studyEntries({ day: "2026-11-24", times: [{ start: "13:00", end: "14:00" }], courseName: "Math", reason: "Sheet 7 is due tomorrow 11:00. Beispiel 7.1 and 7.2 need a lot.", timeZone: "Europe/Vienna", url: null });
+    expect(e.description).toBe("[StudyDesk] Sheet 7 is due tomorrow 11:00.");
   });
 });
 

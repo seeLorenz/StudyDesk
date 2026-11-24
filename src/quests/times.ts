@@ -13,7 +13,7 @@ import { ENTRY_MARK, type StudyEntry } from "../platform/calendar";
 import type { Turn } from "../platform/claude";
 import type { Day } from "../mastery/types";
 import { allHandedIn } from "./handin";
-import type { Quest, QuestRecord } from "./types";
+import type { Quest, QuestRecord, TimetableEntry } from "./types";
 import type { Ask } from "./write";
 
 /** Window event the quest page sends when today's quest was written or a part handed in. */
@@ -61,9 +61,25 @@ export function parseTimes(reply: string): { start: string; end: string }[] {
   return out.filter((t, i) => i === 0 || hm(t.start) >= hm(out[i - 1].end)).slice(0, 3);
 }
 
-/** Asks Claude for the study times. An unusable reply gives none (the quest is fine without them). */
+/**
+ * Pure: what's fixed on that day: the calendar's timed events plus the weekly
+ * timetable's slots (lectures not in the calendar still count), once each.
+ */
+export function busyLines(events: string[], timetable: TimetableEntry[], weekday: number): string[] {
+  const slots = timetable.filter((t) => t.weekday === weekday).map((t) => `${t.start}-${t.end} ${t.title}`);
+  return [...events, ...slots.filter((l) => !events.some((e) => e.slice(0, 11) === l.slice(0, 11)))].sort();
+}
+
+/**
+ * Asks Claude for the study times. Code then drops any block that overlaps
+ * something fixed or starts before `after`: Claude chooses, code checks. An
+ * unusable reply gives none (the quest is fine without them).
+ */
 export async function pickTimes(ask: Ask, o: Parameters<typeof timesTurns>[0]): Promise<{ start: string; end: string }[]> {
-  return parseTimes(await ask(timesTurns(o), { tier: "default" }));
+  const busy = o.events.map((l) => /^(\d\d:\d\d)-(\d\d:\d\d)/.exec(l)).filter((m): m is RegExpExecArray => !!m).map((m) => [hm(m[1]), hm(m[2])]);
+  return parseTimes(await ask(timesTurns(o), { tier: "default" })).filter(
+    (t) => (!o.after || t.start >= o.after) && !busy.some(([s, e]) => hm(t.start) < e && hm(t.end) > s),
+  );
 }
 
 /** Pure: the calendar entries for the picked times. */
@@ -72,10 +88,13 @@ export function studyEntries(o: { day: Day; times: { start: string; end: string 
     day: o.day,
     ...t,
     title: `Study · ${o.courseName}`,
-    description: `${ENTRY_MARK} ${o.reason}${o.url ? `\nOpen StudyDesk: ${o.url}` : ""}`,
+    description: `${ENTRY_MARK} ${short(o.reason)}${o.url ? `\nOpen StudyDesk: ${o.url}` : ""}`,
     timeZone: o.timeZone,
   }));
 }
+
+/** The quest's reason can run long; the entry keeps its first sentence. */
+const short = (t: string) => (/^.{1,200}?[.!?](\s|$)/.exec(t)?.[0] ?? t.slice(0, 200)).trim();
 
 const sig = (e: StudyEntry) => `${e.day} ${e.start}-${e.end} ${e.title}`;
 

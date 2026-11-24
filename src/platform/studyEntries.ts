@@ -2,13 +2,13 @@
 // today's quest, while the page is open. design/scheduled-runs.md, "Study
 // times in the calendar". Plumbing; the decisions are in src/quests/times.ts.
 
-import { createEntry, deleteEntries } from "./calendar";
+import { createEntry, dayLines, deleteEntries, readCalendar } from "./calendar";
 import { askClaude } from "./claude";
 import { openOnboardingStore } from "./onboardingStore";
 import { openOrchestratorStore } from "./orchestratorStore";
 import type { QuestStore } from "./questStore";
 import { studentTimeZone } from "./schedule";
-import { applyWant, calendarWant, pickTimes, planStep, studyEntries } from "../quests/times";
+import { applyWant, busyLines, calendarWant, pickTimes, planStep, studyEntries } from "../quests/times";
 import type { Day } from "../mastery/types";
 
 const WEEKDAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -21,13 +21,14 @@ export async function syncStudyEntries(qs: QuestStore, today: Day): Promise<void
   let plan = want;
   const step = planStep(want, rec, today, now);
   if (step === "pick" && rec) {
-    const [ahead, orch, profile] = await Promise.all([qs.loadCalendar(), openOrchestratorStore().then((o) => o.loadState()), openOnboardingStore().then((o) => o.loadProfile())]);
+    // Today's calendar, read now: placing study time on a stale or empty read is how a block lands on a lecture.
+    const [events, orch, profile] = await Promise.all([readCalendar(today, 1), openOrchestratorStore().then((o) => o.loadState()), openOnboardingStore().then((o) => o.loadProfile())]);
     const courseName = semester?.courses.find((c) => c.id === rec.quest.courseId)?.name ?? "Quest";
     const times = await pickTimes((t, o) => askClaude(t, { ...o, background: true }), {
       quest: rec.quest,
       courseName,
       weekday: WEEKDAY[d.getDay()],
-      events: ahead?.from === today ? (ahead.events?.[today] ?? []) : [],
+      events: busyLines(dayLines(events, today), semester?.timetable ?? [], d.getDay()),
       notes: orch.memory.text,
       after: now,
     });
