@@ -124,9 +124,11 @@ function CourseList({
           <h2 className="desk-title">{semester.name}</h2>
           <p className="desk-meta">{[range, plural(semester.courses.length, "course"), weekly ? `${hours(weekly)} a week` : null].filter(Boolean).join(" · ")}</p>
         </div>
-        <button type="button" className="mini-btn" onClick={onOpenSetup}>
-          {semester.source === "sample" ? "Set up your semester" : "Setup sheet"}
-        </button>
+        {semester.source === "sample" && (
+          <button type="button" className="mini-btn" onClick={onOpenSetup}>
+            Set up your semester
+          </button>
+        )}
       </header>
       {semester.source === "sample" && <p className="quest-banner">This is sample data (Calculus 1). Setting up your semester replaces it with your real courses.</p>}
 

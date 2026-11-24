@@ -18,11 +18,12 @@ import { carriedOver, doneTasks, formatDue, planQuest, recentBlockers, recentFee
 import { ProblemCard, clock } from "./ProblemCard";
 import { sampleGradingAsk, sampleSemester, sampleWriter } from "./seed";
 import type { AnswerFile, ProblemPart, ProblemWork, Quest, QuestPart, QuestProgress, QuestRecord, Rating, Semester } from "./types";
-import { claudeWriter, writeQuest, type WriteStatus } from "./write";
+import { claudeWriter, QuestIncomplete, writeQuest, type WriteStatus } from "./write";
 import { compressImage, dataUrlToBlob } from "./images";
 import { addAnki, deckSizes, ankiDeck } from "./anki";
 import { applyChecks, checkResults, isResolved, newReviewChat, questMistakes, reviewRules } from "./review";
 import { WorkloadCard } from "../onboarding/WorkloadCard";
+import { placementWriter, planPlacement } from "../onboarding/placement";
 import { busyMinutesFromEvents, readCalendar } from "../platform/calendar";
 import { publish, subscribe } from "../platform/deskBus";
 import { offerDownload, openOnboardingStore } from "../platform/onboardingStore";
@@ -317,6 +318,40 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
     [data, today],
   );
 
+  // The placement check is written here, on the student's go. A retry carries on from the parts already written.
+  const placed = useRef<{ quest: Quest; writtenIds: string[] } | null>(null);
+  const writePlacement = async () => {
+    if (!data) return;
+    const { semester, mastery, qs } = data;
+    const { quest, partCourse } = planPlacement(semester, mastery.attempts, mastery.reviews, today);
+    const prev = placed.current;
+    const resume = prev && prev.quest.parts.length === quest.parts.length && prev.quest.parts.every((p, i) => p.id === quest.parts[i].id);
+    setBuildError(null);
+    setBuilding({ plan: quest, status: {} });
+    try {
+      let placementQuestId = "none";
+      if (quest.parts.length) {
+        const writer = placementWriter(semester, quest, partCourse, askClaude, data.live ? null : sampleWriter(semester.skills));
+        const written = await writeQuest(resume ? prev.quest : quest, writer, (st) => setBuilding((b) => (b ? { ...b, status: { ...b.status, [st.partId]: st } } : b)), {
+          skip: resume ? new Set(prev.writtenIds) : undefined,
+        });
+        placed.current = null;
+        const record = { quest: written, progress: emptyProgress(written.id) };
+        await qs.saveRecord(record);
+        setData((d) => (d ? { ...d, records: [...d.records, record] } : d));
+        placementQuestId = written.id;
+      }
+      const s = { ...semester, placementQuestId };
+      await qs.saveSemester(s);
+      publish("semester", s, "quests");
+      setData((d) => (d ? { ...d, semester: s } : d));
+      setBuilding(null);
+    } catch (e) {
+      if (e instanceof QuestIncomplete) placed.current = { quest: e.quest, writtenIds: e.writtenIds };
+      setBuildError(message(e));
+    }
+  };
+
   useEffect(() => {
     if (data && !current && !building && !autoBuilt.current && !planNotice && !needsPlacement) {
       autoBuilt.current = true;
@@ -372,13 +407,14 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
 
       {leftovers && <p className="quest-banner">{leftovers}</p>}
 
-      {needsPlacement && (
+      {needsPlacement && !building && (
         <section className="setup-card setup-welcome">
           <p className="quest-kicker">{data.semester.name}</p>
           <h1>Your semester is set up</h1>
-          <p>Your first quest is a placement check: it finds out where you stand, so StudyDesk can plan the right amount each day.</p>
+          <p>Your first quest is a placement check: one short problem on each basic your courses build on and on each topic already taught. It finds out where you stand, so StudyDesk can plan the right amount each day.</p>
+          <p className="quest-muted">Anything StudyDesk still wants to know about your courses is under To do on Organize, whenever you like.</p>
           <div className="setup-actions">
-            <button type="button" className="mini-btn primary big" onClick={onStartSetup}>
+            <button type="button" className="mini-btn primary big" onClick={() => void writePlacement()}>
               Start the placement check
             </button>
           </div>
@@ -475,7 +511,7 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
         </section>
       ) : building ? (
         <section className="quest-building" aria-live="polite">
-          <h2>Writing today's quest</h2>
+          <h2>{needsPlacement ? "Writing your placement check" : "Writing today's quest"}</h2>
           <p className="quest-muted">{building.plan.reason}</p>
           <ol>
             {building.plan.parts.map((p, i) => {
@@ -491,7 +527,7 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
           {buildError && (
             <div className="quest-error">
               <p>{buildError}</p>
-              <button type="button" className="mini-btn primary" onClick={() => void build(building.plan.budgetMinutes)}>
+              <button type="button" className="mini-btn primary" onClick={() => void (needsPlacement ? writePlacement() : build(building.plan.budgetMinutes))}>
                 Try again
               </button>
             </div>

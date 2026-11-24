@@ -1016,7 +1016,7 @@ export function OrchestratorPanel(props: Props) {
                 )}
                 {deskNow &&
                   (m.cards ?? []).map((c, i) => (
-                    <Card key={i} card={c} state={state} desk={deskNow} names={names} md={md} onUndo={undo} onConfirm={answerConfirm} onOpenSetup={onOpenSetup} rebuild={rebuildOffer(c)} />
+                    <Card key={i} card={c} state={state} desk={deskNow} names={names} md={md} onUndo={undo} onConfirm={answerConfirm} rebuild={rebuildOffer(c)} />
                   ))}
               </div>
             ),
@@ -1086,7 +1086,6 @@ function Card({
   md,
   onUndo,
   onConfirm,
-  onOpenSetup,
   rebuild,
 }: {
   rebuild?: { label: string; run: (() => void) | null };
@@ -1097,7 +1096,6 @@ function Card({
   md: (id: string, text: string) => JSX.Element;
   onUndo: (c: Change) => void;
   onConfirm: (c: PendingConfirm, yes: boolean) => void;
-  onOpenSetup: () => void;
 }) {
   if (card.kind === "update") return <UpdateNotice md={md} always />;
   if (card.kind === "goback") return <GoBackCard />;
@@ -1161,18 +1159,13 @@ function Card({
       <p className="orch-card-title">{jobTitle(j, names)}</p>
       {j.status === "queued" && <p className="quest-muted">Waiting: another reading of this course is still running.</p>}
       {j.status === "running" && (
-        <>
-          <ul className="orch-job-list">
-            {j.courseIds.map((id) => (
-              <li key={id}>
-                {names.get(id) ?? id}: {status(id) === "reading" ? "reading now…" : status(id) === "waiting" ? "up next" : "done"}
-              </li>
-            ))}
-          </ul>
-          <button type="button" className="link-btn" onClick={onOpenSetup}>
-            Watch it live
-          </button>
-        </>
+        <ul className="orch-job-list">
+          {j.courseIds.map((id) => (
+            <li key={id}>
+              {names.get(id) ?? id}: {status(id) === "reading" ? "reading now…" : status(id) === "waiting" ? "up next" : "done"}
+            </li>
+          ))}
+        </ul>
       )}
       {(j.status === "done" || j.status === "failed") && md(`job-${j.id}`, j.result.map((l) => `- ${l}`).join("\n"))}
     </div>
