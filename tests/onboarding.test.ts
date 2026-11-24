@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseSetup, buildSemester, localSetup, setupTurns, liveProgress, type SetupInput } from "../src/onboarding/setup";
-import { setupTodo, staleCourses, asksForFiles } from "../src/onboarding/todo";
+import { ASKS_PER_DAY, dropUnneeded, openAsks, trimPrompt, setupTodo, staleCourses, asksForFiles } from "../src/onboarding/todo";
 import { planPlacement, recommendWorkload, studyDaysUntil } from "../src/onboarding/placement";
 import { gradeSteps } from "../src/onboarding/scales";
 import { applySheetUpdate, chatTurns, setupReady, sheetSnapshot } from "../src/onboarding/agent";
@@ -374,9 +374,14 @@ describe("liveProgress", () => {
 describe("setup to-do list", () => {
   const withQuestions = (qs: string[], basis: "materials" | "general" = "materials") => {
     const d = draftWith();
-    d.results.c1 = { ...d.results.c1, questions: qs, basis };
+    d.results.c1 = { ...d.results.c1, questions: qs, conflicts: [], basis };
     return d;
   };
+  it("asks everyone once whether they use Anki, answered by the setting", () => {
+    const d = withQuestions([]);
+    expect(setupTodo(d).find((i) => i.key === "anki")!.done).toBe(false);
+    expect(setupTodo({ ...d, questSettings: { anki: false } }).find((i) => i.key === "anki")!.done).toBe(true);
+  });
   it("merges file requests into one upload item and keeps at most 3 questions per course", () => {
     const d = withQuestions(["Please upload the syllabus", "When is the exam?", "How is it graded?", "Which language?", "Is a calculator allowed?"]);
     const items = setupTodo(d).filter((i) => i.key === "upload" || i.key.startsWith("q-"));
@@ -385,17 +390,31 @@ describe("setup to-do list", () => {
     expect(items[1].chatPrompt).toContain("1. When is the exam?");
   });
   it("asks for materials when a course was only estimated", () => {
-    expect(setupTodo(withQuestions([], "general")).map((i) => i.key)).toEqual(["upload", "dates", "conflicts"]);
+    expect(setupTodo(withQuestions([], "general")).map((i) => i.key)).toEqual(["anki", "upload"]);
     expect(asksForFiles("Could you share the current UE sheets?")).toBe(true);
     expect(asksForFiles("When is the exam?")).toBe(false);
   });
-  it("lists the dates and file conflicts for the student to check", () => {
-    const d = withQuestions([]);
-    const items = setupTodo(d);
-    const dates = items.find((i) => i.key === "dates")!;
-    expect(dates.title).toMatch(/^Check \d+ important dates?$/);
-    expect(dates.body).toContain("Say if any is wrong");
-    expect(items.find((i) => i.key === "conflicts")!.body).toContain("Your word was used");
+  it("shows only a few disagreements and questions a day, disagreements first", () => {
+    const d = { ...withQuestions(["When is the exam?", "How is it graded?", "Is a calculator allowed?"]), setupStep: "done" as const };
+    d.results.c1.conflicts = ["file says 5 credits", "file says oral exam"];
+    const open = (x: typeof d, day: string) => setupTodo(x, day).flatMap((i) => i.subs ?? []).filter((s) => !s.done);
+    expect(setupTodo(d, TODAY).map((i) => i.key)).toEqual(["anki", "conflicts", "q-c1"]);
+    expect(setupTodo(d, TODAY).find((i) => i.key === "conflicts")!.body).toContain("Your word was used");
+    expect(open(d, TODAY)).toHaveLength(ASKS_PER_DAY);
+    // what's answered today uses up today's share; tomorrow brings the next ones
+    const ticked = { ...d, todoDone: [open(d, TODAY)[0].key], todoDoneOn: { [open(d, TODAY)[0].key]: TODAY } };
+    expect(open(ticked, TODAY)).toHaveLength(ASKS_PER_DAY - 1);
+    expect(open(ticked, "2026-11-21")).toHaveLength(ASKS_PER_DAY);
+    expect(setupTodo(d, TODAY).map((i) => i.key)).not.toContain("dates");
+  });
+  it("drops the asks Claude doesn't keep, once", () => {
+    const d = withQuestions(["When is the exam?", "How is it graded?"]);
+    d.results.c1.conflicts = ["file says oral exam"];
+    const asks = openAsks(d, TODAY);
+    expect(trimPrompt(asks)).toContain("disagreement: file says oral exam");
+    const after = dropUnneeded(d, asks, "2");
+    expect(after.asksTrimmed).toBe(true);
+    expect(openAsks(after, TODAY).map((a) => a.text)).toEqual([asks[1].text]);
   });
   it("ticks single questions off and updates the item live", () => {
     const d = { ...withQuestions(["When is the exam?", "How is it graded?", "Is a calculator allowed?"]), setupStep: "done" as const };

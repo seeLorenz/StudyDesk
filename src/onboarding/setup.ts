@@ -152,6 +152,10 @@ export function setupTurns(input: SetupInput, opts: SetupTurnOptions = {}): { tu
   const current = known.length
     ? `\nSkills this course already has (the student's progress is stored under these ids). When a skill in your map is one of these, write its id exactly as given here. Never give one of these ids to a different skill; drop a skill only if it really isn't part of the course:\n${known.map((k) => `- ${k.id}: ${k.name}`).join("\n")}\n`
     : "";
+  // Same for homework and exams: their titles are their ids, and the student's corrections refer to them.
+  const prev = input.draft.results?.[input.course.id];
+  const items = [...(prev?.assignments ?? []).map((a) => `- homework "${a.title}", due ${a.dueAt}`), ...(prev?.keyDates ?? []).map((k) => `- ${k.kind} "${k.title}" on ${k.date}`)];
+  const listed = items.length ? `\nHomework and exams this course already has. When you list one of these again, write its title exactly as given here:\n${items.join("\n")}\n` : "";
 
   const content = `You are StudyDesk's organization agent. You set up one course for one student: you turn their real course materials into the list of skills StudyDesk teaches, practices and tracks. Everything later (daily quests, grading) depends on this map, so be thorough and precise.
 
@@ -167,7 +171,7 @@ export function setupTurns(input: SetupInput, opts: SetupTurnOptions = {}): { tu
 
 ## What the student said about it (word for word; if a file disagrees, the student's word wins, and you list the disagreement under CONFLICTS)
 ${facts.length ? facts.map((f) => `- "${f.text}"`).join("\n") : "- nothing"}
-${prior}${current}
+${prior}${current}${listed}
 ## Files
 ${
     files.length
@@ -234,10 +238,10 @@ The task text, word for word.
 skill id | F1 | p. 3-5
 
 === CONFLICTS ===
-- one line each
+- one line each, only where the student's word and a file really contradict each other on a date, the grading or what the course covers. Leave out small differences in wording, rounding or naming.
 
 === QUESTIONS ===
-- at most 3, most important first: only what would change the skill map, the dates or the grading. One short line each. Never ask them to upload files.`;
+- usually none. Decide yourself whatever you are fairly sure about, and name the assumption in the SUMMARY instead of asking. Ask only what you really can't work out and what would change the skill map, the dates or the grading, e.g. an exam date you only guessed. At most 3, most important first, one short line each. Never ask them to upload files.`;
   return { turns: [{ role: "user", content }], images, fileKeys, clipped };
 }
 
@@ -372,7 +376,10 @@ export function parseSetup(reply: string, input: Pick<SetupInput, "course" | "pr
     const [title, due] = head.split("|").map((x) => x.trim());
     const dueAt = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/.test(due ?? "") ? (due.length === 10 ? `${due}T23:59` : due) : null;
     if (!title || !dueAt || dueAt.slice(0, 10) < input.today) continue;
-    const aid = `${cid}-hw-${slug(title)}`;
+    // A sheet read before keeps its id (also one the student added); two sheets with one title get "-2".
+    const base = input.draft?.results?.[cid]?.assignments.find((a) => sameName(a.title, title))?.id ?? `${cid}-hw-${slug(title)}`;
+    let aid = base;
+    for (let n = 2; assignments.some((a) => a.id === aid); n++) aid = `${base}-${n}`;
     const tasks: AssignmentTask[] = [];
     for (const tb of rest.join("\n").split(/^####\s*/m).slice(1)) {
       const [th, ...body] = tb.split("\n");

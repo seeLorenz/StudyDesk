@@ -9,7 +9,7 @@
 import type { AskOptions, Turn } from "../platform/claude";
 import type { Skill } from "../mastery/types";
 import { applyQuestSettings, QUEST_CONFIG } from "./config";
-import type { Course, FixIt, LearnPart, ProblemPart, Quest, QuestProblem, Semester } from "./types";
+import type { Card, Course, FixIt, LearnPart, ProblemPart, Quest, QuestProblem, Semester } from "./types";
 
 export type Ask = (turns: Turn[], opts?: AskOptions) => Promise<string>;
 
@@ -47,11 +47,12 @@ export class WritingFailed extends Error {
   }
 }
 
-type Ctx = { course: Course; skills: Map<string, Skill>; known: string[]; feel: string[] };
+type Ctx = { course: Course; skills: Map<string, Skill>; known: string[]; feel: string[]; anki?: boolean };
 
 function context(semester: Semester, quest: Quest, knownSkillIds: string[], feel: string[] = []): Ctx {
   return {
     feel,
+    anki: semester.questSettings?.anki,
     course: semester.courses.find((c) => c.id === quest.courseId)!,
     skills: new Map(semester.skills.map((s) => [s.id, s])),
     known: knownSkillIds.map((id) => semester.skills.find((s) => s.id === id)?.name).filter(Boolean) as string[],
@@ -71,6 +72,14 @@ ${ctx.known.length ? `The student can already do: ${ctx.known.join(", ")}.` : "A
       ? `\nHow recent quest parts felt to the student (adjust: "too hard" means slower, smaller steps and an easier own problem; "too easy" means brisker and a harder own problem):\n${ctx.feel.map((f) => `- ${f}`).join("\n")}`
       : ""
   }`;
+
+/** "front | back" lines; anything else (NONE) is skipped. */
+export function parseCards(text = ""): Card[] {
+  return text.split("\n").flatMap((l) => {
+    const [front, ...back] = l.replace(/^\s*[-*]\s*/, "").split(" | ");
+    return back.length && front.trim() ? [{ front: front.trim(), back: back.join(" | ").trim() }] : [];
+  });
+}
 
 /** What comes after a learn part, so the explanation prepares for it. */
 function upcoming(quest: Quest, part: { skillIds?: string[] }, ctx: Ctx): string {
@@ -123,7 +132,11 @@ ${skillLine(ctx, id)}
 ${upcoming(quest, part, ctx)}
 
 ${STYLE}
-(Here the checklist at the end is 2 or 3 lines at most.)
+(Here the checklist at the end is 2 or 3 lines at most.)${
+        ctx.anki
+          ? `\n\nThe student learns by heart with Anki. If this idea is vocabulary or other things learned purely by heart (terms and their meaning, names, fixed facts), list every item in CARDS as "front | back", one per line: the word or term in front, its meaning or translation on the back. These cards become the student's deck for this idea, so make it complete. Never methods or problem solving. If there is nothing to learn by heart, write NONE.`
+          : ""
+      }
 
 Then write the student's own problem (${p.id}): like the worked example but with different numbers, solvable in about ${p.expMinutes} min, with one clear final answer.
 
@@ -139,14 +152,18 @@ the one key rule of this idea, in one plain sentence (the student writes theirs 
 === ${p.id} PROMPT ===
 the student's problem, Markdown
 === ${p.id} ANSWER ===
-worked solution with the final result`,
+worked solution with the final result${ctx.anki ? "\n=== CARDS ===\nfront | back lines, or NONE" : ""}`,
     },
   ];
 }
 
 export function practiceTurns(part: ProblemPart, ctx: Ctx): Turn[] {
   const slots = part.problems
-    .map((p) => `${p.id}: skill "${ctx.skills.get(p.skillId)!.name}"${ctx.skills.get(p.skillId)!.isFundamental ? " (fundamental)" : ""}, solvable in about ${p.expMinutes} min`)
+    .map((p) =>
+      p.cards
+        ? `${p.id}: a recall test on "${ctx.skills.get(p.skillId)!.name}" from the student's Anki deck, about ${p.expMinutes} min. Ask for exactly these cards, mixed order, some from the back to the front: ${p.cards.map((c) => `${c.front} = ${c.back}`).join("; ")}`
+        : `${p.id}: skill "${ctx.skills.get(p.skillId)!.name}"${ctx.skills.get(p.skillId)!.isFundamental ? " (fundamental)" : ""}, solvable in about ${p.expMinutes} min`,
+    )
     .join("\n");
   return [
     {
@@ -218,7 +235,7 @@ async function askSections(ask: Ask, turns: Turn[], keys: string[], what: string
 
 export type PartWriter = {
   learn(quest: Quest, part: LearnPart): Promise<Pick<LearnPart, "title" | "body">>;
-  lesson(quest: Quest, part: ProblemPart): Promise<{ title: string; body: string; keyRule?: string; problems: Array<Pick<QuestProblem, "id" | "prompt" | "answerKey">> }>;
+  lesson(quest: Quest, part: ProblemPart): Promise<{ title: string; body: string; keyRule?: string; cards?: Card[]; problems: Array<Pick<QuestProblem, "id" | "prompt" | "answerKey">> }>;
   practice(quest: Quest, part: ProblemPart): Promise<Array<Pick<QuestProblem, "id" | "prompt" | "answerKey">>>;
   assignment(quest: Quest, part: ProblemPart): Promise<Array<Pick<QuestProblem, "id" | "answerKey" | "hints" | "similarSolved">>>;
 };
@@ -237,15 +254,17 @@ export function claudeWriter(semester: Semester, quest: Quest, knownSkillIds: st
       const s = await askSections(
         ask,
         lessonTurns(q, part, ctx),
-        ["TITLE", "EXPLANATION", "WORKED EXAMPLE", "KEY RULE", `${pid} PROMPT`, `${pid} ANSWER`],
+        ["TITLE", "EXPLANATION", "WORKED EXAMPLE", "KEY RULE", `${pid} PROMPT`, `${pid} ANSWER`, ...(ctx.anki ? ["CARDS"] : [])],
         `the lesson "${part.title}"`,
         t.lesson,
         signal,
       );
+      const cards = parseCards(s.get("CARDS"));
       return {
         title: s.get("TITLE")!.replace(/^#+\s*/, ""),
         body: `${s.get("EXPLANATION")!}\n\n### Worked example\n\n${s.get("WORKED EXAMPLE")!}`,
         keyRule: s.get("KEY RULE")!,
+        ...(cards.length && { cards }),
         problems: [{ id: part.problems[0].id, prompt: s.get(`${pid} PROMPT`)!, answerKey: s.get(`${pid} ANSWER`)! }],
       };
     },
@@ -304,7 +323,8 @@ export async function writeQuest(
   opts: { concurrency?: number; skip?: Set<string> } = {},
 ): Promise<Quest> {
   const quest: Quest = JSON.parse(JSON.stringify(plan));
-  const written = new Set(opts.skip ?? []);
+  // Learn parts that already have a text were written by code (the Anki step).
+  const written = new Set([...(opts.skip ?? []), ...plan.parts.filter((p) => p.kind === "learn" && p.body).map((p) => p.id)]);
   for (const id of written) onStatus?.({ partId: id, state: "done" });
   const queue = quest.parts.filter((p) => !written.has(p.id));
   let failure: unknown = null;
@@ -318,6 +338,7 @@ export async function writeQuest(
         part.title = l.title;
         part.body = l.body;
         if (l.keyRule) part.keyRule = l.keyRule;
+        if (l.cards) part.cards = l.cards;
         for (const f of l.problems) Object.assign(part.problems.find((p) => p.id === f.id)!, f);
       } else {
         const filled = part.kind === "practice" ? await writer.practice(plan, part) : await writer.assignment(plan, part);

@@ -115,6 +115,8 @@ export type QuestProblem = {
   /** From the timing rules, never from Claude. */
   expMinutes: number;
   maxPoints: number;
+  /** A deck test: the cards from the student's Anki deck this problem asks for. */
+  cards?: Card[];
 };
 
 export type LearnPart = {
@@ -126,6 +128,9 @@ export type LearnPart = {
   /** Markdown. */
   body: string;
 };
+
+/** One Anki card: a word or term and its meaning. */
+export type Card = { front: string; back: string };
 
 /**
  * A part with problems. A "lesson" teaches one idea in a short cycle: a brief
@@ -149,6 +154,8 @@ export type ProblemPart = {
   skillIds?: string[];
   /** Lessons only: the key rule in one line, revealed after the student writes theirs. */
   keyRule?: string;
+  /** Lessons only: what to learn by heart, written once; later quests test it from Anki (anki.ts). */
+  cards?: Card[];
   /** Placement check: answers count as "check" attempts, and a solve masters the skill at once. */
   check?: boolean;
 };

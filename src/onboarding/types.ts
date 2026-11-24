@@ -29,6 +29,8 @@ export type Profile = {
   schedule?: ScheduleInfo;
   /** The student's settings for the nightly run, changed through the StudyDesk chat. */
   nightly?: NightlySettings;
+  /** What the student asked for that StudyDesk can't do yet (src/agents/capabilities.ts). */
+  wishes?: Array<{ text: string; at: number }>;
 };
 
 export type CourseSetupStatus = "waiting" | "reading" | "ready" | "needs_check" | "failed";
@@ -164,6 +166,10 @@ export type SemesterDraft = {
   notes?: Note[];
   /** To-do items on the done screen the student ticked off ("upload", "q-<courseId>"). */
   todoDone?: string[];
+  /** The day each of those was ticked, so only a few new questions come each day. */
+  todoDoneOn?: Record<string, Day>;
+  /** The one-time trim of disagreements and questions ran (todo.ts, openAsks). */
+  asksTrimmed?: boolean;
   /** The student chose to set up without cloud sessions for now. */
   handoffSkipped?: boolean;
   /** Days without studying, set through the Orchestrator ("I'm sick tomorrow"). */

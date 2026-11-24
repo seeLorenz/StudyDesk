@@ -20,9 +20,11 @@ import { parseSetup, setupTurns, type FileForSetup, type SetupInput } from "../o
 import { syncSemester, type Desk } from "../orchestrator/changes";
 import type { Turn } from "../platform/claude";
 import { emptyProgress, handIn, ungraded } from "../quests/handin";
+import { addAnki } from "../quests/anki";
 import { carriedOver, doneTasks, planQuest, recentBlockers, recentFeel } from "../quests/plan";
 import type { QuestRecord, Semester } from "../quests/types";
 import { claudeWriter, writeQuest } from "../quests/write";
+import { calendarWant, pickTimes, studyEntries } from "../quests/times";
 import { applyShallow, applySweep, gradingFields, mergeGrading, outboxId, outboxOrder, type GradingOutbox, type OutboxDoc, type ShallowOutbox, type SweepOutbox } from "./apply";
 import { isPending, type DeferredAsk } from "./deferred";
 import { nextOrgState, parseShallow, shallowTurns, sweepsDue, type OrgState, type ShallowResult } from "./org";
@@ -85,6 +87,10 @@ export type NightInput = {
   semester: Semester | null;
   /** The page's latest read of the calendar's coming days (the run itself can't reach the calendar). */
   calendar?: CalendarAhead | null;
+  /** The StudyDesk link, for the study entries' descriptions. */
+  url?: string | null;
+  /** The StudyDesk chat's running summary of what the student said about themselves. */
+  notes?: string;
   records: QuestRecord[];
   mastery: MasteryData;
   outbox: OutboxDoc[];
@@ -191,6 +197,9 @@ export async function runNightly(input: NightInput, d: DeferredAsk): Promise<Nig
   if (q.record) {
     questId = q.record.quest.id;
     writes.push({ path: ["quests", "records", questId], data: plain(q.record), mode: "create" });
+    const want = semester?.calendarSync ? await studyTimes(input, semester, q.record.quest, d, log) : null;
+    if (want === "pending") return { kind: "pending", log };
+    if (want) writes.push({ path: ["calendarWant"], data: plain(want), mode: "replace" });
   }
 
   const night: NightLog = { day: today, status: "done", startedAt: now, finishedAt: null, lines: log, questId };
@@ -336,6 +345,32 @@ async function organize(input: NightInput, desk: Desk, org: OrgState, mastery: M
   return out;
 }
 
+// ---------- tomorrow's study times ----------
+
+/** Claude picks when to do tomorrow's quest; the plan goes into the calendar when the page or the calendar task can reach it. */
+async function studyTimes(input: NightInput, semester: Semester, quest: QuestRecord["quest"], d: DeferredAsk, log: string[]) {
+  const courseName = semester.courses.find((c) => c.id === quest.courseId)?.name ?? "Quest";
+  try {
+    const times = await pickTimes(d.ask("Picking tomorrow's study times for the calendar"), {
+      quest,
+      courseName,
+      weekday: weekdayName(quest.date),
+      events: input.calendar?.events?.[quest.date] ?? [],
+      notes: input.notes ?? "",
+    });
+    if (!times.length) {
+      log.push("No study times were picked for tomorrow, so nothing goes into your calendar.");
+      return null;
+    }
+    log.push(`Study times for tomorrow: ${times.map((t) => `${t.start}-${t.end}`).join(", ")}. They go into your calendar.`);
+    return calendarWant(quest.date, quest.id, studyEntries({ day: quest.date, times, courseName, reason: quest.reason, timeZone: input.profile?.schedule?.timeZone ?? "UTC", url: input.url ?? null }));
+  } catch (e) {
+    if (isPending(e)) return "pending" as const;
+    log.push(`Tomorrow's study times couldn't be picked (${(e as Error)?.message ?? String(e)}).`);
+    return null;
+  }
+}
+
 // ---------- tomorrow's quest ----------
 
 function sizedBy(semester: Semester, calendar: CalendarAhead | null, busy: number | undefined, now: number): string {
@@ -380,6 +415,7 @@ async function writeTomorrow(semester: Semester | null, calendar: CalendarAhead 
   const { states } = replay(mastery.skills, mastery.attempts, mastery.reviews);
   const knownIds = [...states.values()].filter((s) => s.stage === "mastered" || s.stage === "retained").map((s) => s.skillId);
   const feel = recentFeel(records, (id) => semester.skills.find((s) => s.id === id)?.name, tomorrow);
+  addAnki(res.quest, records, semester);
   const carried = carriedOver(records, res.quest);
   if (carried.length) res.quest.notes.unshift(`Carried over from ${weekdayName(carried[0].from)}, when the quest wasn't finished: ${carried.map((c) => c.label).join(", ")}.`);
   const course = semester.courses.find((c) => c.id === res.quest.courseId);

@@ -88,7 +88,7 @@ The organization agent's own design (how it reads, maps and decides) is its own 
 
 ## The chat itself
 
-- **One chat per semester.** The setup chat simply continues as the Orchestrator chat when setup is done; nothing new to learn. Old messages fold away by day, and a new semester starts a fresh chat (the old one is kept in the archive).
+- **One chat per semester.** The setup chat simply continues as the Orchestrator chat when setup is done; nothing new to learn. Old messages fold away by day, and a new semester starts a fresh chat (the old one is kept in the archive). In practice: once the semester is set up, the setup page hands over to the StudyDesk chat (its input box becomes an "Open the StudyDesk chat" button, and to-do items start there).
 - **Reachable everywhere.** A button in the sidebar and a keyboard shortcut open it as a side panel over the current screen, and the panel can be expanded to a full window for longer talks (to be tuned once it's used in production). When the student has text selected, "Ask StudyDesk about this" puts the selection in the message (a quest problem, a date on the overview).
 - **Knows where the student is.** Each message carries the current screen and, when there is one, the quest part or course on it, so "this is too long" or "move this to Friday" needs no explanation.
 - **Accepts everything** (guideline 2): typed text, dropped files, pasted images.
@@ -112,6 +112,7 @@ The Orchestrator speaks first, like a good teacher or assistant would. **Code de
 | A date the student should check is near | "The Analysis exam is in 14 days. Is 4 Feb still right?" |
 | After each grading run | One short note on the day: what went well, what to look at in the mistake review. |
 
+- **One fixed message, not written by Claude: the calendar task.** Once the nightly run has planned study times for the first time, the Orchestrator posts the steps and the exact text the student pastes into a new Claude Code session to set up their own "StudyDesk calendar" task (design/scheduled-runs.md, "Study times in the calendar"). It's fixed text so the setup prompt can't be reworded. If that task has run before and then goes quiet for 3 days (deleted or broken), the message comes again, once.
 - **Where it shows.** A badge on the Orchestrator button on every screen, and the message waiting in the chat. A question from the organization agent stays marked until it's answered.
 - **Not nagging.** At most one unprompted message per kind per day, the post-grading note included. Needs (questions, finished jobs) always show.
 - **The margins** (how slow is "too slow", what counts as "exceptionally good") are tunable numbers in code, like the other mastery settings.
@@ -246,7 +247,7 @@ The code lives in `src/orchestrator/`, storage in `src/platform/orchestratorStor
 
 - **Rebuild today's quest** (`rebuild_quest`, and a button on change cards): while today's quest isn't started, it's marked replaced and the quest page writes a new one from the current desk. A started quest is never rewritten.
 - **Redo the placement check** (`redo_placement`): when the student asks, the Orchestrator first asks whether to also delete their past stats (attempts, mastery progress, mistake review) or keep them, then shows a yes/no card. On yes: the stats are deleted if chosen (skills and targets stay), the old placement and today's unstarted quest are set aside, and Today offers "Start the placement check", written from the current desk (so in each course's current language).
-- **Quest settings by talking** (`set_quest_settings`): hints per homework task (0 to 5), lesson reading minutes (2 to 15) and new skills per quest (0 to 4), and new skills off the exam in the week before one (0 to 4, default 0, for a student who wants new material then too), stored per student and used from the next quest (`applyQuestSettings` in `src/quests/config.ts`).
+- **Quest settings by talking** (`set_quest_settings`): hints per homework task (0 to 5), lesson reading minutes (2 to 15), new skills per quest (0 to 4), new skills off the exam in the week before one (0 to 4, default 0, for a student who wants new material then too) and whether the student uses Anki (answers the Anki to-do), stored per student and used from the next quest (`applyQuestSettings` in `src/quests/config.ts`).
 - **The tutor passes remarks on** (`src/orchestrator/passOn.ts`): every tutor call (Ask chats, side notes, the mistake review) has a `pass_to_studydesk` tool. The remark arrives in the StudyDesk chat word for word, marked "Passed on by the tutor", with where it was said; it's handled one at a time and shows on the badge.
 
 **Not in this version (next steps)**

@@ -6,14 +6,16 @@
 // semester is rebuilt from). Pure, so it is tested. Every applied change keeps
 // what it touched before and after, so it can be undone.
 
+import { wishLink } from "../agents/capabilities";
 import { uid } from "../chat/types";
+import { toDay } from "../mastery/days";
 import { assessmentAttempts } from "../mastery/grades";
 import type { AssessmentResult, Attempt, CourseTarget } from "../mastery/types";
 import { buildSemester } from "../onboarding/setup";
 import { setupTodo } from "../onboarding/todo";
 import type { CourseSetup, DraftCourse, Profile, SemesterDraft, StudentFact } from "../onboarding/types";
 import type { Assignment, KeyDate, Semester, TimetableEntry } from "../quests/types";
-import { QUEST_SETTING_LIMITS, questSettingsNow, type QuestSettings } from "../quests/config";
+import { QUEST_SETTING_LIMITS, questSettingsNow } from "../quests/config";
 import type { Change, Operation } from "./types";
 import { nightlySettings } from "../routine/nightly";
 
@@ -396,7 +398,7 @@ export function applyOps(
         const now_ = questSettingsNow(cur);
         const labels = { hints: "hints per task", lessonMinutes: "lesson reading minutes", newSkillsPerQuest: "new skills per quest", newSkillsBeforeExams: "new skills per quest in exam weeks" } as const;
         const changed: string[] = [];
-        for (const k of Object.keys(QUEST_SETTING_LIMITS) as Array<keyof QuestSettings>) {
+        for (const k of Object.keys(QUEST_SETTING_LIMITS) as Array<keyof typeof QUEST_SETTING_LIMITS>) {
           if (op[k] === undefined) continue;
           const v = num(op[k]);
           const [lo, hi] = QUEST_SETTING_LIMITS[k];
@@ -407,6 +409,10 @@ export function applyOps(
           if (now_[k] === v) continue;
           changed.push(`${labels[k]} ${now_[k]} → ${v}`);
           cur[k] = v;
+        }
+        if (typeof op.anki === "boolean" && op.anki !== cur.anki) {
+          changed.push(`Anki decks ${op.anki ? "on" : "off"}`);
+          cur.anki = op.anki;
         }
         if (changed.length) {
           touch("questSettings", cur);
@@ -442,7 +448,7 @@ export function applyOps(
       }
       case "tick_todo": {
         const key = str(op.key);
-        const todo = setupTodo(desk.draft);
+        const todo = setupTodo(desk.draft, toDay(new Date(now)));
         const item = todo.find((t) => t.key === key || t.title === key);
         const sub = item ? undefined : todo.flatMap((t) => t.subs ?? []).find((x) => x.key === key);
         if (!item && !sub) {
@@ -456,6 +462,7 @@ export function applyOps(
         // Opening a part again also opens its item when the whole item was ticked.
         const parent = target.key.split(":")[0];
         touch("todoDone", on ? [...new Set([...list, target.key])] : list.filter((k) => k !== target.key && k !== parent));
+        if (on) touch("todoDoneOn", { ...desk.draft.todoDoneOn, [target.key]: toDay(new Date(now)) });
         lines.push(on ? `To do: ticked off "${target.label}"` : `To do: "${target.label}" is open again`);
         break;
       }
@@ -509,6 +516,13 @@ export function applyOps(
         cur[c.id] = date;
         touch("sweepDates", cur);
         lines.push(`${c.name}: deep sweep (full re-read) on the night of ${shortDate(date)}`);
+        break;
+      }
+      case "add_wish": {
+        const text = str(op.text);
+        if (!text) break;
+        touch("profile", { ...desk.profile, wishes: [...(desk.profile.wishes ?? []), { text, at: now }] });
+        lines.push(`Wish saved: "${text}" ${wishLink(text)}`);
         break;
       }
       case "set_profile": {

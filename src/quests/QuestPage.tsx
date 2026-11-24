@@ -20,14 +20,16 @@ import { sampleGradingAsk, sampleSemester, sampleWriter } from "./seed";
 import type { AnswerFile, ProblemPart, ProblemWork, Quest, QuestPart, QuestProgress, QuestRecord, Rating, Semester } from "./types";
 import { claudeWriter, writeQuest, type WriteStatus } from "./write";
 import { compressImage, dataUrlToBlob } from "./images";
+import { addAnki, ankiDeck } from "./anki";
 import { applyChecks, checkResults, isResolved, newReviewChat, questMistakes, reviewRules } from "./review";
 import { WorkloadCard } from "../onboarding/WorkloadCard";
 import { busyMinutesFromEvents, readCalendar } from "../platform/calendar";
 import { publish, subscribe } from "../platform/deskBus";
-import { openOnboardingStore } from "../platform/onboardingStore";
+import { offerDownload, openOnboardingStore } from "../platform/onboardingStore";
 import { openRoutineStore } from "../platform/routineStore";
 import { gradingFields, mergeGrading, type GradingOutbox } from "../routine/apply";
 import { ComingUp } from "../shell/ComingUp";
+import { QUEST_CHANGED } from "./times";
 
 // The quest page: builds today's quest on the first open of the day (the
 // in-page fallback from the design), then lets the student work through it
@@ -294,6 +296,7 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
         const knownIds = [...states.values()].filter((s) => s.stage === "mastered" || s.stage === "retained").map((s) => s.skillId);
         const feel = recentFeel(records, (id) => semester.skills.find((s) => s.id === id)?.name, today);
         const writer = data.live ? claudeWriter(semester, res.quest, knownIds, askClaude, undefined, feel) : sampleWriter(semester.skills);
+        addAnki(res.quest, records, semester);
         const carried = carriedOver(records, res.quest);
         if (carried.length) {
           res.quest.notes.unshift(`Carried over from ${WEEKDAY(carried[0].from)}, when the quest wasn't finished: ${carried.map((c) => c.label).join(", ")}.`);
@@ -303,6 +306,7 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
         );
         const record = { quest, progress: emptyProgress(quest.id) };
         await data.qs.saveRecord(record);
+        window.dispatchEvent(new Event(QUEST_CHANGED));
         setData((d) => (d ? { ...d, records: [...d.records, record] } : d));
         setBuilding(null);
       } catch (e) {
@@ -621,6 +625,7 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
 
   const skills = useMemo(() => new Map(semester.skills.map((s) => [s.id, s])), [semester]);
   const course = semester.courses.find((c) => c.id === quest.courseId);
+  const deck = semester.questSettings?.anki ? ankiDeck(quest, data.records, semester) : null;
   const ask = live ? askClaude : sampleGradingAsk;
 
   const onRecordRef = useRef(onRecord);
@@ -836,6 +841,7 @@ ${b?.text ?? ""}
   const handInPart = (part: QuestPart) => {
     if (part.kind !== "learn" && activeId && part.problems.some((p) => p.id === activeId)) setActiveId(null);
     commit((p) => ({ ...p, handedIn: [...p.handedIn.filter((x) => x !== part.id), part.id], updatedAt: Date.now() }));
+    window.dispatchEvent(new Event(QUEST_CHANGED));
     setOpenPart(null);
     requestAnimationFrame(() => document.getElementById(`row-${part.id}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
   };
@@ -1067,6 +1073,11 @@ ${b?.text ?? ""}
               More about this quest
             </button>
           ))}
+        {deck && (
+          <button type="button" className="mini-btn" onClick={() => void offerDownload(`${course?.short || course?.name || "StudyDesk"} ${quest.date}.txt`, deck.text)}>
+            Export deck ({deck.count} cards)
+          </button>
+        )}
       </header>
 
       {extra}

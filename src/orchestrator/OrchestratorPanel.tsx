@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toolsFor } from "../agents/capabilities";
 import { SentFiles } from "../chat/SentFiles";
 import { useSentToTop } from "../chat/useSentToTop";
 import { ImportProgress } from "../chat/ImportProgress";
@@ -30,11 +31,13 @@ import { openQuestStore, type QuestStore } from "../platform/questStore";
 import { compressImage } from "../quests/images";
 import type { QuestRecord, Semester } from "../quests/types";
 import type { Profile, SemesterDraft, Upload } from "../onboarding/types";
+import { dropUnneeded, openAsks, trimPrompt } from "../onboarding/todo";
 import { NIGHTLY_TOOL, UPDATE_TOOL, ASK_TOOL, CALENDAR_TOOL, CHANGE_TOOL, checkinTurns, deskSnapshot, JOB_TOOL, jobTitle, localCheckin, LOOKUP_TOOL, needsSummary, orchTurns, questStarted, PLACEMENT_TOOL, REBUILD_TOOL, summaryTurns, todaysQuest } from "./agent";
 import { PASS_ON_EVENT, type PassOn } from "./passOn";
 import { applyOps, canUndo, findCourse, syncSemester, undoChange, type Desk } from "./changes";
 import { advanceJobs, startJob, type JobFile } from "./jobs";
-import { checkinTriggers } from "./signals";
+import { calendarTaskNotice, checkinTriggers } from "./signals";
+import { calendarTaskSetup } from "../quests/times";
 import { GoBackCard, UpdateNotice } from "../updates/UpdateCards";
 import { loadRelease, loadUpdates, markAnnounced, updateEnv } from "../platform/updateStore";
 import { goBackTarget, offer } from "../updates/plan";
@@ -289,12 +292,14 @@ export function OrchestratorPanel(props: Props) {
     const c = subscribe("semester", "orch", (s) => {
       semesterRef.current = s;
     });
+    const d = subscribe("say", "orch", (text) => saveMessages((ms) => [...ms, { id: uid(), role: "assistant", text, createdAt: Date.now() }]));
     return () => {
       a();
       b();
       c();
+      d();
     };
-  }, []);
+  }, [saveMessages]);
 
   // Jobs follow their courses: finished when read, queued ones start when free.
   useEffect(() => {
@@ -509,7 +514,7 @@ export function OrchestratorPanel(props: Props) {
           images: imagesOk ? kept.images : [],
           earlierImages: earlier.images,
           onText: (t) => patch({ text: t }),
-          tools: [
+          tools: toolsFor("panel", [
             {
               ...CHANGE_TOOL,
               inputSchema: CHANGE_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema,
@@ -656,7 +661,7 @@ export function OrchestratorPanel(props: Props) {
                 }
               },
             },
-          ],
+          ]),
         });
         patch({ text: answer });
       }
@@ -733,15 +738,35 @@ export function OrchestratorPanel(props: Props) {
     saveState((s) => ({ ...s, notifications: [...s.notifications, { key, kind: "night", day: today, at: Date.now(), courseId: null, facts: night.lines.join(" "), messageId: msg.id, seenAt: open ? Date.now() : null }] }));
   }, [env, commitDesk, saveState, saveMessages, today, open]);
 
+  // ---------- the calendar task: a fixed message, so the text to paste is exact ----------
+  const noticeCalendarTask = useCallback(async () => {
+    if (!env) return;
+    const { want, written } = await env.qs.loadEntries();
+    const p = profileRef.current;
+    const url = handoffRef.current?.artifactUrl ?? p?.handoff?.artifactUrl;
+    const setup = url && p?.schedule ? calendarTaskSetup(url, p.schedule.timeZone, p.schedule.time) : null;
+    const notice = calendarTaskNotice({ planned: !!want, taskSeenAt: written?.taskSeenAt, setup, sent: stateRef.current.notifications, today });
+    if (!notice) return;
+    const msg: OrchMessage = { id: uid(), role: "assistant", text: notice.text, createdAt: Date.now(), checkin: true };
+    saveMessages((ms) => [...ms, msg]);
+    saveState((s) => ({ ...s, notifications: [...s.notifications, { key: notice.key, kind: "calendar_task", day: today, at: Date.now(), courseId: null, facts: notice.text, messageId: msg.id, seenAt: open ? Date.now() : null }] }));
+  }, [env, saveState, saveMessages, today, open]);
+
   // ---------- check-ins: code finds a reason, Claude writes one message ----------
   const runCheckins = useCallback(async () => {
     if (!env || !ready || checking.current || busy) return;
     checking.current = true;
     try {
       await applyNight().catch(() => undefined);
+      await noticeCalendarTask().catch(() => undefined);
       await loadData(env);
       const semester = semesterRef.current;
       if (!semester || semester.id !== draftRef.current!.id) return;
+      if (env.live && profileRef.current && !draftRef.current!.asksTrimmed) {
+        const asks = openAsks(draftRef.current!, today);
+        const reply = asks.length ? await askClaude([{ role: "user", content: trimPrompt(asks) }], { background: true }) : "";
+        await commitDesk({ draft: dropUnneeded(draftRef.current!, asks, reply), profile: profileRef.current! });
+      }
       const triggers = checkinTriggers({
         semester,
         draft: draftRef.current!,
@@ -764,7 +789,7 @@ export function OrchestratorPanel(props: Props) {
     } finally {
       checking.current = false;
     }
-  }, [env, ready, busy, loadData, today, snapshot, saveMessages, saveState, open, applyNight]);
+  }, [env, ready, busy, loadData, today, snapshot, saveMessages, saveState, open, applyNight, noticeCalendarTask, commitDesk]);
 
   useEffect(() => {
     if (!ready) return;

@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { planQuest, type PlanInput, doneTasks, recentBlockers, formatDue, busyMinutes } from "../src/quests/plan";
-import { parseSections, writeQuest, QuestIncomplete, claudeWriter, type Ask } from "../src/quests/write";
+import { parseCards, parseSections, writeQuest, QuestIncomplete, claudeWriter, type Ask } from "../src/quests/write";
 import { handIn, lockedParts, gateFailed, emptyProgress, isFinished, ungraded } from "../src/quests/handin";
 import { sampleSemester, sampleWriter, sampleGradingAsk, SAMPLE_SKILLS } from "../src/quests/seed";
 import { addDays } from "../src/mastery/days";
 import type { Attempt } from "../src/mastery/types";
 import type { ProblemPart, Quest } from "../src/quests/types";
+import { addAnki, ankiDeck } from "../src/quests/anki";
 
 const TUE = "2026-11-03";
 const sem = sampleSemester(TUE, 0);
@@ -328,5 +329,35 @@ describe("writeQuest pacing", () => {
     expect(err!.code).toBe("rate_limited");
     const again = await writeQuest(err!.quest, base, undefined, { skip: new Set(err!.writtenIds) });
     expect(again.parts).toHaveLength(p.parts.length);
+  });
+});
+
+describe("Anki deck", () => {
+  it("reads front | back lines and skips NONE", () => {
+    expect(parseCards("NONE")).toEqual([]);
+    expect(parseCards("- el perro | the dog\nla casa | the house | home")).toEqual([
+      { front: "el perro", back: "the dog" },
+      { front: "la casa", back: "the house | home" },
+    ]);
+  });
+
+  it("writes a deck once, then tests it after an Anki step, and exports one card per front", () => {
+    const semester = { ...sampleSemester("2026-11-23"), questSettings: { anki: true } };
+    const skill = semester.skills[0];
+    const problem = (id: string) => ({ id, skillId: skill.id, prompt: "", answerKey: "", hints: [], similarSolved: null, expMinutes: 4, maxPoints: 2 });
+    const cards = parseCards("el perro | the dog\nla casa | the house");
+    const lessonQuest = { id: "q1", date: "2026-11-23", courseId: skill.courseId, createdAt: 1, plannedMinutes: 10, budgetMinutes: 10, reason: "", notes: [],
+      parts: [{ kind: "lesson", id: "part1", title: "Animals", gate: false, skillIds: [skill.id], problems: [problem("p1")], cards }] } as Quest;
+    const records = [{ quest: lessonQuest, progress: emptyProgress("q1") }];
+    const later = { ...lessonQuest, id: "q2", createdAt: 2, parts: [{ ...lessonQuest.parts[0], cards: undefined, problems: [problem("p1")] }] } as Quest;
+    addAnki(later, records, semester);
+    expect(later.parts.map((p) => p.kind)).toEqual(["learn", "practice"]);
+    expect((later.parts[1] as ProblemPart).problems[0].cards).toEqual(cards);
+    expect(later.plannedMinutes).toBe(10 + 6);
+    const deck = ankiDeck(later, records, semester)!;
+    expect(deck.count).toBe(2);
+    expect(deck.text).toContain("#guid column:1\n#deck column:2\n");
+    expect(deck.text).toContain("\tel perro\tthe dog");
+    expect(ankiDeck(later, [], { ...semester })).toBeNull();
   });
 });
