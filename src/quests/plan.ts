@@ -9,7 +9,7 @@ import { isRequired } from "../mastery/mastery";
 import { dueSkills, replay } from "../mastery/replay";
 import { expectedMinutes, questBudget, slownessFactor } from "../mastery/timing";
 import type { Attempt, Day, ReviewItem, Skill, SkillState } from "../mastery/types";
-import { applyQuestSettings, QUEST_CONFIG, partMinutes } from "./config";
+import { ankiMinutes, applyQuestSettings, QUEST_CONFIG, partMinutes } from "./config";
 import type { Assignment, AssignmentTask, KeyDate, ProblemPart, Quest, QuestProblem, Semester, TimetableEntry } from "./types";
 
 export type PlanInput = {
@@ -30,6 +30,8 @@ export type PlanInput = {
   questId?: string;
   /** Minutes already taken today according to the student's calendar, when it's connected. */
   calendarBusyMinutes?: number;
+  /** Cards per skill in the student's Anki decks, when Anki is on (anki.ts). Those skills become deck tests with an Anki step first. */
+  deckSizes?: Map<string, number>;
 };
 
 export type PlanResult =
@@ -156,12 +158,14 @@ export function planQuest(input: PlanInput): PlanResult {
   const empty = () => !gate.length && !tasks.length && !reviewIds.length && !newIds.length;
 
   const lessonMin = (s: Skill) => Math.max(1, Math.round(expMin(s) * QUEST_CONFIG.lesson.problemShare));
+  const cards = (id: string) => Math.min(QUEST_CONFIG.anki.cardsPerTest, input.deckSizes?.get(id) ?? 0);
   const minutes = () => {
     let m = 0;
-    for (const id of [...concepts, ...taskLearn, ...newIds]) m += QUEST_CONFIG.lesson.readMinutes + lessonMin(byId.get(id)!);
+    // A lesson on a skill with a deck becomes a test (no reading); the Anki step is counted once below.
+    for (const id of [...concepts, ...taskLearn, ...newIds]) m += (cards(id) ? 0 : QUEST_CONFIG.lesson.readMinutes) + lessonMin(byId.get(id)!);
     for (const id of [...gate, ...reviewIds]) m += expMin(byId.get(id)!);
     for (const t of tasks) m += expMin(byId.get(t.task.skillId)!);
-    return m;
+    return m + ankiMinutes([...concepts, ...taskLearn, ...newIds, ...gate, ...reviewIds].reduce((n, id) => n + cards(id), 0));
   };
   /** Adds a group if it fits (or if `force`); rolls it back otherwise. */
   const tryAdd = (apply: () => void, rollback: () => void, force = false) => {
