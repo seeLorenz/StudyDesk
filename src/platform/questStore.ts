@@ -13,7 +13,8 @@ import { host } from "./host";
 import { PARTS_COL, PARTS_DOC, readBig, writeBig, type Written } from "./bigDoc";
 import type { Chat } from "../chat/types";
 import type { CalendarAhead } from "./calendar";
-import type { QuestRecord, Semester } from "../quests/types";
+import type { QuestProgress, QuestRecord, Semester } from "../quests/types";
+import { mergeProgress } from "../quests/merge";
 import type { CalendarWant, CalendarWritten } from "../quests/times";
 
 export interface QuestStore {
@@ -21,7 +22,12 @@ export interface QuestStore {
   loadSemester(): Promise<Semester | null>;
   saveSemester(s: Semester): Promise<void>;
   loadRecords(): Promise<QuestRecord[]>;
-  saveRecord(r: QuestRecord): Promise<void>;
+  /**
+   * Saves a quest's work. `base` is the saved version the caller's copy was built on (none for a
+   * new quest): if another tab or device saved since, only the caller's own changes are written
+   * over it (src/quests/merge.ts). Resolves with what was saved.
+   */
+  saveRecord(r: QuestRecord, base?: QuestProgress): Promise<QuestRecord>;
   /** Mistake-review chats, one per graded quest, keyed by quest id. */
   loadReviewChats(): Promise<Record<string, Chat>>;
   saveReviewChat(questId: string, chat: Chat): Promise<void>;
@@ -59,27 +65,8 @@ function cloudQuestStore(db: DB, uid: string): QuestStore {
   const records = db.doc(`data/users/${uid}/quests`).collection("records");
   const reviews = db.doc(`data/users/${uid}/quests`).collection("reviews");
   const images = db.doc(`data/users/${uid}/quests`).collection("images");
-  // One write at a time per record; only the latest pending version is written.
-  const pending = new Map<string, { running: boolean; next: QuestRecord | null; waiters: Array<(e?: unknown) => void> }>();
-  async function drain(id: string) {
-    const q = pending.get(id)!;
-    if (q.running) return;
-    q.running = true;
-    while (q.next) {
-      const r = q.next;
-      const waiters = q.waiters;
-      q.next = null;
-      q.waiters = [];
-      let err: unknown;
-      try {
-        await records.doc(id).set(plain(r));
-      } catch (e) {
-        err = e;
-      }
-      waiters.forEach((w) => w(err));
-    }
-    q.running = false;
-  }
+  // One save at a time per record, so each one merges onto the one before.
+  const chains = new Map<string, Promise<unknown>>();
   return {
     mode: "cloud",
     async loadSemester() {
@@ -131,16 +118,26 @@ function cloudQuestStore(db: DB, uid: string): QuestStore {
       const snap = await images.doc(id).get();
       return snap.exists ? ((snap.data() as { dataUrl?: string }).dataUrl ?? null) : null;
     },
-    saveRecord(r) {
+    saveRecord(r, base) {
       const id = r.quest.id;
-      if (!pending.has(id)) pending.set(id, { running: false, next: null, waiters: [] });
-      const q = pending.get(id)!;
-      q.next = r;
-      const done = new Promise<void>((resolve, reject) => q.waiters.push((e) => (e ? reject(e) : resolve())));
-      void drain(id);
-      return done;
+      const next = (chains.get(id) ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(async () => {
+          const snap = base ? await records.doc(id).get() : null;
+          const out = withMerge(r, base, snap?.exists ? (snap.data() as unknown as QuestRecord) : undefined);
+          await records.doc(id).set(plain(out));
+          return out;
+        });
+      chains.set(id, next);
+      return next;
     },
   };
+}
+
+/** The record to write: the caller's copy, or only its changes over a newer stored one; stamped now. */
+export function withMerge(r: QuestRecord, base: QuestProgress | undefined, stored: QuestRecord | undefined): QuestRecord {
+  const p = base && stored && stored.progress.updatedAt !== base.updatedAt ? mergeProgress(base, r.progress, stored.progress) : r.progress;
+  return { quest: r.quest, progress: { ...p, updatedAt: Date.now() } };
 }
 
 /**
@@ -227,9 +224,11 @@ function localQuestStore(): QuestStore {
         return mem.images.get(id) ?? null;
       }
     },
-    async saveRecord(r) {
+    async saveRecord(r, base) {
       const d = read();
-      write({ ...d, records: [...d.records.filter((x) => x.quest.id !== r.quest.id), r] });
+      const out = withMerge(r, base, d.records.find((x) => x.quest.id === r.quest.id));
+      write({ ...d, records: [...d.records.filter((x) => x.quest.id !== r.quest.id), out] });
+      return out;
     },
   };
 }

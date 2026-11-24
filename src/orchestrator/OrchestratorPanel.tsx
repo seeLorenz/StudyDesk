@@ -392,8 +392,7 @@ export function OrchestratorPanel(props: Props) {
     const q = todaysQuest(recordsRef.current, today);
     if (!q) return "There's no quest for today yet: it will be written from the current desk when the student opens Today's quest.";
     if (questStarted(q)) throw new Error("Today's quest is already started, so it isn't rewritten. Changes apply from the next quest.");
-    const replaced = { ...q, progress: { ...q.progress, replacedAt: Date.now(), updatedAt: Date.now() } };
-    await env.qs.saveRecord(replaced);
+    const replaced = await env.qs.saveRecord({ ...q, progress: { ...q.progress, replacedAt: Date.now() } }, q.progress);
     recordsRef.current = recordsRef.current.map((r) => (r === q ? replaced : r));
     window.dispatchEvent(new CustomEvent("studydesk:quest-replaced"));
     return "Today's quest is being written again from the current desk; it shows on Today's quest in a minute.";
@@ -414,7 +413,7 @@ export function OrchestratorPanel(props: Props) {
       for (const r of recordsRef.current) {
         // The old placement check goes, and today's quest while it isn't started: the new placement comes first.
         if (r.progress.replacedAt || (r.quest.id !== semester.placementQuestId && !(r.quest.date === today && !questStarted(r)))) continue;
-        await env.qs.saveRecord({ ...r, progress: { ...r.progress, replacedAt: Date.now(), updatedAt: Date.now() } });
+        await env.qs.saveRecord({ ...r, progress: { ...r.progress, replacedAt: Date.now() } }, r.progress);
       }
       const next = { ...semester, placementQuestId: undefined };
       semesterRef.current = next;
