@@ -396,7 +396,7 @@ export function applyOps(
       case "set_quest_settings": {
         const cur = { ...(desk.draft.questSettings ?? {}) };
         const now_ = questSettingsNow(cur);
-        const labels = { hints: "hints per task", lessonMinutes: "lesson reading minutes", newSkillsPerQuest: "new skills per quest" } as const;
+        const labels = { hints: "hints per task", lessonMinutes: "lesson reading minutes", newSkillsPerQuest: "new skills per quest", newSkillsBeforeExams: "new skills per quest in exam weeks" } as const;
         const changed: string[] = [];
         for (const k of Object.keys(QUEST_SETTING_LIMITS) as Array<keyof typeof QUEST_SETTING_LIMITS>) {
           if (op[k] === undefined) continue;

@@ -8,6 +8,7 @@ export const QUEST_CONFIG: {
   learnMinutes: { base: number; perSkill: number };
   lesson: { readMinutes: number; problemShare: number };
   maxNewSkills: number;
+  newBeforeExams: number;
   practiceMaxPoints: number;
   hints: number;
   restDayMinutes: number;
@@ -30,6 +31,8 @@ export const QUEST_CONFIG: {
   lesson: { readMinutes: 4, problemShare: 0.5 },
   /** At most this many brand-new skills per quest when there's no homework to prepare. */
   maxNewSkills: 2,
+  /** The same in the week before an exam of the quest's course: only that exam's skills unless the student asks. */
+  newBeforeExams: 0,
   /** Practice problems are worth this many grading points each. */
   practiceMaxPoints: 2,
   /** Hints per assignment task before the solved similar problem is offered. */
@@ -60,13 +63,15 @@ export type QuestSettings = {
   lessonMinutes?: number;
   /** Brand-new skills per quest when there's no homework to prepare (0 to 4). */
   newSkillsPerQuest?: number;
+  /** The same in the week before an exam, for skills that aren't on it (0 to 4). */
+  newSkillsBeforeExams?: number;
   /** The student learns with Anki: quests then come with a deck of what to learn by heart. Unset = not asked yet. */
   anki?: boolean;
 };
 
-export const QUEST_SETTING_LIMITS = { hints: [0, 5], lessonMinutes: [2, 15], newSkillsPerQuest: [0, 4] } as const;
+export const QUEST_SETTING_LIMITS = { hints: [0, 5], lessonMinutes: [2, 15], newSkillsPerQuest: [0, 4], newSkillsBeforeExams: [0, 4] } as const;
 
-const DEFAULTS = { hints: QUEST_CONFIG.hints, lessonMinutes: QUEST_CONFIG.lesson.readMinutes, newSkillsPerQuest: QUEST_CONFIG.maxNewSkills };
+const DEFAULTS = { hints: QUEST_CONFIG.hints, lessonMinutes: QUEST_CONFIG.lesson.readMinutes, newSkillsPerQuest: QUEST_CONFIG.maxNewSkills, newSkillsBeforeExams: QUEST_CONFIG.newBeforeExams };
 
 /**
  * Uses a student's own quest settings for the next planning and writing.
@@ -77,9 +82,10 @@ export function applyQuestSettings(s: QuestSettings | undefined): void {
   QUEST_CONFIG.hints = s?.hints ?? DEFAULTS.hints;
   QUEST_CONFIG.lesson.readMinutes = s?.lessonMinutes ?? DEFAULTS.lessonMinutes;
   QUEST_CONFIG.maxNewSkills = s?.newSkillsPerQuest ?? DEFAULTS.newSkillsPerQuest;
+  QUEST_CONFIG.newBeforeExams = s?.newSkillsBeforeExams ?? DEFAULTS.newSkillsBeforeExams;
 }
 
 /** The settings in effect, for the Orchestrator's snapshot. */
 export function questSettingsNow(s: QuestSettings | undefined) {
-  return { hints: s?.hints ?? DEFAULTS.hints, lessonMinutes: s?.lessonMinutes ?? DEFAULTS.lessonMinutes, newSkillsPerQuest: s?.newSkillsPerQuest ?? DEFAULTS.newSkillsPerQuest, anki: s?.anki ?? null };
+  return { ...DEFAULTS, ...s, anki: s?.anki ?? null };
 }
