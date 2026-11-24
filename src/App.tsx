@@ -128,6 +128,8 @@ export function App() {
   // On the Organize page the chat is already there; elsewhere it opens as a panel.
   const viewRef = useRef(view);
   viewRef.current = view;
+  // Setup is finished: the setup page hands over to Today, where the placement check waits.
+  const onSetupDone = useCallback(() => viewRef.current === "setup" && go("today"), [go]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
@@ -394,7 +396,7 @@ export function App() {
                 type="button"
                 role="menuitem"
                 onClick={() => {
-                  // Only this way in asks "Are you sure?"; the setup sheet and its to-do list open without it.
+                  // Once a semester is set up, this is the only way onto the setup page, and it asks "Are you sure?" first.
                   go("setup");
                   if (sem && sem.source !== "sample") setNewSemesterAsk(Date.now());
                 }}
@@ -483,7 +485,7 @@ export function App() {
                 ← Back to Organize
               </button>
             )}
-            <OnboardingPage onDone={() => go("today")} onOpenChat={() => go("organize")} askNewSemester={newSemesterAsk} />
+            <OnboardingPage onDone={onSetupDone} askNewSemester={newSemesterAsk} />
           </div>
         )}
 

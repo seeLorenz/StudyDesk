@@ -21,7 +21,7 @@ The rule that keeps this simple: **Courses only shows, Organize changes.** Nothi
 
 Top to bottom, the same page pattern as every screen (kicker, serif title, one line of context):
 
-1. **Header.** Semester name, dates, number of courses, hours a week. The "Setup sheet" button moves here from Organize.
+1. **Header.** Semester name, dates, number of courses, hours a week. Sample data has a "Set up your semester" button here; a real semester has none, since everything shown is in the Courses tab itself.
 2. **Course cards**, one per course, as today: name, mastery bar and %, "x of y skills mastered · aiming for 2", open mistakes, the next exam or hand-in. **The whole card is clickable** and opens that course's page.
 3. **All dates** (moved from Organize), each with "Wrong?".
 4. **Study time** per weekday (moved from Organize).
@@ -74,7 +74,7 @@ The tab also follows the app-wide rules:
 
 - **Left:** the Orchestrator chat, unchanged.
 - **Right:** the **To do** list, moved from the setup page. It already starts its items in the StudyDesk chat, so having the list right beside that chat removes a screen switch. Phones get a "Chat | To do" switch.
-- The setup page keeps its chat and sheet for setting up a semester and for watching a course being read again ("Watch it live"). After setup it no longer has its own "To do | Semester" switch; "Setup sheet" on Courses still opens it.
+- The setup page is only for setting up a semester. Once setup is done it hands over to Today (placement check) and can't be reached again except through "Start a new semester" (2026-11-24: a student landing in the old setup chat thought it was the StudyDesk chat).
 - The badge rules don't change.
 
 ## What it needs

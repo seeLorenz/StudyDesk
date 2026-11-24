@@ -30,7 +30,7 @@ Keep it uncluttered: one line of facts per card, no extra badges.
 - **Left:** the Orchestrator chat (the same conversation as the quick panel).
 - **Right:** the To do list (what StudyDesk still needs from the student). "Answer in the chat" puts an item's questions into the chat beside it. Phones switch between "Chat | To do".
 - The semester, courses, dates, study time and files moved to **Courses** (2026-11-24). Course progress lives there and not on Today, because Today should stay about today.
-- **Setup is Organize's first state.** With no semester yet, Organize is the setup chat with its sheet. "Start a new semester" lives in the ⋯ menu and on the setup sheet, not as its own tab.
+- **Setup is Organize's first state.** With no semester yet, Organize is the setup chat with its sheet. "Start a new semester" lives in the ⋯ menu, not as its own tab. Once a semester is set up, that is the only way onto the setup page; finishing setup hands over to Today.
 
 ## Notifications
 

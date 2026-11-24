@@ -22,16 +22,12 @@ import { askClaude, canSendImages, maxImages, canUseTools, claudeAvailable, erro
 import { openMasteryStore, type MasteryData, type MasteryStore } from "../platform/masteryStore";
 import { offerDownload, openOnboardingStore, saveErrorCopy, StaleDraft, type OnboardingStore } from "../platform/onboardingStore";
 import { openQuestStore, type QuestStore } from "../platform/questStore";
-import { emptyProgress } from "../quests/handin";
 import { compressImage, dataUrlToBlob } from "../quests/images";
 import { busyMinutes } from "../quests/plan";
-import { sampleWriter } from "../quests/seed";
-import type { Quest, Semester } from "../quests/types";
-import { QuestIncomplete, writeQuest, type WriteStatus } from "../quests/write";
+import type { Semester } from "../quests/types";
 import { SHEET_TOOL_DESCRIPTION, SHEET_TOOL_SCHEMA, applySheetUpdate, chatTurns, greeting, localReply, setupReady, sheetSnapshot } from "./agent";
-import { placementWriter, planPlacement } from "./placement";
 import { gradeSteps } from "./scales";
-import { setupTodo, staleCourses } from "./todo";
+import { staleCourses } from "./todo";
 import { buildSemester, SCAN_WRITE_BACK, localSetup, parseSetup, runCourseSetup, setupTurns, type FileForSetup, type SetupInput, liveProgress, type LiveProgress } from "./setup";
 import { buildBackup, freshStart, saveBackup } from "../platform/backup";
 import { RestoreBackup } from "../updates/RestoreBackup";
@@ -147,7 +143,7 @@ function useStartAtEnd(scroller: React.RefObject<HTMLElement>, ready: boolean) {
   }, [scroller, ready]);
 }
 
-export function OnboardingPage({ onDone, onOpenChat, askNewSemester = 0 }: { onDone: () => void; onOpenChat: () => void; askNewSemester?: number }) {
+export function OnboardingPage({ onDone, askNewSemester = 0 }: { onDone: () => void; askNewSemester?: number }) {
   const [env, setEnv] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile>(emptyProfile);
@@ -302,6 +298,10 @@ export function OnboardingPage({ onDone, onOpenChat, askNewSemester = 0 }: { onD
     askedNew.current = askNewSemester;
     if (askNewSemester) setFresh("ask");
   }, [askNewSemester]);
+  // Once the semester is set up, everything goes through Organize and Today: this page stays only for starting a new semester.
+  useEffect(() => {
+    if (draft && handedOff(draft) && fresh === null) onDone();
+  }, [draft, fresh, onDone]);
   const [freshLine, setFreshLine] = useState("");
   const [freshInfo, setFreshInfo] = useState<{ files: number; missing: string[] } | null>(null);
   const [wipeArmed, setWipeArmed] = useState(false);
@@ -412,7 +412,7 @@ export function OnboardingPage({ onDone, onOpenChat, askNewSemester = 0 }: { onD
   if (!env || !draft) return <div className="quest-page" aria-busy="true"><p className="quest-muted late-in">Loading…</p></div>;
 
   const returning = env.current?.source === "onboarding" && env.current.id !== draft.id;
-  const props: StepProps = { env, draft, profile, update, updateProfile, go, today, flush, md, onDone, onOpenChat, setEnv, returning, draftRef, profileRef, handoff, recheckHandoff };
+  const props: StepProps = { env, draft, profile, update, updateProfile, go, today, flush, md, returning, draftRef, profileRef, handoff, recheckHandoff };
 
   return (
     <div className="quest-page setup-page" ref={scroller} data-select-scope="">
@@ -511,7 +511,6 @@ export function OnboardingPage({ onDone, onOpenChat, askNewSemester = 0 }: { onD
           <SetupChat
             {...props}
             scroller={scroller}
-            after={draft.setupStep === "done" ? <Done {...props} /> : null}
             below={draft.status === "setting_up" && !returning && env.current?.source !== "onboarding" && draft.courses.length === 0 ? <RestoreBackup /> : null}
           />
           {draft.setupStep === "running" && <Running {...props} />}
@@ -537,10 +536,6 @@ type StepProps = {
   flush: () => Promise<void>;
   /** Markdown with select-to-reply. `label` tells Claude where the passage is when it isn't a chat message or report. */
   md: (blockId: string, text: string, label?: string) => JSX.Element;
-  onDone: () => void;
-  /** Opens the StudyDesk chat, which takes over once the semester is set up. */
-  onOpenChat: () => void;
-  setEnv: (e: Loaded) => void;
   returning: boolean;
   draftRef: React.MutableRefObject<SemesterDraft | null>;
   profileRef: React.MutableRefObject<Profile>;
@@ -618,7 +613,7 @@ function HandoffCard({ handoff, recheckHandoff, draft, update }: StepProps) {
 // `below`: a quiet line under the input box ("Had StudyDesk before?"). It sits
 // there, not above the chat, so it never pushes the conversation around when
 // it appears or goes away.
-function SetupChat({ env, draft, update, updateProfile, today, flush, md, returning, draftRef, profileRef, handoff, below, after, scroller, onOpenChat }: StepProps & { below?: ReactNode; after?: ReactNode; scroller: React.RefObject<HTMLDivElement> }) {
+function SetupChat({ env, draft, update, updateProfile, today, flush, md, returning, draftRef, profileRef, handoff, below, scroller }: StepProps & { below?: ReactNode; scroller: React.RefObject<HTMLDivElement> }) {
   const [busy, setBusy] = useState<string | null>(null);
   const ctl = useRef<AbortController | null>(null);
   const chat = draft.chat ?? [];
@@ -808,8 +803,6 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
             </div>
           ),
         )}
-        {/* The finished-setup card is part of the conversation, above the input box, so the box stays docked at the bottom. */}
-        {after}
         <div ref={tailRef} style={{ height: open ? tail : 0 }} aria-hidden="true" />
       </div>
       {open && (
@@ -828,14 +821,6 @@ function SetupChat({ env, draft, update, updateProfile, today, flush, md, return
             onStop={() => ctl.current?.abort()}
           />
           {below}
-        </div>
-      )}
-      {handedOff(draft) && (
-        <div className="setup-composer">
-          <p className="quest-muted">Your semester is set up. From here on, everything goes through the StudyDesk chat.</p>
-          <button type="button" className="mini-btn primary" onClick={onOpenChat}>
-            Open the StudyDesk chat
-          </button>
         </div>
       )}
     </div>
@@ -1242,106 +1227,6 @@ async function previewRun(input: Parameters<typeof localSetup>[0], onText: (t: s
     await new Promise((r) => setTimeout(r, 700));
   }
   return { ...localSetup(input), clipped: [] as string[] };
-}
-
-// ---------- 7. done: the placement check (the to-do list is in the side panel) ----------
-
-function Done({ env, draft, onDone, setEnv, today, update }: StepProps) {
-  const [semester, setSemester] = useState<Semester | null>(null);
-  const partial = useRef<{ quest: Quest; writtenIds: string[] } | null>(null);
-  const [building, setBuilding] = useState<Record<string, WriteStatus> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    env.qs.loadSemester().then(setSemester).catch((e) => setError(message(e)));
-  }, [env]);
-  // A placement check redone through the Orchestrator shows up here at once.
-  useEffect(() => subscribe("semester", "setup-done", (s) => setSemester(s)), []);
-
-  const start = async () => {
-    if (!semester) return;
-    if (semester.placementQuestId) return onDone();
-    setError(null);
-    try {
-      const mastery = await env.ms.load();
-      const { quest, partCourse } = planPlacement(semester, mastery.attempts, mastery.reviews, today);
-      if (!quest.parts.length) {
-        const s = { ...semester, placementQuestId: "none" };
-        await env.qs.saveSemester(s);
-      publish("semester", s, "setup");
-        return onDone();
-      }
-      // Every part is listed from the start, so the count never grows while it writes.
-      setBuilding(Object.fromEntries(quest.parts.map((p) => [p.id, { partId: p.id, state: "waiting" } as WriteStatus])));
-      const writer = placementWriter(semester, quest, partCourse, askClaude, env.live ? null : sampleWriter(semester.skills));
-      // A retry carries on from the parts already written.
-      const prev = partial.current;
-      const resume = prev && prev.quest.parts.length === quest.parts.length && prev.quest.parts.every((p, i) => p.id === quest.parts[i].id);
-      let written: Quest;
-      try {
-        written = await writeQuest(resume ? prev.quest : quest, writer, (s) => setBuilding((b) => ({ ...(b ?? {}), [s.partId]: s })), {
-          skip: resume ? new Set(prev.writtenIds) : undefined,
-        });
-      } catch (e) {
-        if (e instanceof QuestIncomplete) partial.current = { quest: e.quest, writtenIds: e.writtenIds };
-        throw e;
-      }
-      partial.current = null;
-      await env.qs.saveRecord({ quest: written, progress: emptyProgress(written.id) });
-      const s = { ...semester, placementQuestId: written.id };
-      await env.qs.saveSemester(s);
-      publish("semester", s, "setup");
-      setEnv({ ...env, current: s });
-      onDone();
-    } catch (e) {
-      setBuilding(null);
-      const kept = partial.current?.writtenIds.length ?? 0;
-      setError(`The placement check couldn't be finished: ${message(e)}${kept ? ` The ${kept} ${kept === 1 ? "part" : "parts"} already written ${kept === 1 ? "is" : "are"} kept, so trying again carries on from there.` : ""}`);
-    }
-  };
-
-  const todo = setupTodo(draft);
-  const left = todo.filter((t) => !t.done);
-  const stale = staleCourses(draft);
-  const reread = () =>
-    update((d) => {
-      const ids = new Set(staleCourses(d).map((c) => c.id));
-      return { ...d, setupStep: "running", courses: d.courses.map((c) => (ids.has(c.id) ? { ...c, setupStatus: "waiting", cloudFailed: undefined, job: undefined } : c)) };
-    });
-
-  return (
-    <div className="setup-card">
-      <h1>Your semester is set up</h1>
-      {semester && (
-        <p>
-          {semester.courses.length} {semester.courses.length === 1 ? "course" : "courses"}, {semester.skills.length} skills to learn and track.
-          {left.length > 0 && ` ${left.length} ${left.length === 1 ? "thing is" : "things are"} still open: they're under To do on Organize. Work through them one at a time, whenever you like.`}
-        </p>
-      )}
-
-      {stale.length > 0 && (
-        <p className="setup-stale">
-          You added answers or files for {stale.map((c) => c.short || c.name).join(", ")}.{" "}
-          <button type="button" className="mini-btn primary" onClick={reread}>
-            Update {stale.length === 1 ? "this course" : `these ${stale.length} courses`}
-          </button>
-        </p>
-      )}
-
-      <h2 className="setup-h2">Next: a placement check</h2>
-      <p>One short problem on each basic your courses build on and on each topic already taught, so StudyDesk knows how far you actually are. From the results it recommends how much to do each day for your target grades.</p>
-      {building && (
-        <p className="quest-muted">
-          Writing your placement check… {Object.values(building).filter((s) => s.state === "done").length} of {Object.keys(building).length} parts ready (two at a time)
-        </p>
-      )}
-      {error && <p className="quest-error">{error}</p>}
-      <Actions>
-        <button type="button" className="mini-btn primary big" disabled={!semester || !!building} onClick={() => void start()}>
-          {semester?.placementQuestId ? "Open your quests" : "Start my placement check"}
-        </button>
-      </Actions>
-    </div>
-  );
 }
 
 // ---------- the semester sheet: filled by the chat, editable by hand ----------
