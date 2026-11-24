@@ -6,7 +6,7 @@ import { sampleSemester, sampleWriter, sampleGradingAsk, SAMPLE_SKILLS } from ".
 import { addDays } from "../src/mastery/days";
 import type { Attempt } from "../src/mastery/types";
 import type { ProblemPart, Quest } from "../src/quests/types";
-import { addAnki, ankiDeck } from "../src/quests/anki";
+import { addAnki, ankiDeck, deckSizes } from "../src/quests/anki";
 
 const TUE = "2026-11-03";
 const sem = sampleSemester(TUE, 0);
@@ -353,11 +353,22 @@ describe("Anki deck", () => {
     addAnki(later, records, semester);
     expect(later.parts.map((p) => p.kind)).toEqual(["learn", "practice"]);
     expect((later.parts[1] as ProblemPart).problems[0].cards).toEqual(cards);
-    expect(later.plannedMinutes).toBe(10 + 6);
+    expect(later.plannedMinutes).toBe(4 + 6); // the test's problem plus the Anki step; a test has no reading time
     const deck = ankiDeck(later, records, semester)!;
     expect(deck.count).toBe(2);
     expect(deck.text).toContain("#guid column:1\n#deck column:2\n");
     expect(deck.text).toContain("\tel perro\tthe dog");
     expect(ankiDeck(later, [], { ...semester })).toBeNull();
+  });
+
+  it("fits the Anki step into the quest's budget", () => {
+    const semester = { ...sem, questSettings: { anki: true } };
+    const cards = Array.from({ length: 8 }, (_, i) => ({ front: `t${i}`, back: `m${i}` }));
+    const lessons = sem.skills.map((s, i) => ({ kind: "lesson", id: `l${i}`, title: s.name, gate: false, skillIds: [s.id], problems: [], cards }));
+    const records = [{ quest: { id: "q0", date: "2026-11-01", courseId: "calc", createdAt: 0, plannedMinutes: 0, budgetMinutes: 0, reason: "", notes: [], parts: lessons } as Quest, progress: emptyProgress("q0") }];
+    const q = plan({ semester, deckSizes: deckSizes(records, semester) });
+    addAnki(q, records, semester);
+    expect(q.parts[0].kind).toBe("learn");
+    expect(q.plannedMinutes).toBeLessThanOrEqual(q.budgetMinutes * 1.1);
   });
 });

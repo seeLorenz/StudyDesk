@@ -7,7 +7,7 @@
 // importing again updates cards instead of adding a second copy.
 
 import { subId } from "../onboarding/todo";
-import { QUEST_CONFIG } from "./config";
+import { ankiMinutes, partMinutes, QUEST_CONFIG } from "./config";
 import type { Card, ProblemPart, Quest, QuestRecord, Semester } from "./types";
 
 const flat = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -26,6 +26,12 @@ export function decks(quests: Quest[]): Map<string, Card[]> {
   return new Map([...out].map(([id, d]) => [id, [...d.values()]]));
 }
 
+/** Cards per skill, for planning, when Anki is on. */
+export function deckSizes(records: QuestRecord[], semester: Semester): Map<string, number> | undefined {
+  if (!semester.questSettings?.anki) return undefined;
+  return new Map([...decks(records.map((r) => r.quest))].map(([id, d]) => [id, d.length]));
+}
+
 /**
  * Turns a planned quest's problems on skills that have a deck into deck tests,
  * with an Anki step in front. Lessons on those skills become tests too: by-heart
@@ -35,7 +41,7 @@ export function addAnki(quest: Quest, records: QuestRecord[], semester: Semester
   if (!semester.questSettings?.anki) return;
   const all = decks(records.map((r) => r.quest));
   const tested = new Set<string>();
-  const { cardsPerTest, baseMinutes, perCard } = QUEST_CONFIG.anki;
+  const { cardsPerTest } = QUEST_CONFIG.anki;
   let cards = 0;
   for (const part of quest.parts) {
     if (part.kind !== "lesson" && part.kind !== "practice") continue;
@@ -55,7 +61,7 @@ export function addAnki(quest: Quest, records: QuestRecord[], semester: Semester
     }
   }
   if (!tested.size) return;
-  const minutes = Math.round(baseMinutes + perCard * cards);
+  const minutes = ankiMinutes(cards);
   const names = [...tested].map((id) => semester.skills.find((s) => s.id === id)?.name ?? id);
   const first = quest.parts.findIndex((x) => x.kind !== "learn" && x.problems.some((p) => p.cards));
   quest.parts.splice(first, 0, {
@@ -66,7 +72,8 @@ export function addAnki(quest: Quest, records: QuestRecord[], semester: Semester
     estMinutes: minutes,
     body: `Study these cards in Anki for about ${minutes} minutes: ${names.join(", ")}. If they aren't in Anki yet, use **Export deck** at the top and import the file first. Then take the short test below; that test is what counts for your progress.`,
   });
-  quest.plannedMinutes += minutes;
+  // The planner already counted this step and the tests (deckSizes); a test has no reading time.
+  quest.plannedMinutes = quest.parts.reduce((s, p) => s + partMinutes(p), 0);
 }
 
 /** Anki's text import: one deck per topic, every card of the topics this quest touches. */

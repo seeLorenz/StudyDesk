@@ -20,7 +20,7 @@ import { sampleGradingAsk, sampleSemester, sampleWriter } from "./seed";
 import type { AnswerFile, ProblemPart, ProblemWork, Quest, QuestPart, QuestProgress, QuestRecord, Rating, Semester } from "./types";
 import { claudeWriter, writeQuest, type WriteStatus } from "./write";
 import { compressImage, dataUrlToBlob } from "./images";
-import { addAnki, ankiDeck } from "./anki";
+import { addAnki, deckSizes, ankiDeck } from "./anki";
 import { applyChecks, checkResults, isResolved, newReviewChat, questMistakes, reviewRules } from "./review";
 import { WorkloadCard } from "../onboarding/WorkloadCard";
 import { busyMinutesFromEvents, readCalendar } from "../platform/calendar";
@@ -282,6 +282,7 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
         attempts: mastery.attempts,
         reviews: mastery.reviews,
         doneTaskIds: doneTasks(records),
+        deckSizes: deckSizes(records, semester),
         blockerSkillIds: recentBlockers(records, today),
         budgetOverride,
         questId: `qst_${today}_${Date.now().toString(36)}`,

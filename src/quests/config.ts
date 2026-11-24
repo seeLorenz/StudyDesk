@@ -45,6 +45,9 @@ export const QUEST_CONFIG: {
   tiers: { learn: "default", lesson: "default", practice: "default", assignment: "default", fixIt: "default" } as const,
 };
 
+/** Minutes of the "Study in Anki" step before deck tests on this many cards. */
+export const ankiMinutes = (cards: number) => (cards ? Math.round(QUEST_CONFIG.anki.baseMinutes + QUEST_CONFIG.anki.perCard * cards) : 0);
+
 export function learnMinutes(skillCount: number): number {
   return skillCount ? QUEST_CONFIG.learnMinutes.base + QUEST_CONFIG.learnMinutes.perSkill * skillCount : 0;
 }
