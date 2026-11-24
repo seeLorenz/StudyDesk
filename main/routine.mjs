@@ -95,6 +95,7 @@ function median(xs) {
 function busyFromAhead(ahead, day) {
   return ahead?.busy && Object.prototype.hasOwnProperty.call(ahead.busy, day) ? ahead.busy[day] : void 0;
 }
+const ENTRY_MARK = "[StudyDesk]";
 const CONFIG = {
   defaultStreakTarget: 3,
   /**
@@ -2290,6 +2291,72 @@ function carriedOver(records, quest) {
   }
   return out;
 }
+function timesTurns(o) {
+  const when = o.after ? "today" : "tomorrow";
+  return [
+    {
+      role: "user",
+      content: `Pick when the student should study ${when} (${o.weekday}). StudyDesk puts these times into their Google Calendar.${o.after ? ` It's already ${o.after}, so only times after that.` : ""}
+
+The quest: ${o.courseName}, about ${o.quest.plannedMinutes} min in total, in ${o.quest.parts.length} parts: ${o.quest.parts.map((p) => p.title).join("; ")}.
+
+${when === "today" ? "Today" : "Tomorrow"} in their calendar:
+${o.events.length ? o.events.join("\n") : "(nothing)"}
+
+What the student has told StudyDesk about themselves:
+${o.notes.trim() || "(nothing yet)"}
+
+Rules: only free time; leave about 15 min between a commitment and study; one to three blocks, none shorter than 25 min, adding up to about the quest's time; follow anything the student said about when or where they like to study; otherwise prefer daytime and the gaps between commitments, and nothing after 22:00.
+Reply with only the blocks, one per line, as HH:MM-HH:MM, or "none" if there's no good time left.`
+    }
+  ];
+}
+const hm = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+const pad = (n) => String(n).padStart(2, "0");
+function parseTimes(reply) {
+  const out = [];
+  for (const m of reply.matchAll(/(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})/g)) {
+    const [h1, m1, h2, m2] = m.slice(1).map(Number);
+    if (h1 > 23 || h2 > 23 || m1 > 59 || m2 > 59) continue;
+    const t = { start: `${pad(h1)}:${pad(m1)}`, end: `${pad(h2)}:${pad(m2)}` };
+    if (hm(t.end) > hm(t.start)) out.push(t);
+  }
+  out.sort((a, b) => hm(a.start) - hm(b.start));
+  return out.filter((t, i) => i === 0 || hm(t.start) >= hm(out[i - 1].end)).slice(0, 3);
+}
+async function pickTimes(ask, o) {
+  return parseTimes(await ask(timesTurns(o), { tier: "default" }));
+}
+function studyEntries(o) {
+  return o.times.map((t) => ({
+    day: o.day,
+    ...t,
+    title: `Study · ${o.courseName}`,
+    description: `${ENTRY_MARK} ${o.reason}${o.url ? `
+Open StudyDesk: ${o.url}` : ""}`,
+    timeZone: o.timeZone
+  }));
+}
+const sig = (e) => `${e.day} ${e.start}-${e.end} ${e.title}`;
+function calendarWant(day, questId, entries) {
+  const sigs = entries.map(sig);
+  const key = `${day}|${sigs.join("|")}`;
+  const events = entries.map((e) => ({
+    summary: e.title,
+    description: e.description,
+    startTime: `${e.day}T${e.start}:00`,
+    endTime: `${e.day}T${e.end}:00`,
+    timeZone: e.timeZone,
+    overrideReminders: [{ method: "popup", minutes: 10 }],
+    notificationLevel: "NONE"
+  }));
+  const instructions = `1. Get the document calendarWritten from the same collection (it may not exist). Get the time now in milliseconds with \`date +%s%3N\`.
+2. If its key is ${JSON.stringify(key)}, only update calendarWritten with {"taskSeenAt": <now>} and end.
+3. Delete every event id in its "ids" with mcp__Google_Calendar__delete_event (notificationLevel "NONE"). An event that is already gone is fine.
+4. Create each of these events with mcp__Google_Calendar__create_event, in this order, using exactly these arguments: ${JSON.stringify(events)}
+5. Set calendarWritten to {"key": ${JSON.stringify(key)}, "day": "${day}", "ids": [the ids you created, in order], "sigs": ${JSON.stringify(sigs)}, "taskSeenAt": <now>}. Never touch any other event.`;
+  return { day, questId, key, entries, instructions };
+}
 const GRADE_FIELDS = ["attemptId", "verdict", "points", "feedback", "firstWrongStep", "slipQuestion", "slipAnswer", "fundamentalSkillId"];
 function gradingFields(w) {
   const out = {};
@@ -2572,6 +2639,9 @@ async function runNightly(input, d) {
   if (q.record) {
     questId = q.record.quest.id;
     writes.push({ path: ["quests", "records", questId], data: plain(q.record), mode: "create" });
+    const want = semester?.calendarSync ? await studyTimes(input, semester, q.record.quest, d, log) : null;
+    if (want === "pending") return { kind: "pending", log };
+    if (want) writes.push({ path: ["calendarWant"], data: plain(want), mode: "replace" });
   }
   const night = { day: today, status: "done", startedAt: now, finishedAt: null, lines: log, questId };
   const nights = [...routine.nights.filter((n) => n.day !== today), night].slice(-14);
@@ -2702,6 +2772,28 @@ async function organize(input, desk, org, mastery, d, log) {
   log.push(`Checked the courses: ${s.v.note || "nothing new."}${s.v.ops.length ? ` ${s.v.ops.length} ${s.v.ops.length === 1 ? "change" : "changes"} to look at.` : ""}${s.v.questions.length ? ` ${s.v.questions.length} ${s.v.questions.length === 1 ? "question" : "questions"} for you.` : ""}`);
   for (const k of s.v.skipped) log.push(`Left for you: ${k}.`);
   return out;
+}
+async function studyTimes(input, semester, quest, d, log) {
+  const courseName = semester.courses.find((c) => c.id === quest.courseId)?.name ?? "Quest";
+  try {
+    const times = await pickTimes(d.ask("Picking tomorrow's study times for the calendar"), {
+      quest,
+      courseName,
+      weekday: weekdayName(quest.date),
+      events: input.calendar?.events?.[quest.date] ?? [],
+      notes: input.notes ?? ""
+    });
+    if (!times.length) {
+      log.push("No study times were picked for tomorrow, so nothing goes into your calendar.");
+      return null;
+    }
+    log.push(`Study times for tomorrow: ${times.map((t) => `${t.start}-${t.end}`).join(", ")}. They go into your calendar.`);
+    return calendarWant(quest.date, quest.id, studyEntries({ day: quest.date, times, courseName, reason: quest.reason, timeZone: input.profile?.schedule?.timeZone ?? "UTC", url: input.url ?? null }));
+  } catch (e) {
+    if (isPending(e)) return "pending";
+    log.push(`Tomorrow's study times couldn't be picked (${e?.message ?? String(e)}).`);
+    return null;
+  }
 }
 function sizedBy(semester, calendar, busy, now) {
   if (!semester.calendarSync) return "It goes by your weekly timetable.";
@@ -3114,7 +3206,7 @@ function validateSnapshot(s, max = 20) {
 }
 const ME = "data/users/me";
 const COLLECTIONS = [...Object.values(COLLECTION_KINDS).map((p) => p.join("/")), `${PARTS_DOC}/${PARTS_COL}`];
-const DOCS = [...Object.values(DOC_KINDS), "release"];
+const DOCS = [...Object.values(DOC_KINDS), "release", "calendar"];
 const BATCH_BYTES = 8e5;
 function arg(name) {
   const i = process.argv.indexOf(`--${name}`);
@@ -3386,6 +3478,8 @@ async function main() {
     draft: doc(all, "onboarding"),
     semester: doc(all, "semester"),
     calendar: doc(all, "calendar"),
+    url,
+    notes: doc(all, "orchestrator")?.memory?.text ?? "",
     records: collection(all, "quests/records").map((x) => x.data),
     mastery,
     outbox: collection(all, "routine/outbox").map((x) => x.data),
