@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-1toq2o",
   "branch": "claude/project-thread-1toq2o",
-  "notes": "Quests: exams in the next week shape which course and which skills",
+  "notes": "Merge main (Anki setting) into exam weighting",
   "dataVersion": 1,
-  "builtAt": "2026-11-23T21:21:35.151Z",
-  "commit": "59815683ba96df7288e1738542184c9cca9c7d04"
+  "builtAt": "2026-11-24T08:29:37.380Z",
+  "commit": "2a13dc22b77efe83568b7cf0d311cd1c0fa22bd8"
 }
