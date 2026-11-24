@@ -149,7 +149,7 @@ export const CHANGE_TOOL = {
 - {op:"set_calendar_live", on: bool} (calendar data is live by default: it's read again whenever StudyDesk is open and each day's quest is sized from it. Only set on:false when the student explicitly asks to stop following their calendar)
 - {op:"tick_todo", key, done?: bool} (keep the to-do list current: tick each part of an openToDo item (parts[].key: one question, one date, one disagreement) as soon as it's answered or confirmed, even one of three, in the same change that records the answer; an item ticks itself off when all its parts are done. Tick an item's own key only when it has no parts (files: once dropped and assigned). Never ask the student to tick. done:false opens it again)
 - {op:"set_language", course, language}
-- {op:"set_quest_settings", hints?: 0-5 (per homework task), lessonMinutes?: 2-15 (reading part of a lesson), newSkillsPerQuest?: 0-4}
+- {op:"set_quest_settings", hints?: 0-5 (per homework task), lessonMinutes?: 2-15 (reading part of a lesson), newSkillsPerQuest?: 0-4, anki?: bool (the student learns with Anki; this answers the "anki" to-do, no tick needed)}
 - {op:"set_nightly", time?: "HH:MM", paused?: bool, grading?: bool, check?: bool, quest?: bool} (the nightly run: when it runs, pause it, or turn off grading / the courses' check / writing tomorrow's quest)
 - {op:"set_sweep", course, date: "YYYY-MM-DD" or "none"} (when the organization agent reads a course again completely, at night)
 - {op:"add_fact", course?, text} (word for word)

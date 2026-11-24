@@ -247,7 +247,7 @@ The code lives in `src/orchestrator/`, storage in `src/platform/orchestratorStor
 
 - **Rebuild today's quest** (`rebuild_quest`, and a button on change cards): while today's quest isn't started, it's marked replaced and the quest page writes a new one from the current desk. A started quest is never rewritten.
 - **Redo the placement check** (`redo_placement`): when the student asks, the Orchestrator first asks whether to also delete their past stats (attempts, mastery progress, mistake review) or keep them, then shows a yes/no card. On yes: the stats are deleted if chosen (skills and targets stay), the old placement and today's unstarted quest are set aside, and Today offers "Start the placement check", written from the current desk (so in each course's current language).
-- **Quest settings by talking** (`set_quest_settings`): hints per homework task (0 to 5), lesson reading minutes (2 to 15) and new skills per quest (0 to 4), stored per student and used from the next quest (`applyQuestSettings` in `src/quests/config.ts`).
+- **Quest settings by talking** (`set_quest_settings`): hints per homework task (0 to 5), lesson reading minutes (2 to 15) new skills per quest (0 to 4) and whether the student uses Anki (answers the Anki to-do), stored per student and used from the next quest (`applyQuestSettings` in `src/quests/config.ts`).
 - **The tutor passes remarks on** (`src/orchestrator/passOn.ts`): every tutor call (Ask chats, side notes, the mistake review) has a `pass_to_studydesk` tool. The remark arrives in the StudyDesk chat word for word, marked "Passed on by the tutor", with where it was said; it's handled one at a time and shows on the badge.
 
 **Not in this version (next steps)**

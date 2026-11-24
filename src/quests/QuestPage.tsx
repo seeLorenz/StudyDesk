@@ -20,11 +20,12 @@ import { sampleGradingAsk, sampleSemester, sampleWriter } from "./seed";
 import type { AnswerFile, ProblemPart, ProblemWork, Quest, QuestPart, QuestProgress, QuestRecord, Rating, Semester } from "./types";
 import { claudeWriter, writeQuest, type WriteStatus } from "./write";
 import { compressImage, dataUrlToBlob } from "./images";
+import { addAnki, ankiDeck } from "./anki";
 import { applyChecks, checkResults, isResolved, newReviewChat, questMistakes, reviewRules } from "./review";
 import { WorkloadCard } from "../onboarding/WorkloadCard";
 import { busyMinutesFromEvents, readCalendar } from "../platform/calendar";
 import { publish, subscribe } from "../platform/deskBus";
-import { openOnboardingStore } from "../platform/onboardingStore";
+import { offerDownload, openOnboardingStore } from "../platform/onboardingStore";
 import { openRoutineStore } from "../platform/routineStore";
 import { gradingFields, mergeGrading, type GradingOutbox } from "../routine/apply";
 import { ComingUp } from "../shell/ComingUp";
@@ -295,6 +296,7 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
         const knownIds = [...states.values()].filter((s) => s.stage === "mastered" || s.stage === "retained").map((s) => s.skillId);
         const feel = recentFeel(records, (id) => semester.skills.find((s) => s.id === id)?.name, today);
         const writer = data.live ? claudeWriter(semester, res.quest, knownIds, askClaude, undefined, feel) : sampleWriter(semester.skills);
+        addAnki(res.quest, records, semester);
         const carried = carriedOver(records, res.quest);
         if (carried.length) {
           res.quest.notes.unshift(`Carried over from ${WEEKDAY(carried[0].from)}, when the quest wasn't finished: ${carried.map((c) => c.label).join(", ")}.`);
@@ -623,6 +625,7 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
 
   const skills = useMemo(() => new Map(semester.skills.map((s) => [s.id, s])), [semester]);
   const course = semester.courses.find((c) => c.id === quest.courseId);
+  const deck = semester.questSettings?.anki ? ankiDeck(quest, data.records, semester) : null;
   const ask = live ? askClaude : sampleGradingAsk;
 
   const onRecordRef = useRef(onRecord);
@@ -1070,6 +1073,11 @@ ${b?.text ?? ""}
               More about this quest
             </button>
           ))}
+        {deck && (
+          <button type="button" className="mini-btn" onClick={() => void offerDownload(`${course?.short || course?.name || "StudyDesk"} ${quest.date}.txt`, deck.text)}>
+            Export deck ({deck.count} cards)
+          </button>
+        )}
       </header>
 
       {extra}
