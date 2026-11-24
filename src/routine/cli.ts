@@ -28,7 +28,8 @@ const ME = "data/users/me";
 // Everything StudyDesk stores (src/updates/layout.ts), so the data can be upgraded here after an update.
 // Parts of big documents (src/platform/bigDoc.ts) are downloaded too and joined on read.
 const COLLECTIONS = [...Object.values(COLLECTION_KINDS).map((p) => p.join("/")), `${PARTS_DOC}/${PARTS_COL}`];
-const DOCS = [...(Object.values(DOC_KINDS) as string[]), "release"];
+// "calendar" is the page's latest read of the coming days; it isn't part of backups, so it isn't a DOC_KIND.
+const DOCS = [...(Object.values(DOC_KINDS) as string[]), "release", "calendar"];
 const BATCH_BYTES = 800_000;
 
 type Night = { now: number; today: string; nowLocal: string; timeZone: string; seed: number };
@@ -347,6 +348,8 @@ async function main(): Promise<void> {
     draft: doc(all, "onboarding"),
     semester: doc(all, "semester"),
     calendar: doc(all, "calendar"),
+    url,
+    notes: doc<{ memory?: { text?: string } }>(all, "orchestrator")?.memory?.text ?? "",
     records: collection<NightInput["records"][number]>(all, "quests/records").map((x) => x.data),
     mastery,
     outbox: collection<OutboxDoc>(all, "routine/outbox").map((x) => x.data),

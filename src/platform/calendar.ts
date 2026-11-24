@@ -58,11 +58,11 @@ const localTime = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 /** "2026-11-20T00:00:00": local wall time without offset, as the connector expects. */
 const wall = (day: Day, time = "00:00:00") => `${day}T${time}`;
 
-/** Turns the connector's events into local, plain records. Cancelled events are dropped. */
+/** Turns the connector's events into local, plain records. Cancelled events and StudyDesk's own study entries (not commitments) are dropped. */
 export function toEvents(raw: RawEvent[]): CalendarEvent[] {
   const out: CalendarEvent[] = [];
   for (const e of raw) {
-    if (e.status === "cancelled") continue;
+    if (e.status === "cancelled" || e.description?.startsWith(ENTRY_MARK)) continue;
     const title = (e.summary ?? "").trim() || "(no title)";
     if (e.start?.dateTime && e.end?.dateTime) {
       const s = new Date(e.start.dateTime);
@@ -249,19 +249,21 @@ export function busyMinutesFromEvents(events: CalendarEvent[], day: Day): number
  * reach the calendar (scheduled tasks have no connectors), so it sizes
  * tomorrow's quest from this, the latest read, instead of a setup-time copy.
  */
-export type CalendarAhead = { readAt: number; from: Day; days: number; busy: Record<Day, number> };
+export type CalendarAhead = { readAt: number; from: Day; days: number; busy: Record<Day, number>; events?: Record<Day, string[]> };
 export const CALENDAR_AHEAD_DAYS = 14;
 /** Read again when the last read is older than this. */
 export const CALENDAR_REFRESH_MS = 3 * 60 * 60 * 1000;
 
-/** Pure: busy minutes for each of `days` days from `from`. */
+/** Pure: busy minutes and timed events ("09:00-10:30 Analysis") for each of `days` days from `from`. */
 export function aheadFromEvents(events: CalendarEvent[], from: Day, days: number, readAt: number): CalendarAhead {
   const busy: Record<Day, number> = {};
+  const timed: Record<Day, string[]> = {};
   for (let i = 0; i < days; i++) {
     const d = addDays(from, i);
     busy[d] = busyMinutesFromEvents(events, d);
+    timed[d] = events.filter((e) => e.date === d && e.start).map((e) => `${e.start}-${e.end} ${e.title}`);
   }
-  return { readAt, from, days, busy };
+  return { readAt, from, days, busy, events: timed };
 }
 
 /** Pure: the calendar's busy minutes on `day`, or undefined when the last read doesn't cover it. */
@@ -276,6 +278,44 @@ export function aheadIsStale(ahead: CalendarAhead | null | undefined, today: Day
 /** Reads the coming days again. Rejects with a CalendarError. */
 export async function readCalendarAhead(today: Day, now = Date.now()): Promise<CalendarAhead> {
   return aheadFromEvents(await readCalendar(today, CALENDAR_AHEAD_DAYS), today, CALENDAR_AHEAD_DAYS, now);
+}
+
+// ---------- writing StudyDesk's own study entries ----------
+
+/** Every entry StudyDesk writes starts its description with this, so it's never mistaken for a commitment. */
+export const ENTRY_MARK = "[StudyDesk]";
+
+/** One study entry, in local wall time of `timeZone`. */
+export type StudyEntry = { day: Day; start: string; end: string; title: string; description: string; timeZone: string };
+
+/** Creates one entry on the primary calendar; returns its id. Rejects with the connector's error. */
+export async function createEntry(e: StudyEntry): Promise<string> {
+  const m = await mcp();
+  if (!m) throw { code: "unavailable", message: "The calendar can't be reached from this view." } satisfies CalendarError;
+  const res = await m.callTool(CALENDAR_SERVER, "create_event", {
+    summary: e.title,
+    description: e.description,
+    startTime: wall(e.day, `${e.start}:00`),
+    endTime: wall(e.day, `${e.end}:00`),
+    timeZone: e.timeZone,
+    overrideReminders: [{ method: "popup", minutes: 10 }],
+    notificationLevel: "NONE",
+  });
+  const p = (res.payload ?? {}) as { id?: string; event?: { id?: string } };
+  return p.id ?? p.event?.id ?? "";
+}
+
+/** Deletes entries by id; one that's already gone doesn't count as a failure. */
+export async function deleteEntries(ids: string[]): Promise<void> {
+  const m = await mcp();
+  if (!m) throw { code: "unavailable", message: "The calendar can't be reached from this view." } satisfies CalendarError;
+  for (const eventId of ids) {
+    try {
+      await m.callTool(CALENDAR_SERVER, "delete_event", { eventId, notificationLevel: "NONE" });
+    } catch (e) {
+      if (!/not.?found|404|410|deleted|gone/i.test(String((e as { message?: string })?.message ?? e))) throw e;
+    }
+  }
 }
 
 const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));

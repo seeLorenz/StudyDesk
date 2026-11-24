@@ -5,6 +5,8 @@
 //   data/users/<uid>/quests/reviews/<id>   the mistake-review chat for that quest
 //   data/users/<uid>/quests/images/<id>    one answer photo
 //   data/users/<uid>/calendar              the latest read of the coming days' calendar
+//   data/users/<uid>/calendarWant          tomorrow's study times, as the nightly run planned them
+//   data/users/<uid>/calendarWritten       the study entries already in the calendar (src/quests/times.ts)
 // Elsewhere it falls back to this browser's localStorage.
 
 import { host } from "./host";
@@ -12,6 +14,7 @@ import { PARTS_COL, PARTS_DOC, readBig, writeBig, type Written } from "./bigDoc"
 import type { Chat } from "../chat/types";
 import type { CalendarAhead } from "./calendar";
 import type { QuestRecord, Semester } from "../quests/types";
+import type { CalendarWant, CalendarWritten } from "../quests/times";
 
 export interface QuestStore {
   mode: "cloud" | "local";
@@ -28,6 +31,10 @@ export interface QuestStore {
   /** The latest read of the student's calendar for the coming days. */
   loadCalendar(): Promise<CalendarAhead | null>;
   saveCalendar(c: CalendarAhead): Promise<void>;
+  /** The planned study entries and those already written (cloud only: the nightly run plans them). */
+  loadEntries(): Promise<{ want: CalendarWant | null; written: CalendarWritten | null }>;
+  saveWritten(w: CalendarWritten): Promise<void>;
+  saveWant(w: CalendarWant): Promise<void>;
 }
 
 const plain = <T>(x: T) => JSON.parse(JSON.stringify(x)) as Record<string, unknown>;
@@ -95,6 +102,16 @@ function cloudQuestStore(db: DB, uid: string): QuestStore {
     },
     async saveCalendar(c) {
       await calendar.set(plain(c));
+    },
+    async loadEntries() {
+      const [w, d] = await Promise.all([db.doc(`data/users/${uid}/calendarWant`).get(), db.doc(`data/users/${uid}/calendarWritten`).get()]);
+      return { want: w.exists ? (w.data() as unknown as CalendarWant) : null, written: d.exists ? (d.data() as unknown as CalendarWritten) : null };
+    },
+    async saveWritten(w) {
+      await db.doc(`data/users/${uid}/calendarWritten`).set(plain(w));
+    },
+    async saveWant(w) {
+      await db.doc(`data/users/${uid}/calendarWant`).set(plain(w));
     },
     async loadRecords() {
       return (await records.get()).docs.filter((d) => d.exists).map((d) => d.data() as unknown as QuestRecord);
@@ -184,6 +201,11 @@ function localQuestStore(): QuestStore {
     async saveCalendar(c) {
       write({ ...read(), calendar: c });
     },
+    async loadEntries() {
+      return { want: null, written: null };
+    },
+    async saveWritten() {},
+    async saveWant() {},
     async loadReviewChats() {
       return read().reviews ?? {};
     },

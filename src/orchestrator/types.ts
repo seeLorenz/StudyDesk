@@ -100,7 +100,7 @@ export type Job = JobRequest & {
   result: string[];
 };
 
-export type NotificationKind = "needs_answer" | "job_done" | "too_slow" | "off_track" | "doing_great" | "check_date" | "day_note" | "passed_on" | "night";
+export type NotificationKind = "needs_answer" | "job_done" | "too_slow" | "off_track" | "doing_great" | "check_date" | "day_note" | "passed_on" | "night" | "calendar_task";
 
 export type Notification = {
   /** Dedupe key: the same key is never sent twice ("date:c1:2027-01-28"). */

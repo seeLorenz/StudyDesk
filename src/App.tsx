@@ -8,6 +8,8 @@ import { QuestPage, type QuestCommand } from "./quests/QuestPage";
 import { OnboardingPage } from "./onboarding/OnboardingPage";
 import { openQuestStore } from "./platform/questStore";
 import { aheadIsStale, readCalendarAhead } from "./platform/calendar";
+import { QUEST_CHANGED } from "./quests/times";
+import { syncStudyEntries } from "./platform/studyEntries";
 import { OrchestratorPanel, type OrchStatus } from "./orchestrator/OrchestratorPanel";
 import { subscribe } from "./platform/deskBus";
 import type { Semester } from "./quests/types";
@@ -180,11 +182,33 @@ export function App() {
         /* calendar not reachable right now: the last read stays */
       }
     };
-    void refresh();
-    const timer = setInterval(refresh, 30 * 60 * 1000);
+    // Study entries follow today's quest: a quest written or finished here moves them within a minute.
+    let syncing = false;
+    const sync = async () => {
+      if (syncing || stopped) return;
+      syncing = true;
+      try {
+        const qs = await openQuestStore();
+        if (qs.mode === "cloud") await syncStudyEntries(qs, toDay());
+      } catch {
+        /* not allowed or not reachable right now: tried again later */
+      } finally {
+        syncing = false;
+      }
+    };
+    let soon: ReturnType<typeof setTimeout> | undefined;
+    const onQuest = () => {
+      clearTimeout(soon);
+      soon = setTimeout(sync, 45_000);
+    };
+    window.addEventListener(QUEST_CHANGED, onQuest);
+    void refresh().then(sync);
+    const timer = setInterval(() => void refresh().then(sync), 30 * 60 * 1000);
     return () => {
       stopped = true;
       clearInterval(timer);
+      clearTimeout(soon);
+      window.removeEventListener(QUEST_CHANGED, onQuest);
     };
   }, [calendarLive]);
 
