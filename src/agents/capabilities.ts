@@ -10,6 +10,7 @@ const NAMES: Record<Chat, string> = { panel: "the StudyDesk chat (Ctrl J, and on
 export const CAPABILITIES: Array<{ what: string; in: Partial<Record<Chat, string>> }> = [
   { what: "change dates, homework, target grades, the study goal, days off, the weekly timetable, quest settings, a course's language, the profile, results and the student's facts", in: { panel: "change" } },
   { what: "change the nightly run (time, pause, parts) and when a course is read again completely", in: { panel: "change" } },
+  { what: "turn Anki decks on or off: by-heart material (vocabulary, terms, fixed facts) becomes Anki cards; the student exports each quest's deck with its \"Export deck\" button and imports it into Anki (no live sync)", in: { panel: "change" } },
   { what: "start the nightly run now", in: { panel: "run_nightly_now" } },
   { what: "start a job that reads new material or a course again", in: { panel: "start_job" } },
   { what: "look up skills, quests, attempts, files and the change log", in: { panel: "look_up" } },
