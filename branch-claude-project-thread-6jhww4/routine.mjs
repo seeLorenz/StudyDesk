@@ -1044,6 +1044,21 @@ function setupTodo(draft, today = toDay()) {
       done: done.has("upload")
     });
   }
+  const unsure = draft.uploads.filter((u) => u.courseUnsure && u.courseId);
+  if (unsure.length) {
+    const list = unsure.map((u) => `- ${u.fileName} → ${draft.courses.find((c) => c.id === u.courseId)?.name ?? "?"} (${u.courseUnsure})`).join("\n");
+    items.push({
+      key: "unsure",
+      title: `${unsure.length} ${unsure.length === 1 ? "file" : "files"} StudyDesk isn't sure about`,
+      body: `Say whether each belongs to the course it was put in:
+
+${list}`,
+      chatPrompt: `Next on your list: files I wasn't sure about. Does each belong to the course I put it in?
+
+${list}`,
+      done: done.has("unsure")
+    });
+  }
   let left = ASKS_PER_DAY - Object.entries(draft.todoDoneOn ?? {}).filter(([k, d]) => k !== "anki" && d === today && done.has(k)).length;
   const groups = /* @__PURE__ */ new Map();
   for (const x of asksOf(draft, today)) if (done.has(x.key) || done.has(x.sub) || left-- > 0) groups.set(x.key, [...groups.get(x.key) ?? [], x.text]);
@@ -1072,6 +1087,10 @@ ${open.map((q, i) => `${i + 1}. ${q}`).join("\n")}`
     );
   }
   return items;
+}
+function filesOf(ref, uploads) {
+  if (ref.startsWith("zip_")) return uploads.filter((u) => u.zipId === ref).map((u) => u.id);
+  return uploads.some((u) => u.id === ref) ? [ref] : [];
 }
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const CONFIRM_FIRST = /* @__PURE__ */ new Set(["drop_course"]);
@@ -1444,6 +1463,20 @@ function applyOps(desk0, ops, o) {
         if (desk.draft.calendarLive !== false === v) break;
         touch("calendarLive", v);
         lines.push(v ? "Calendar: followed live again, each day's quest is sized from it" : "Calendar: no longer followed day by day, quests go by the weekly timetable");
+        break;
+      }
+      case "set_file_course": {
+        const c = course(op);
+        const ref = str(op.file);
+        const ids = new Set(filesOf(ref, desk.draft.uploads));
+        if (!c) break;
+        if (!ids.size) {
+          errors.push(`set_file_course: no file or zip "${ref}" (look_up files).`);
+          break;
+        }
+        touch("uploads", desk.draft.uploads.map((u) => ids.has(u.id) ? { ...u, courseId: c.id, courseUnsure: void 0 } : u));
+        if (ref.startsWith("zip_")) touch("zips", (desk.draft.zips ?? []).map((z) => z.id === ref ? { ...z, courseId: c.id } : z));
+        lines.push(`${ids.size === 1 ? desk.draft.uploads.find((u) => ids.has(u.id)).fileName : `${ids.size} files`} → ${c.name}`);
         break;
       }
       case "tick_todo": {
