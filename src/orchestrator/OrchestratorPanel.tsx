@@ -18,7 +18,8 @@ import { AnnotatedMarkdown } from "../notes/AnnotatedMarkdown";
 import { useSideNotes } from "../notes/useSideNotes";
 import { calendarForClaude, readCalendar, type CalendarError } from "../platform/calendar";
 import { askClaude, canUseTools, claudeAvailable, errorCopy, maxImages, type AskError } from "../platform/claude";
-import { publish, subscribe } from "../platform/deskBus";
+import { publish, subscribe, type Topics } from "../platform/deskBus";
+import { TodoList } from "../onboarding/TodoList";
 import { checkHandoff, type HandoffSetup } from "../platform/handoff";
 import { openRoutineStore } from "../platform/routineStore";
 import { createSchedule, runScheduleNow, scheduleFits, studentTimeZone } from "../platform/schedule";
@@ -80,6 +81,10 @@ type Props = {
   onStatus: (s: OrchStatus) => void;
   /** On the Organize page the chat sits in this element as a full page instead of a side panel. */
   dock?: HTMLElement | null;
+  /** On the Organize page the to-do list sits in this element, beside the chat. */
+  todoDock?: HTMLElement | null;
+  /** A to-do item was started: its questions are now in the chat. */
+  onStartTodo?: () => void;
   onOpenAsk: (question: string) => void;
   onOpenSetup: () => void;
 };
@@ -100,7 +105,7 @@ function message(e: unknown): string {
 const dayOf = (ts: number) => toDay(new Date(ts));
 
 export function OrchestratorPanel(props: Props) {
-  const { expanded, onClose, onToggleExpand, screen, quote, onClearQuote, onStatus, onOpenAsk, onOpenSetup, dock } = props;
+  const { expanded, onClose, onToggleExpand, screen, quote, onClearQuote, onStatus, onOpenAsk, onOpenSetup, dock, todoDock, onStartTodo } = props;
   const open = props.open || !!dock;
   const [env, setEnv] = useState<Env | null>(null);
   const [draft, setDraft] = useState<SemesterDraft | null>(null);
@@ -155,6 +160,7 @@ export function OrchestratorPanel(props: Props) {
   const summarizing = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  const todoRef = useRef<HTMLDivElement>(null);
 
   // ---------- loading ----------
   const loadData = useCallback(async (e: Env) => {
@@ -455,10 +461,10 @@ export function OrchestratorPanel(props: Props) {
   }, [env, saveState, today]);
 
   // ---------- one answer ----------
-  const send = async (text: string, files: PendingAttachment[], opts: { fromTutor?: boolean } = {}) => {
+  const send = async (text: string, files: PendingAttachment[], opts: { fromTutor?: boolean; quote?: string } = {}) => {
     if (!env || !ready || busy) return;
     setError(null);
-    const userMsg: OrchMessage = { id: uid(), role: "user", text, createdAt: Date.now(), files: files.map((f) => f.name), screen, quote: quote ?? undefined, fromTutor: opts.fromTutor };
+    const userMsg: OrchMessage = { id: uid(), role: "user", text, createdAt: Date.now(), files: files.map((f) => f.name), screen, quote: opts.quote ?? quote ?? undefined, fromTutor: opts.fromTutor };
     saveMessages((ms) => [...ms, userMsg]);
     onClearQuote();
     const kept: KeptDrop = files.length ? await keepFiles(files) : { uploads: [], zips: [], previews: [], images: [], failed: [], report: null };
@@ -842,7 +848,7 @@ export function OrchestratorPanel(props: Props) {
   // A remark passed on from elsewhere (the tutor, or "Ask StudyDesk" on a selection) arrives as an event.
   const sendRef = useRef(send);
   sendRef.current = send;
-  const passQueue = useRef<PassOn[]>([]);
+  const passQueue = useRef<Array<PassOn | Topics["ask"]>>([]);
   const [queued, setQueued] = useState(0);
   useEffect(() => {
     const onPass = (e: Event) => {
@@ -852,13 +858,32 @@ export function OrchestratorPanel(props: Props) {
       setQueued((n) => n + 1);
     };
     window.addEventListener(PASS_ON_EVENT, onPass);
-    return () => window.removeEventListener(PASS_ON_EVENT, onPass);
+    // A message written to StudyDesk on another screen waits in the same line.
+    const stopAsk = subscribe("ask", "orch", (a) => {
+      passQueue.current.push(a);
+      setQueued((n) => n + 1);
+    });
+    return () => {
+      window.removeEventListener(PASS_ON_EVENT, onPass);
+      stopAsk();
+    };
   }, []);
+  // One-tap changes from other screens ("Belongs here" on the Courses page).
+  useEffect(
+    () =>
+      subscribe("op", "orch", (o) =>
+        void applyChange(o.ops, o.words, true)
+          .then((r) => r.errors.length && setError(r.errors.join(" ")))
+          .catch((e) => setError(message(e))),
+      ),
+    [applyChange],
+  );
   // Remarks are handled one at a time, once the chat is free; each shows on the badge.
   useEffect(() => {
     if (!ready || busy || !passQueue.current.length) return;
     const p = passQueue.current.shift()!;
     setQueued((n) => n - 1);
+    if (!("where" in p)) return void sendRef.current(p.text, p.files, { quote: p.quote });
     saveState((s) => ({ ...s, notifications: [...s.notifications, { key: `pass:${uid()}`, kind: "passed_on", day: today, at: Date.now(), courseId: null, facts: p.text, messageId: null, seenAt: open ? Date.now() : null }] }));
     void sendRef.current(`${p.text}\n\n(said in ${p.where})`, [], { fromTutor: true });
   }, [ready, busy, queued, saveState, today, open]);
@@ -871,7 +896,15 @@ export function OrchestratorPanel(props: Props) {
 
   // ---------- select-to-reply on the chat ----------
   const blocks = useMemo(() => new Map(messages.filter((m) => m.role === "assistant").map((m) => [m.id, m.text])), [messages]);
-  const turnsFor = useCallback((note: Note) => passageNoteTurns(NOTE_RULES, `<context>\nThe passage is in a message of the StudyDesk chat:\n"""\n${blocks.get(note.messageId) ?? ""}\n"""\n</context>`, note), [blocks]);
+  // To-do texts register as they render (they only exist on screen).
+  const todoBlocks = useRef(new Map<string, string>());
+  const turnsFor = useCallback(
+    (note: Note) => {
+      const todo = todoBlocks.current.get(note.messageId);
+      return passageNoteTurns(NOTE_RULES, `<context>\nThe passage is in ${todo ? "an item of the to-do list" : "a message of the StudyDesk chat"}:\n"""\n${todo ?? blocks.get(note.messageId) ?? ""}\n"""\n</context>`, note);
+    },
+    [blocks],
+  );
   const setNotes = useCallback((fn: (n: Note[]) => Note[]) => saveState((s) => ({ ...s, notes: fn(s.notes ?? []) })), [saveState]);
   const notes = useSideNotes({ notes: state.notes ?? [], setNotes, turnsFor });
   const md = (id: string, text: string) => <AnnotatedMarkdown blockId={id} text={text} notes={notes.byBlock.get(id) ?? []} {...notes.handlers} />;
@@ -1012,7 +1045,35 @@ export function OrchestratorPanel(props: Props) {
       <SelectionReply scope={scroller} disabled={false} onAsk={notes.ask} />
     </aside>
   );
-  return dock ? createPortal(panel, dock) : panel;
+  // On Organize, the to-do list sits beside the chat.
+  const todoPane = todoDock && (
+    <div className="todo-pane" ref={todoRef} data-select-scope="">
+      <p className="quest-kicker">What StudyDesk needs</p>
+      <h2 className="desk-title">To do</h2>
+      {ready && draft ? (
+        <TodoList
+          draft={draft}
+          update={(fn) => void commitDesk({ draft: fn(draftRef.current!), profile: profileRef.current! }).catch((e) => setError(message(e)))}
+          md={(id, text) => (todoBlocks.current.set(id, text), md(id, text))}
+          onStart={(t) => {
+            saveMessages((ms) => [...ms, { id: uid(), role: "assistant", text: t.chatPrompt, createdAt: Date.now() }]);
+            onStartTodo?.();
+            setTimeout(() => (document.querySelector(".orch.is-docked textarea") as HTMLTextAreaElement | null)?.focus(), 80);
+          }}
+        />
+      ) : (
+        <p className="quest-muted">Your to-do list starts once your semester is set up.</p>
+      )}
+      <SelectionReply scope={todoRef} disabled={false} onAsk={notes.ask} />
+    </div>
+  );
+  if (!dock) return panel;
+  return (
+    <>
+      {createPortal(panel, dock)}
+      {todoPane && createPortal(todoPane, todoDock!)}
+    </>
+  );
 }
 
 // ---------- cards ----------

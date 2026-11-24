@@ -71,6 +71,8 @@ export type CloudJob = {
 export type Upload = {
   id: string;
   courseId: string | null;
+  /** Why Claude isn't sure this file belongs to its course; cleared once the student confirms or moves it. */
+  courseUnsure?: string;
   fileName: string;
   /** "office" files are kept as their text; "video" and "other" are listed by name only. */
   type: "pdf" | "image" | "text" | "office" | "video" | "other";

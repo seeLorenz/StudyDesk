@@ -22,7 +22,8 @@ export type UpcomingItem = {
 
 export const UPCOMING_DAYS = 42;
 
-export function upcoming(semester: Pick<Semester, "courses" | "assignments" | "keyDates">, today: Day, days = UPCOMING_DAYS): UpcomingItem[] {
+/** Items from `from` (default today) to `days` ahead; earlier ones get a negative `inDays`. */
+export function upcoming(semester: Pick<Semester, "courses" | "assignments" | "keyDates">, today: Day, days = UPCOMING_DAYS, from: Day = today): UpcomingItem[] {
   const last = addDays(today, days);
   const name = (id: string) => semester.courses.find((c) => c.id === id)?.name ?? id;
   const short = (id: string) => semester.courses.find((c) => c.id === id)?.short || name(id);
@@ -35,7 +36,7 @@ export function upcoming(semester: Pick<Semester, "courses" | "assignments" | "k
     items.push({ id: `k:${k.courseId}:${k.date}:${k.title}`, kind: k.kind, courseId: k.courseId, courseName: name(k.courseId), courseShort: short(k.courseId), title: k.title, date: k.date, time: null, inDays: 0 });
   }
   return items
-    .filter((i) => i.date >= today && i.date <= last)
+    .filter((i) => i.date >= from && i.date <= last)
     .map((i) => ({ ...i, inDays: daysBetween(today, i.date) }))
     .sort((a, b) => (a.date === b.date ? (a.time ?? "99").localeCompare(b.time ?? "99") : a.date < b.date ? -1 : 1));
 }

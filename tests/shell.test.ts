@@ -24,6 +24,10 @@ describe("coming up", () => {
     expect(list[0]).toMatchObject({ kind: "homework", courseName: "Calculus 1", date: "2026-11-21", time: "11:00", inDays: 1 });
     expect(list[2]).toMatchObject({ kind: "exam", inDays: 28 });
   });
+  it("can start earlier, with past items counted back", () => {
+    const list = upcoming(sem, "2026-11-20", 42, "2026-11-01");
+    expect(list[0]).toMatchObject({ title: "Sheet 3", inDays: -6 });
+  });
   it("words the countdown", () => {
     expect([0, 1, 5].map(countdown)).toEqual(["today", "tomorrow", "in 5 days"]);
   });

@@ -119,7 +119,7 @@ const SHEET_SCHEMA = {
     },
     removeSlots: { type: "array", description: "Slot numbers (#n) from weeklySlots.", items: { type: "number" } },
     facts: { type: "array", items: { type: "object", properties: { course: { type: "string", description: "Course id or name; omit for general facts." }, text: { type: "string" } }, required: ["text"] } },
-    files: { type: "array", description: "Assign files to courses: uploadId is a file's id, or a zip's id (zip_…) for all files of that zip.", items: { type: "object", properties: { uploadId: { type: "string" }, course: { type: "string" }, note: { type: "string" } }, required: ["uploadId", "course"] } },
+    files: { type: "array", description: "Assign files to courses: uploadId is a file's id, or a zip's id (zip_…) for all files of that zip.", items: { type: "object", properties: { uploadId: { type: "string" }, course: { type: "string" }, note: { type: "string" }, unsure: { type: "string", description: "Only when you aren't sure the file belongs to this course: why, in a few words. The student is asked." } }, required: ["uploadId", "course"] } },
     studyGoalMinutes: { type: "object", description: "Minutes per weekday, lectures included, e.g. {Mon: 180, Sun: 0}. Only days that change.", properties: Object.fromEntries(DAY.map((d) => [d, { type: "number" }])) },
     todoDone: { type: "array", description: "After setup: keys of to-do items or of their parts that are now done (from toDo in the sheet, including parts[].key). Tick them yourself as soon as they're answered; the student doesn't have to.", items: { type: "string" } },
     wish: { type: "string", description: "Something the student asked for that StudyDesk can't do yet, in their words. Saved for the developer." },
@@ -253,7 +253,7 @@ export function applySheetUpdate(d: SemesterDraft, p: Profile, input: Record<str
       continue;
     }
     const isZip = ref.startsWith("zip_");
-    draft.uploads = draft.uploads.map((x) => (ids.has(x.id) ? { ...x, courseId: c.id, studentNote: (!isZip && str(f.note)) || x.studentNote } : x));
+    draft.uploads = draft.uploads.map((x) => (ids.has(x.id) ? { ...x, courseId: c.id, courseUnsure: str(f.unsure) || undefined, studentNote: (!isZip && str(f.note)) || x.studentNote } : x));
     if (isZip) draft.zips = (draft.zips ?? []).map((z) => (z.id === ref ? { ...z, courseId: c.id } : z));
     draft.courses = draft.courses.map((x) => (x.id === c.id && x.setupStatus !== "waiting" ? { ...x, setupStatus: "waiting" } : x));
   }
