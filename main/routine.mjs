@@ -2488,19 +2488,27 @@ function parseTimes(reply) {
   out.sort((a, b) => hm(a.start) - hm(b.start));
   return out.filter((t, i) => i === 0 || hm(t.start) >= hm(out[i - 1].end)).slice(0, 3);
 }
+function busyLines(events, timetable, weekday) {
+  const slots = timetable.filter((t) => t.weekday === weekday).map((t) => `${t.start}-${t.end} ${t.title}`);
+  return [...events, ...slots.filter((l) => !events.some((e) => e.slice(0, 11) === l.slice(0, 11)))].sort();
+}
 async function pickTimes(ask, o) {
-  return parseTimes(await ask(timesTurns(o), { tier: "default" }));
+  const busy = o.events.map((l) => /^(\d\d:\d\d)-(\d\d:\d\d)/.exec(l)).filter((m) => !!m).map((m) => [hm(m[1]), hm(m[2])]);
+  return parseTimes(await ask(timesTurns(o), { tier: "default" })).filter(
+    (t) => (!o.after || t.start >= o.after) && !busy.some(([s, e]) => hm(t.start) < e && hm(t.end) > s)
+  );
 }
 function studyEntries(o) {
   return o.times.map((t) => ({
     day: o.day,
     ...t,
     title: `Study · ${o.courseName}`,
-    description: `${ENTRY_MARK} ${o.reason}${o.url ? `
+    description: `${ENTRY_MARK} ${short(o.reason)}${o.url ? `
 Open StudyDesk: ${o.url}` : ""}`,
     timeZone: o.timeZone
   }));
 }
+const short = (t) => (/^.{1,200}?[.!?](\s|$)/.exec(t)?.[0] ?? t.slice(0, 200)).trim();
 const sig = (e) => `${e.day} ${e.start}-${e.end} ${e.title}`;
 function calendarWant(day, questId, entries) {
   const sigs = entries.map(sig);
@@ -2944,7 +2952,7 @@ async function studyTimes(input, semester, quest, d, log) {
       quest,
       courseName,
       weekday: weekdayName(quest.date),
-      events: input.calendar?.events?.[quest.date] ?? [],
+      events: busyLines(input.calendar?.events?.[quest.date] ?? [], semester.timetable, weekdayOf(quest.date)),
       notes: input.notes ?? ""
     });
     if (!times.length) {
