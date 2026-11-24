@@ -41,7 +41,6 @@ export function InputBox({
   const [files, setFiles] = useState<PendingAttachment[]>([]);
   const [over, setOver] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
-  const pickRef = useRef<HTMLInputElement>(null);
   const maxH = compact ? 140 : 240;
 
   const addFiles = (list: File[]) => {
@@ -122,23 +121,22 @@ export function InputBox({
         </div>
       )}
       <div className="inputbox-row">
-        <button type="button" className="icon-btn" onClick={() => pickRef.current?.click()} aria-label="Attach files" title={keepAll ? "Attach files or course zips" : "Attach images, PDFs, Office or text files"}>
+        <label className="icon-btn" aria-label="Attach files" title={keepAll ? "Attach files or course zips" : "Attach images, PDFs, Office or text files"}>
           <svg viewBox="0 0 20 20" aria-hidden="true">
             <path d="M14.5 9.5l-5.3 5.3a3.2 3.2 0 01-4.5-4.5l6-6a2.1 2.1 0 013 3l-6 6a1 1 0 01-1.5-1.5l5.3-5.3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-        </button>
-        <input
-          ref={pickRef}
-          id={`${id}-files`}
-          type="file"
-          multiple
-          hidden
-          accept={keepAll ? undefined : "image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,.heic,.heif,application/pdf,text/*,.md,.csv,.json,.tex,.py,.js,.ts,.java,.c,.cpp,.docx,.pptx,.xlsx,.odt,.odp,.ods"}
-          onChange={(e) => {
-            addFiles(Array.from(e.target.files ?? []));
-            e.target.value = "";
-          }}
-        />
+          <input
+            id={`${id}-files`}
+            className="file-pick"
+            type="file"
+            multiple
+            accept={keepAll ? undefined : "image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,.heic,.heif,application/pdf,text/*,.md,.csv,.json,.tex,.py,.js,.ts,.java,.c,.cpp,.docx,.pptx,.xlsx,.odt,.odp,.ods"}
+            onChange={(e) => {
+              addFiles(Array.from(e.target.files ?? []));
+              e.target.value = "";
+            }}
+          />
+        </label>
         <textarea
           id={id}
           ref={taRef}

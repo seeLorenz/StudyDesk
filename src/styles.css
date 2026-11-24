@@ -741,6 +741,20 @@ sup.sd-ref {
 .icon-btn:hover {
   background: var(--sunken);
 }
+/* The file picker sits inside its label, so a tap opens it natively: in-app browsers (the Claude app) ignore a picker opened from code. */
+.file-pick {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+label:has(> .file-pick) {
+  cursor: pointer;
+}
+label:has(> .file-pick:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .icon-btn svg {
   width: 20px;
   height: 20px;
