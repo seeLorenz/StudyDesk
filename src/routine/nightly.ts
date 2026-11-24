@@ -21,10 +21,10 @@ import { syncSemester, type Desk } from "../orchestrator/changes";
 import type { Turn } from "../platform/claude";
 import { emptyProgress, handIn, ungraded } from "../quests/handin";
 import { addAnki, deckSizes } from "../quests/anki";
-import { carriedOver, doneTasks, planQuest, recentBlockers, recentFeel } from "../quests/plan";
+import { carriedOver, doneTasks, planQuest, recentBlockers, recentFeel, weekdayOf } from "../quests/plan";
 import type { QuestRecord, Semester } from "../quests/types";
 import { claudeWriter, writeQuest } from "../quests/write";
-import { calendarWant, pickTimes, studyEntries } from "../quests/times";
+import { busyLines, calendarWant, pickTimes, studyEntries } from "../quests/times";
 import { applyShallow, applySweep, gradingFields, mergeGrading, outboxId, outboxOrder, type GradingOutbox, type OutboxDoc, type ShallowOutbox, type SweepOutbox } from "./apply";
 import { isPending, type DeferredAsk } from "./deferred";
 import { nextOrgState, parseShallow, shallowTurns, sweepsDue, type OrgState, type ShallowResult } from "./org";
@@ -355,7 +355,7 @@ async function studyTimes(input: NightInput, semester: Semester, quest: QuestRec
       quest,
       courseName,
       weekday: weekdayName(quest.date),
-      events: input.calendar?.events?.[quest.date] ?? [],
+      events: busyLines(input.calendar?.events?.[quest.date] ?? [], semester.timetable, weekdayOf(quest.date)),
       notes: input.notes ?? "",
     });
     if (!times.length) {

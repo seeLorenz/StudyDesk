@@ -254,6 +254,9 @@ export const CALENDAR_AHEAD_DAYS = 14;
 /** Read again when the last read is older than this. */
 export const CALENDAR_REFRESH_MS = 3 * 60 * 60 * 1000;
 
+/** Pure: one day's timed events as "09:00-10:30 Analysis". */
+export const dayLines = (events: CalendarEvent[], day: Day): string[] => events.filter((e) => e.date === day && e.start).map((e) => `${e.start}-${e.end} ${e.title}`);
+
 /** Pure: busy minutes and timed events ("09:00-10:30 Analysis") for each of `days` days from `from`. */
 export function aheadFromEvents(events: CalendarEvent[], from: Day, days: number, readAt: number): CalendarAhead {
   const busy: Record<Day, number> = {};
@@ -261,7 +264,7 @@ export function aheadFromEvents(events: CalendarEvent[], from: Day, days: number
   for (let i = 0; i < days; i++) {
     const d = addDays(from, i);
     busy[d] = busyMinutesFromEvents(events, d);
-    timed[d] = events.filter((e) => e.date === d && e.start).map((e) => `${e.start}-${e.end} ${e.title}`);
+    timed[d] = dayLines(events, d);
   }
   return { readAt, from, days, busy, events: timed };
 }
@@ -272,7 +275,8 @@ export function busyFromAhead(ahead: CalendarAhead | null | undefined, day: Day)
 }
 
 export function aheadIsStale(ahead: CalendarAhead | null | undefined, today: Day, now: number): boolean {
-  return !ahead || ahead.from !== today || now - ahead.readAt > CALENDAR_REFRESH_MS;
+  // A read from before timed events were kept (no `events`) can't place study times: read again.
+  return !ahead || !ahead.events || ahead.from !== today || now - ahead.readAt > CALENDAR_REFRESH_MS;
 }
 
 /** Reads the coming days again. Rejects with a CalendarError. */

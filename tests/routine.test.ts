@@ -21,7 +21,7 @@ const NOW = Date.UTC(2026, 10, 3, 21, 0);
 async function answer(label: string, turns: Turn[]): Promise<string> {
   const last = turns[turns.length - 1].content;
   if (label.startsWith("Grading")) return sampleGradingAsk(turns);
-  if (label.startsWith("Picking tomorrow's study times")) return last.includes("10:00-11:00 Lecture") ? "Best: 13:00-14:00 and 14:15-14:30" : "none";
+  if (label.startsWith("Picking tomorrow's study times")) return last.includes("10:00-11:00 Lecture") && last.includes("13:00-14:30 Calculus 1 exercise class") ? "Best: 13:00-14:00 (clashes) and 15:00-16:00 and 16:15-16:30" : "none";
   if (label.startsWith("Tonight's short check"))
     return `=== CHANGES ===\n[{"op":"set_exam_date","course":"c1","title":"Final exam","date":"2027-02-12","kind":"exam","source":"course page"}]\n=== QUESTIONS ===\nnone\n=== NEXT DEEP SWEEP ===\nc1: 2026-11-20\n=== NOTE ===\nThe final exam moved to 12 Feb.`;
   const keys = [...new Set([...turns[0].content.matchAll(/^===\s*(.+?)\s*===\s*$/gm)].map((m) => m[1]))];
@@ -374,7 +374,8 @@ describe("study times for the calendar", () => {
     if (result.kind !== "done") throw new Error("not done");
     const want = result.writes.find((w) => w.path.join("/") === "calendarWant")?.data as { day: string; entries: { start: string; end: string; timeZone: string; description: string }[]; instructions: string };
     expect(want.day).toBe("2026-11-04");
-    expect(want.entries.map((e) => `${e.start}-${e.end}`)).toEqual(["13:00-14:00", "14:15-14:30"]);
+    // The weekly timetable counts too, and code drops the block Claude put on the exercise class.
+    expect(want.entries.map((e) => `${e.start}-${e.end}`)).toEqual(["15:00-16:00", "16:15-16:30"]);
     expect(want.entries[0].timeZone).toBe("Europe/Vienna");
     expect(want.entries[0].description).toMatch(/^\[StudyDesk\]/);
     expect(want.instructions).toContain("create_event");
