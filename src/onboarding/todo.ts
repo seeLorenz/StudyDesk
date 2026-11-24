@@ -125,6 +125,19 @@ export function setupTodo(draft: SemesterDraft, today: Day = toDay()): TodoItem[
     });
   }
 
+  // Files Claude put in a course without being sure; the Courses page asks about them too.
+  const unsure = draft.uploads.filter((u) => u.courseUnsure && u.courseId);
+  if (unsure.length) {
+    const list = unsure.map((u) => `- ${u.fileName} → ${draft.courses.find((c) => c.id === u.courseId)?.name ?? "?"} (${u.courseUnsure})`).join("\n");
+    items.push({
+      key: "unsure",
+      title: `${unsure.length} ${unsure.length === 1 ? "file" : "files"} StudyDesk isn't sure about`,
+      body: `Say whether each belongs to the course it was put in:\n\n${list}`,
+      chatPrompt: `Next on your list: files I wasn't sure about. Does each belong to the course I put it in?\n\n${list}`,
+      done: done.has("unsure"),
+    });
+  }
+
   // Disagreements and questions, a few a day, nearest exam first. Exam dates
   // aren't listed: the Orchestrator checks each one in the two weeks before it.
   let left = ASKS_PER_DAY - Object.entries(draft.todoDoneOn ?? {}).filter(([k, d]) => k !== "anki" && d === today && done.has(k)).length;

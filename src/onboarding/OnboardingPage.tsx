@@ -31,7 +31,7 @@ import { QuestIncomplete, writeQuest, type WriteStatus } from "../quests/write";
 import { SHEET_TOOL_DESCRIPTION, SHEET_TOOL_SCHEMA, applySheetUpdate, chatTurns, greeting, localReply, setupReady, sheetSnapshot } from "./agent";
 import { placementWriter, planPlacement } from "./placement";
 import { gradeSteps } from "./scales";
-import { setupTodo, staleCourses, type TodoItem } from "./todo";
+import { setupTodo, staleCourses } from "./todo";
 import { buildSemester, SCAN_WRITE_BACK, localSetup, parseSetup, runCourseSetup, setupTurns, type FileForSetup, type SetupInput, liveProgress, type LiveProgress } from "./setup";
 import { buildBackup, freshStart, saveBackup } from "../platform/backup";
 import { RestoreBackup } from "../updates/RestoreBackup";
@@ -159,8 +159,6 @@ export function OnboardingPage({ onDone, onOpenChat, askNewSemester = 0 }: { onD
   const dirtyDraft = useRef(false);
   // Narrow screens show the chat or the sheet, never one under the other, so the chat box is always at hand.
   const [narrowView, setNarrowView] = useState<"chat" | "sheet">("chat");
-  // After setup, the side panel opens on the to-do list; the sheet is one tab away.
-  const [side, setSide] = useState<"todo" | "sheet">("todo");
 
   useEffect(() => {
     (async () => {
@@ -415,9 +413,6 @@ export function OnboardingPage({ onDone, onOpenChat, askNewSemester = 0 }: { onD
 
   const returning = env.current?.source === "onboarding" && env.current.id !== draft.id;
   const props: StepProps = { env, draft, profile, update, updateProfile, go, today, flush, md, onDone, onOpenChat, setEnv, returning, draftRef, profileRef, handoff, recheckHandoff };
-  // The to-do list stays once the first setup finished, also while a course is being read again.
-  const done = draft.setupStep === "done" || draft.status === "active";
-  const todoLeft = done ? setupTodo(draft).filter((t) => !t.done).length : 0;
 
   return (
     <div className="quest-page setup-page" ref={scroller} data-select-scope="">
@@ -506,13 +501,8 @@ export function OnboardingPage({ onDone, onOpenChat, askNewSemester = 0 }: { onD
         <button type="button" role="tab" aria-selected={narrowView === "chat"} className={narrowView === "chat" ? "is-on" : ""} onClick={() => setNarrowView("chat")}>
           Chat
         </button>
-        {done && (
-          <button type="button" role="tab" aria-selected={narrowView === "sheet" && side === "todo"} className={narrowView === "sheet" && side === "todo" ? "is-on" : ""} onClick={() => (setNarrowView("sheet"), setSide("todo"))}>
-            To do
-          </button>
-        )}
-        <button type="button" role="tab" aria-selected={narrowView === "sheet" && (!done || side === "sheet")} className={narrowView === "sheet" && (!done || side === "sheet") ? "is-on" : ""} onClick={() => (setNarrowView("sheet"), setSide("sheet"))}>
-          {done ? "Semester" : "Semester sheet"}
+        <button type="button" role="tab" aria-selected={narrowView === "sheet"} className={narrowView === "sheet" ? "is-on" : ""} onClick={() => setNarrowView("sheet")}>
+          Semester sheet
         </button>
       </div>
       <div className="setup-grid" data-narrow={narrowView}>
@@ -529,19 +519,6 @@ export function OnboardingPage({ onDone, onOpenChat, askNewSemester = 0 }: { onD
         <Sheet
           {...props}
           editable={draft.setupStep === "chat"}
-          head={
-            done ? (
-              <div className="side-tabs" role="tablist" aria-label="Side panel">
-                <button type="button" role="tab" aria-selected={side === "todo"} className={side === "todo" ? "is-on" : ""} onClick={() => setSide("todo")}>
-                  To do{todoLeft ? <span className="side-count">{todoLeft}</span> : null}
-                </button>
-                <button type="button" role="tab" aria-selected={side === "sheet"} className={side === "sheet" ? "is-on" : ""} onClick={() => setSide("sheet")}>
-                  Semester
-                </button>
-              </div>
-            ) : undefined
-          }
-          alt={done && side === "todo" ? <TodoList {...props} onStart={() => setNarrowView("chat")} /> : undefined}
         />
       </div>
       <SelectionReply scope={scroller} disabled={false} onAsk={notes.ask} />
@@ -1337,7 +1314,7 @@ function Done({ env, draft, onDone, setEnv, today, update }: StepProps) {
       {semester && (
         <p>
           {semester.courses.length} {semester.courses.length === 1 ? "course" : "courses"}, {semester.skills.length} skills to learn and track.
-          {left.length > 0 && ` ${left.length} ${left.length === 1 ? "thing is" : "things are"} still open: they're under To do. Work through them one at a time, whenever you like.`}
+          {left.length > 0 && ` ${left.length} ${left.length === 1 ? "thing is" : "things are"} still open: they're under To do on Organize. Work through them one at a time, whenever you like.`}
         </p>
       )}
 
@@ -1367,74 +1344,9 @@ function Done({ env, draft, onDone, setEnv, today, update }: StepProps) {
   );
 }
 
-// ---------- the to-do list after setup, in the side panel ----------
-
-/** What setup still needs from the student, one item at a time. `onStart` brings the chat into view. */
-function TodoList({ draft, md, update, onStart, onOpenChat }: StepProps & { onStart: () => void }) {
-  const todo = setupTodo(draft);
-  const left = todo.filter((t) => !t.done);
-  const [openKey, setOpenKey] = useState<string | null>(null);
-  const shownKey = openKey ?? left[0]?.key ?? null;
-  // Unticking an item opens all its parts; unticking a part opens its item.
-  const tick = (key: string, on: boolean) =>
-    update((d) => ({
-      ...d,
-      todoDone: on ? [...new Set([...(d.todoDone ?? []), key])] : (d.todoDone ?? []).filter((k) => k !== key && k !== key.split(":")[0] && !k.startsWith(`${key}:`)),
-      ...(on && { todoDoneOn: { ...d.todoDoneOn, [key]: toDay() } }),
-    }));
-  const startInChat = (item: TodoItem) => {
-    setOpenKey(item.key);
-    if (handedOff(draft)) {
-      publish("say", item.chatPrompt, "setup");
-      return onOpenChat();
-    }
-    const msg: SetupMessage = { id: uid(), role: "assistant", text: item.chatPrompt, createdAt: Date.now() };
-    update((d) => ({ ...d, chat: [...(d.chat ?? []), msg] }));
-    onStart();
-    setTimeout(() => (document.querySelector(".setup-composer textarea") as HTMLTextAreaElement | null)?.focus(), 80);
-  };
-  if (!todo.length) return <p className="quest-muted">Nothing left to do. StudyDesk has what it needs.</p>;
-  return (
-    <>
-      <p className="quest-muted setup-todo-count">{left.length ? `${left.length} left` : "All done"}</p>
-      <ol className="setup-todo">
-        {todo.map((t) => (
-          <li key={t.key} className={t.done ? "is-done" : ""}>
-            <div className="setup-todo-head">
-              <input type="checkbox" checked={t.done} aria-label={`Mark "${t.title}" done`} onChange={(e) => tick(t.key, e.target.checked)} />
-              <button type="button" className="setup-todo-title" aria-expanded={shownKey === t.key} onClick={() => setOpenKey(shownKey === t.key ? "" : t.key)}>
-                {t.title}
-              </button>
-            </div>
-            {shownKey === t.key && (
-              <div className="setup-todo-body">
-                {md(`todo-${t.key}`, t.body, `the to-do list after setup ("${t.title}")`)}
-                {t.subs && (
-                  <ul className="setup-todo-subs">
-                    {t.subs.map((x) => (
-                      <li key={x.key} className={x.done ? "is-done" : ""}>
-                        <input type="checkbox" checked={x.done} aria-label={x.done ? "Done" : "Mark done"} onChange={(e) => tick(x.key, e.target.checked)} />
-                        <div className="setup-todo-sub">{md(`todo-${x.key}`, x.text, `the to-do list after setup ("${t.title}")`)}</div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <button type="button" className="mini-btn" onClick={() => startInChat(t)}>
-                  {t.key === "upload" ? "Add files in the chat" : "Answer in the chat"}
-                </button>
-              </div>
-            )}
-          </li>
-        ))}
-      </ol>
-    </>
-  );
-}
-
 // ---------- the semester sheet: filled by the chat, editable by hand ----------
 
-// `head` replaces the title (the To do | Semester tabs after setup); `alt` is shown instead of the sheet (the to-do list).
-function Sheet({ env, draft, profile, update, updateProfile, returning, editable, md, head, alt }: StepProps & { editable: boolean; head?: ReactNode; alt?: ReactNode }) {
+function Sheet({ env, draft, profile, update, updateProfile, returning, editable, md }: StepProps & { editable: boolean }) {
   const [exported, setExported] = useState<string | null>(null);
   const steps = gradeSteps(profile.gradeScale);
   const patchCourse = (id: string, p: Partial<DraftCourse>) => update((d) => ({ ...d, courses: d.courses.map((c) => (c.id === id ? { ...c, ...p } : c)) }));
@@ -1451,10 +1363,8 @@ function Sheet({ env, draft, profile, update, updateProfile, returning, editable
   );
   const ready = setupReady(draft);
   return (
-    <aside className="setup-sheet" aria-label={alt ? "To do" : "Semester sheet"}>
-      {head ?? <h2>Semester sheet</h2>}
-      {alt ?? (
-      <>
+    <aside className="setup-sheet" aria-label="Semester sheet">
+      <h2>Semester sheet</h2>
       {returning && (
         <p className="sheet-export">
           <button type="button" className="link-btn" onClick={() => void exportLast()}>
@@ -1605,8 +1515,6 @@ function Sheet({ env, draft, profile, update, updateProfile, returning, editable
         </ul>
       )}
       {editable && <p className={"sheet-ready " + (ready.ok ? "is-ok" : "")}>{ready.ok ? "Ready to start. Tell StudyDesk to go when you're happy." : `Still needed: ${ready.missing.join(", ")}.`}</p>}
-      </>
-      )}
     </aside>
   );
 }

@@ -9,6 +9,7 @@ import type { CourseSetup, Profile, SemesterDraft } from "../src/onboarding/type
 import type { QuestRecord } from "../src/quests/types";
 import { planQuest } from "../src/quests/plan";
 import { buildSemester } from "../src/onboarding/setup";
+import { setupTodo } from "../src/onboarding/todo";
 
 const TODAY = "2026-11-20"; // a Friday
 const profile: Profile = { level: "university", school: "TU", country: "Austria", gradeScale: { name: "Austrian 1–5", best: 1, worst: 5 }, program: "BSc Physics", year: "1", updatedAt: 0 };
@@ -157,6 +158,18 @@ describe("changes", () => {
     const s = syncSemester(r.desk.draft, profile, current, 9);
     expect(s).toMatchObject({ placementQuestId: "q1", studyGoalSource: "recommended", studyGoalDecidedAt: 5, createdAt: 1 });
     expect(s.courses.find((c) => c.id === "c1")!.teachingLanguage).toBe("English");
+  });
+});
+
+describe("files StudyDesk isn't sure about", () => {
+  it("are one to-do item, and confirming or moving a file clears the doubt", () => {
+    const d = desk();
+    d.draft.uploads = [{ ...d.draft.uploads[0], courseId: "c1", courseUnsure: "name fits two courses" }];
+    expect(setupTodo(d.draft).find((t) => t.key === "unsure")?.title).toBe("1 file StudyDesk isn't sure about");
+    const r = applyOps(d, [{ op: "set_file_course", file: "up1", course: "c1" }], { studentWords: "", now: 9 });
+    expect(r.desk.draft.uploads[0]).toMatchObject({ courseId: "c1", courseUnsure: undefined });
+    expect(setupTodo(r.desk.draft).some((t) => t.key === "unsure")).toBe(false);
+    expect(applyOps(d, [{ op: "set_file_course", file: "nope", course: "c1" }], { studentWords: "" }).errors[0]).toContain("no file");
   });
 });
 

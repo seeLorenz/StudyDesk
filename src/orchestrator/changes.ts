@@ -13,6 +13,7 @@ import { assessmentAttempts } from "../mastery/grades";
 import type { AssessmentResult, Attempt, CourseTarget } from "../mastery/types";
 import { buildSemester } from "../onboarding/setup";
 import { setupTodo } from "../onboarding/todo";
+import { filesOf } from "../lib/keep";
 import type { CourseSetup, DraftCourse, Profile, SemesterDraft, StudentFact } from "../onboarding/types";
 import type { Assignment, KeyDate, Semester, TimetableEntry } from "../quests/types";
 import { QUEST_SETTING_LIMITS, questSettingsNow } from "../quests/config";
@@ -75,7 +76,7 @@ export function findCourse(draft: SemesterDraft, ref: unknown): DraftCourse | un
 }
 
 // ---------- reading and writing parts of the desk by key ----------
-// Keys: "courses", "timetable", "studyGoal", "facts", "daysOff", "assessments", "questSettings",
+// Keys: "courses", "uploads", "zips", "timetable", "studyGoal", "facts", "daysOff", "assessments", "questSettings",
 // "profile", and "results.<courseId>.<keyDates|assignments|teachingLanguage>".
 
 function getPart(desk: Desk, key: string): unknown {
@@ -444,6 +445,20 @@ export function applyOps(
         if ((desk.draft.calendarLive !== false) === v) break;
         touch("calendarLive", v);
         lines.push(v ? "Calendar: followed live again, each day's quest is sized from it" : "Calendar: no longer followed day by day, quests go by the weekly timetable");
+        break;
+      }
+      case "set_file_course": {
+        const c = course(op);
+        const ref = str(op.file);
+        const ids = new Set(filesOf(ref, desk.draft.uploads));
+        if (!c) break;
+        if (!ids.size) {
+          errors.push(`set_file_course: no file or zip "${ref}" (look_up files).`);
+          break;
+        }
+        touch("uploads", desk.draft.uploads.map((u) => (ids.has(u.id) ? { ...u, courseId: c.id, courseUnsure: undefined } : u)));
+        if (ref.startsWith("zip_")) touch("zips", (desk.draft.zips ?? []).map((z) => (z.id === ref ? { ...z, courseId: c.id } : z)));
+        lines.push(`${ids.size === 1 ? desk.draft.uploads.find((u) => ids.has(u.id))!.fileName : `${ids.size} files`} → ${c.name}`);
         break;
       }
       case "tick_todo": {

@@ -7,12 +7,24 @@
 
 import type { Profile, SemesterDraft } from "../onboarding/types";
 import type { Semester } from "../quests/types";
+import type { PendingAttachment } from "../lib/files";
 
-/** say: a message for the StudyDesk chat to show, e.g. a to-do item started on the setup page. */
-type Topics = { draft: SemesterDraft; profile: Profile; semester: Semester; say: string };
+/**
+ * say: a message for the StudyDesk chat to show, e.g. a to-do item started on the setup page.
+ * ask: a message the student wrote to StudyDesk on another screen (the Courses page), sent as if typed in its chat.
+ * op: a change the student made with one tap (e.g. "Belongs here"), applied by the Orchestrator without a chat turn.
+ */
+export type Topics = {
+  draft: SemesterDraft;
+  profile: Profile;
+  semester: Semester;
+  say: string;
+  ask: { text: string; files: PendingAttachment[]; quote?: string };
+  op: { ops: Array<Record<string, unknown>>; words: string };
+};
 type Listener<K extends keyof Topics> = (value: Topics[K], from: string) => void;
 
-const listeners: { [K in keyof Topics]: Set<Listener<K>> } = { draft: new Set(), profile: new Set(), semester: new Set(), say: new Set() };
+const listeners: { [K in keyof Topics]: Set<Listener<K>> } = { draft: new Set(), profile: new Set(), semester: new Set(), say: new Set(), ask: new Set(), op: new Set() };
 const latest: { [K in keyof Topics]?: Topics[K] } = {};
 
 export function publish<K extends keyof Topics>(topic: K, value: Topics[K], from: string): void {

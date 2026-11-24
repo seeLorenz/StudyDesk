@@ -11,9 +11,11 @@ import { aheadIsStale, readCalendarAhead } from "./platform/calendar";
 import { QUEST_CHANGED } from "./quests/times";
 import { syncStudyEntries } from "./platform/studyEntries";
 import { OrchestratorPanel, type OrchStatus } from "./orchestrator/OrchestratorPanel";
-import { subscribe } from "./platform/deskBus";
+import { publish, subscribe } from "./platform/deskBus";
 import type { Semester } from "./quests/types";
-import { DeskPanel } from "./shell/DeskPanel";
+import { CoursesPage } from "./courses/CoursesPage";
+import { InputBox } from "./chat/InputBox";
+import type { PendingAttachment } from "./lib/files";
 import { VersionLabel } from "./updates/VersionPanel";
 import { daysBetween, toDay } from "./mastery/days";
 
@@ -26,11 +28,12 @@ function when(ts: number) {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-type View = "today" | "chat" | "organize" | "setup";
+type View = "today" | "chat" | "courses" | "organize" | "setup";
 
 const Icon = {
   today: <path d="M3.5 2.5h9v11h-9zM5.8 7.6l1.6 1.6 3-3.4" />,
   ask: <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" />,
+  courses: <path d="M3 3h4.5v10.5H3zM8.5 3H13v10.5H8.5zM4.5 5.5h1.5M10 5.5h1.5" />,
   organize: <path d="M2.5 4h11v9.5h-11zM2.5 7h11M5.5 2.5v3M10.5 2.5v3" />,
   plus: <path d="M8 3.5v9M3.5 8h9" />,
 };
@@ -58,8 +61,10 @@ export function App() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [current, setCurrent] = useState<Chat>(newChat);
-  // Narrow screens show Organize's chat or its data, not one under the other, so the chat box stays at hand.
-  const [orgView, setOrgView] = useState<"chat" | "data">("chat");
+  // Narrow screens show Organize's chat or its to-do list, not one under the other, so the chat box stays at hand.
+  const [orgView, setOrgView] = useState<"chat" | "todo">("chat");
+  // The course page open on Courses (null: the list).
+  const [courseId, setCourseId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -92,6 +97,7 @@ export function App() {
   const [orchOpen, setOrchOpen] = useState(false);
   const [orchExpanded, setOrchExpanded] = useState(false);
   const [dock, setDock] = useState<HTMLDivElement | null>(null);
+  const [todoDock, setTodoDock] = useState<HTMLDivElement | null>(null);
   const [quote, setQuote] = useState<string | null>(null);
   const [status, setStatus] = useState<OrchStatus>({ needs: 0, notes: 0, nightly: "off", nightlyTime: null });
   const [askSeed, setAskSeed] = useState<{ chatId: string; question: string } | null>(null);
@@ -237,6 +243,12 @@ export function App() {
   const save = useCallback((chat: Chat) => (store ? store.saveChat(chat) : Promise.resolve()), [store]);
   const onSaveError = useCallback((m: string) => setNotice(m), []);
 
+  /** A message for StudyDesk written on another screen: sent in its chat, which opens as a panel. */
+  const askOrch = (text: string, files: PendingAttachment[], quote?: string) => {
+    publish("ask", { text, files, quote }, "app");
+    setOrchOpen(true);
+  };
+
   const open = (c: Chat) => {
     setCurrent(c);
     go("chat");
@@ -249,7 +261,12 @@ export function App() {
   // Organize without a semester is the setup chat.
   const shown: View = view === "organize" && semester === "none" ? "setup" : view;
   const chatTitle = chats.find((c) => c.id === current.id)?.title ?? "New chat";
-  const title = shown === "today" ? "Today" : shown === "chat" ? chatTitle : shown === "setup" ? "Set up your semester" : "Organize";
+  const shownCourse = shown === "courses" ? sem?.courses.find((c) => c.id === courseId) : undefined;
+  const title = shown === "today" ? "Today" : shown === "chat" ? chatTitle : shown === "setup" ? "Set up your semester" : shown === "courses" ? "Courses" : "Organize";
+  const goCourses = () => {
+    setCourseId(null);
+    go("courses");
+  };
   const command_ = (kind: QuestCommand["kind"]) => {
     setCommand({ id: Date.now(), kind });
     setConfirmRestart(false);
@@ -293,6 +310,10 @@ export function App() {
           >
             <Svg>{Icon.ask}</Svg>
             <span className="nav-text">Ask</span>
+          </button>
+          <button type="button" className={"nav-item" + (shown === "courses" ? " is-current" : "")} aria-current={shown === "courses" ? "page" : undefined} title="Courses" onClick={goCourses}>
+            <Svg>{Icon.courses}</Svg>
+            <span className="nav-text">Courses</span>
           </button>
         </nav>
 
@@ -342,7 +363,7 @@ export function App() {
           className={"organize-btn" + (organizeView ? " is-current" : "")}
           aria-current={organizeView ? "page" : undefined}
           onClick={() => go("organize")}
-          title="Your semester, dates and files. Tell StudyDesk what changed (Ctrl/⌘ J)"
+          title="Tell StudyDesk what changed, and what it needs from you (Ctrl/⌘ J)"
         >
           <Svg>{Icon.organize}</Svg>
           <span className="nav-text">Organize</span>
@@ -439,13 +460,19 @@ export function App() {
               <button type="button" role="tab" aria-selected={orgView === "chat"} className={orgView === "chat" ? "is-on" : ""} onClick={() => setOrgView("chat")}>
                 Chat
               </button>
-              <button type="button" role="tab" aria-selected={orgView === "data"} className={orgView === "data" ? "is-on" : ""} onClick={() => setOrgView("data")}>
-                Your semester
+              <button type="button" role="tab" aria-selected={orgView === "todo"} className={orgView === "todo" ? "is-on" : ""} onClick={() => setOrgView("todo")}>
+                To do
               </button>
             </div>
             <div className="organize-chat" ref={setDock} />
-            <div className="organize-data">
-              <DeskPanel onOpenSetup={() => go("setup")} />
+            <div className="organize-data" ref={setTodoDock} />
+          </div>
+        )}
+        {shown === "courses" && (
+          <div className="courses-host">
+            <CoursesPage courseId={courseId} onOpen={setCourseId} onOpenSetup={() => go("setup")} onToday={() => go("today")} onAsk={askOrch} />
+            <div className="courses-box">
+              <InputBox id="courses-box" keepAll compact placeholder={`Tell StudyDesk what's wrong or new${shownCourse ? ` in ${shownCourse.name}` : ""}. Drop or paste files.`} onSend={(t, f) => askOrch(t, f)} />
             </div>
           </div>
         )}
@@ -469,6 +496,10 @@ export function App() {
             <Svg>{Icon.ask}</Svg>
             Ask
           </button>
+          <button type="button" className={shown === "courses" ? "is-current" : ""} onClick={goCourses}>
+            <Svg>{Icon.courses}</Svg>
+            Courses
+          </button>
           <button type="button" className={organizeView ? "is-current" : ""} onClick={() => go("organize")}>
             <span className="tab-icon">
               <Svg>{Icon.organize}</Svg>
@@ -481,10 +512,12 @@ export function App() {
       <OrchestratorPanel
         open={orchOpen && shown !== "organize"}
         dock={shown === "organize" ? dock : null}
+        todoDock={shown === "organize" ? todoDock : null}
+        onStartTodo={() => setOrgView("chat")}
         expanded={orchExpanded}
         onClose={() => setOrchOpen(false)}
         onToggleExpand={() => setOrchExpanded((x) => !x)}
-        screen={shown === "today" ? "Today's quest" : shown === "setup" ? "Semester setup" : shown === "organize" ? "Organize page (semester, courses, dates, files)" : `Ask chat "${chatTitle}"`}
+        screen={shown === "today" ? "Today's quest" : shown === "setup" ? "Semester setup" : shown === "organize" ? "Organize page (chat and to-do list)" : shown === "courses" ? (shownCourse ? `Courses: the page of ${shownCourse.name} (progress, dates, skills, files)` : "Courses: the semester and all courses") : `Ask chat "${chatTitle}"`}
         quote={quote}
         onClearQuote={() => setQuote(null)}
         onStatus={setStatus}

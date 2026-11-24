@@ -3280,6 +3280,181 @@ sup.sd-ref {
   font-weight: 500;
 }
 
+/* ---------- Courses ---------- */
+.courses-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.courses {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 36px 40px 40px;
+}
+.courses-box {
+  padding: 4px max(16px, env(safe-area-inset-right, 0px)) 14px max(16px, env(safe-area-inset-left, 0px));
+}
+.courses-box .inputbox {
+  max-width: 880px;
+  margin: 0 auto;
+}
+.course-card.is-link {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.course-card.is-link:hover {
+  border-color: var(--field-line);
+}
+.desk > .link-btn {
+  align-self: flex-start;
+  margin-bottom: -20px;
+}
+.fold > summary {
+  cursor: pointer;
+  padding: 6px 0;
+  font-weight: 500;
+}
+.fold > summary + * {
+  margin-top: 8px;
+}
+.topic > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.topic > summary::before {
+  content: "▸";
+  color: var(--ink-3);
+  transition: transform 0.15s;
+}
+.topic[open] > summary::before {
+  transform: rotate(90deg);
+}
+.topic-name {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.topic-bar {
+  flex: 0 0 90px;
+}
+.skill-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.skill-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  padding: 8px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 14px;
+}
+.skill-list li > :first-child {
+  flex: 1;
+}
+.skill-list li.is-unneeded {
+  color: var(--ink-3);
+}
+.skill-where {
+  display: block;
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.unsure {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.unsure-head {
+  margin: 0;
+  font-weight: 600;
+  color: var(--warn);
+}
+.file-list li {
+  flex-wrap: wrap;
+}
+.file-open {
+  text-align: left;
+}
+.file-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+.file-viewer-box {
+  width: min(900px, 100%);
+  height: min(86vh, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.file-viewer-box header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.file-viewer-box header strong {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-viewer-box iframe,
+.file-viewer-box img,
+.file-viewer-box pre {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  margin: 0;
+  object-fit: contain;
+}
+.file-viewer-box pre {
+  overflow: auto;
+  padding: 16px;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+.file-viewer-box > p {
+  padding: 16px;
+}
+.todo-pane {
+  max-width: 640px;
+  margin: 0 auto;
+}
+.todo-pane .desk-title {
+  margin-bottom: 16px;
+}
+@media (max-width: 760px) {
+  .courses {
+    padding: 20px 16px 32px;
+  }
+}
+
 .organize-switch {
   display: none;
 }
@@ -3302,7 +3477,7 @@ sup.sd-ref {
     padding: 20px 16px 40px;
   }
   .organize[data-narrow="chat"] > .organize-data,
-  .organize[data-narrow="data"] > .organize-chat {
+  .organize[data-narrow="todo"] > .organize-chat {
     display: none;
   }
 }
@@ -4034,46 +4209,6 @@ input::placeholder {
   }
 }
 
-/* After setup the side panel is "To do | Semester", opening on To do. */
-.side-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 3px;
-  margin: -4px -4px 14px;
-  border-radius: 10px;
-  background: var(--paper);
-}
-.side-tabs button {
-  flex: 1;
-  border: 0;
-  border-radius: 8px;
-  padding: 7px 10px;
-  background: none;
-  color: var(--ink-2);
-  font-size: 14px;
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-.side-tabs button.is-on {
-  background: var(--surface);
-  color: var(--ink);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 15%);
-}
-.side-count {
-  min-width: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: var(--sunken);
-  color: var(--ink-2);
-  font-size: 12px;
-  line-height: 18px;
-}
-.setup-sheet .setup-todo {
-  margin-top: 4px;
-}
 .setup-todo-count {
   margin: 0 0 6px;
   font-size: 13px;
@@ -4091,12 +4226,6 @@ input::placeholder {
 }
 .sheet-course-map .md {
   font-size: 13.5px;
-}
-@media (max-width: 900px) {
-  /* The top switch already picks To do or Semester. */
-  .setup-page .side-tabs {
-    display: none;
-  }
 }
 
 /* The single questions, dates or disagreements of a to-do item, ticked off one by one. */

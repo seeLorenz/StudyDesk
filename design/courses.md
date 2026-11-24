@@ -1,6 +1,6 @@
 # Courses
 
-A new sidebar tab (**Courses**) where the student sees each course on its own: how far along they are, what's due, which skills it needs, and which files StudyDesk linked to it. It also takes everything "look and check" off the Organize page, so Organize is only for organizing. Proposed 2026-11-24; nothing here is built yet.
+A new sidebar tab (**Courses**) where the student sees each course on its own: how far along they are, what's due, which skills it needs, and which files StudyDesk linked to it. It also takes everything "look and check" off the Organize page, so Organize is only for organizing. Agreed 2026-11-24; first version built.
 
 ## Why
 
@@ -88,8 +88,12 @@ Code, roughly: `src/courses/CoursesPage.tsx` (the list, built from today's `Desk
 - **Name:** "Courses" for every student, school or university, matching the rest of the app.
 - **Sidebar order:** Today, Ask, Courses, with Organize staying apart at the bottom.
 
+## Built with it (2026-11-24)
+
+- **Setting the doubt:** the setup reading's file assignment (`update_sheet` files) takes an optional `unsure` reason and stores it as `courseUnsure`.
+- **One Orchestrator change for files:** `set_file_course` moves a file or a whole zip to a course, or confirms it in the same one, and clears `courseUnsure`. "Belongs here" sends it without a chat turn; after a real move the Orchestrator starts a `new_material` job for the new course.
+
 ## Notes for other modules
 
-- **Course files / organization agent:** whoever assigns a file to a course (the zip and loose-file assignment in [course-files.md](course-files.md), and the setup run) sets `courseUnsure` with a short reason when it isn't confident, instead of guessing silently.
-- **Orchestrator:** a `confirm_file_course` change for "Belongs here" (clears `courseUnsure`), and the "files StudyDesk isn't sure about" To do item. "Wrong course?" needs a `move_file` change (move an upload, or a whole zip, to another course, then start a job so the organization agent reads it for the new course). It doesn't exist yet.
-- **Organization agent:** the date-source note in [app-layout.md](app-layout.md) applies here too; once dates carry their source, the course page shows it next to each date.
+- **Organization agent:** jobs and sweeps that assign files should set `courseUnsure` the same way when they aren't sure.
+- **Date sources:** the note in [app-layout.md](app-layout.md) applies here too; once dates carry their source, the course page shows it next to each date.

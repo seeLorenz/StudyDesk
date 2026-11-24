@@ -2,19 +2,20 @@
 
 How StudyDesk's screens fit together. Agreed on 2026-11-20 after a mock and a discussion. This file covers navigation and look only; each module's own file covers what happens inside its screen.
 
-## Three places
+## Four places
 
-The sidebar has three places, each named after what you do there:
+The sidebar has four places, each named after what you do there:
 
 | Place | What it's for | What's on it |
 | --- | --- | --- |
 | **Today** | Doing the work. The home screen. | Mistake review (after grading, starts collapsed), today's quest (its header shows only "Why today"; extra notes behind "More about this quest"), and **Coming up** under the header. Today stays loaded once opened, so switching back is instant. |
 | **Ask** | Understanding something. | Clicking Ask starts a new tutor chat; recent chats are listed under it to pick one up again. |
-| **Organize** | Running your desk. | The Orchestrator chat on the left, everything StudyDesk knows about the semester on the right. |
+| **Courses** | Checking what StudyDesk knows. | The semester, a card per course, and a page per course ([courses.md](courses.md)). |
+| **Organize** | Running your desk. | The Orchestrator chat on the left, the To do list on the right. |
 
 Organize sits apart at the bottom of the sidebar as a dark button, because it works from every screen. Ctrl/⌘ J opens it as a quick panel over whatever you're looking at; on the Organize page itself it puts the cursor in the chat.
 
-Why the names: there used to be two chats ("Ask" and "Talk to StudyDesk") and you had to know which one to use. Now the name says the job: Ask = learn, Organize = change or check your desk.
+Why the names: there used to be two chats ("Ask" and "Talk to StudyDesk") and you had to know which one to use. Now the name says the job: Ask = learn, Courses = check, Organize = change.
 
 ## Coming up
 
@@ -27,8 +28,8 @@ Keep it uncluttered: one line of facts per card, no extra badges.
 ## Organize page
 
 - **Left:** the Orchestrator chat (the same conversation as the quick panel).
-- **Right, top to bottom:** the semester (name, dates, number of courses, hours a week) with a button to the setup sheet; a card per course (how much of the target is mastered, open mistakes, the next exam or hand-in); all dates, each with "Wrong?"; study time per weekday; the files StudyDesk has.
-- Course progress lives here and not on Today, because Today should stay about today.
+- **Right:** the To do list (what StudyDesk still needs from the student). "Answer in the chat" puts an item's questions into the chat beside it. Phones switch between "Chat | To do".
+- The semester, courses, dates, study time and files moved to **Courses** (2026-11-24). Course progress lives there and not on Today, because Today should stay about today.
 - **Setup is Organize's first state.** With no semester yet, Organize is the setup chat with its sheet. "Start a new semester" lives in the ⋯ menu and on the setup sheet, not as its own tab.
 
 ## Notifications
@@ -73,5 +74,5 @@ The sidebar becomes a drawer (menu button in the top bar, for recent chats) and 
 
 - `src/App.tsx`: the shell (sidebar, tab bar, ⋯ menu, which screen shows).
 - `src/shell/ComingUp.tsx`, `src/shell/upcoming.ts`: the Coming up row and its date logic.
-- `src/shell/DeskPanel.tsx`: the right side of the Organize page.
-- `src/orchestrator/OrchestratorPanel.tsx`: the chat; with `dock` it renders into the Organize page instead of as a panel, and `onStatus` reports the badge numbers.
+- `src/courses/CoursesPage.tsx`: the Courses tab and each course's page.
+- `src/orchestrator/OrchestratorPanel.tsx`: the chat; with `dock` it renders into the Organize page instead of as a panel (and the To do list into `todoDock`, `src/onboarding/TodoList.tsx`), and `onStatus` reports the badge numbers.
