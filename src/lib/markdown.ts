@@ -1,6 +1,7 @@
 import { Marked } from "marked";
 import markedKatex from "marked-katex-extension";
 import DOMPurify from "dompurify";
+import { WISH_URL } from "../agents/capabilities";
 import "katex/dist/katex.min.css";
 
 const md = new Marked({ gfm: true, breaks: false });
@@ -11,6 +12,7 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   if (node.tagName === "A") {
     node.setAttribute("target", "_blank");
     node.setAttribute("rel", "noopener noreferrer");
+    if (node.getAttribute("href")?.startsWith(WISH_URL)) node.setAttribute("class", "mini-btn primary");
   }
 });
 

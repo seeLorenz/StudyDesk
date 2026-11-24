@@ -8,10 +8,11 @@
 import type { Profile, SemesterDraft } from "../onboarding/types";
 import type { Semester } from "../quests/types";
 
-type Topics = { draft: SemesterDraft; profile: Profile; semester: Semester };
+/** say: a message for the StudyDesk chat to show, e.g. a to-do item started on the setup page. */
+type Topics = { draft: SemesterDraft; profile: Profile; semester: Semester; say: string };
 type Listener<K extends keyof Topics> = (value: Topics[K], from: string) => void;
 
-const listeners: { [K in keyof Topics]: Set<Listener<K>> } = { draft: new Set(), profile: new Set(), semester: new Set() };
+const listeners: { [K in keyof Topics]: Set<Listener<K>> } = { draft: new Set(), profile: new Set(), semester: new Set(), say: new Set() };
 const latest: { [K in keyof Topics]?: Topics[K] } = {};
 
 export function publish<K extends keyof Topics>(topic: K, value: Topics[K], from: string): void {

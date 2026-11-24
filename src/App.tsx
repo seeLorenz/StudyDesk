@@ -456,7 +456,7 @@ export function App() {
                 ← Back to Organize
               </button>
             )}
-            <OnboardingPage onDone={() => go("today")} askNewSemester={newSemesterAsk} />
+            <OnboardingPage onDone={() => go("today")} onOpenChat={() => go("organize")} askNewSemester={newSemesterAsk} />
           </div>
         )}
 

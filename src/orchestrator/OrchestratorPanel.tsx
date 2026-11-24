@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toolsFor } from "../agents/capabilities";
 import { SentFiles } from "../chat/SentFiles";
 import { useSentToTop } from "../chat/useSentToTop";
 import { ImportProgress } from "../chat/ImportProgress";
@@ -291,12 +292,14 @@ export function OrchestratorPanel(props: Props) {
     const c = subscribe("semester", "orch", (s) => {
       semesterRef.current = s;
     });
+    const d = subscribe("say", "orch", (text) => saveMessages((ms) => [...ms, { id: uid(), role: "assistant", text, createdAt: Date.now() }]));
     return () => {
       a();
       b();
       c();
+      d();
     };
-  }, []);
+  }, [saveMessages]);
 
   // Jobs follow their courses: finished when read, queued ones start when free.
   useEffect(() => {
@@ -511,7 +514,7 @@ export function OrchestratorPanel(props: Props) {
           images: imagesOk ? kept.images : [],
           earlierImages: earlier.images,
           onText: (t) => patch({ text: t }),
-          tools: [
+          tools: toolsFor("panel", [
             {
               ...CHANGE_TOOL,
               inputSchema: CHANGE_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema,
@@ -658,7 +661,7 @@ export function OrchestratorPanel(props: Props) {
                 }
               },
             },
-          ],
+          ]),
         });
         patch({ text: answer });
       }

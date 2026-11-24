@@ -6,6 +6,7 @@
 // semester is rebuilt from). Pure, so it is tested. Every applied change keeps
 // what it touched before and after, so it can be undone.
 
+import { wishLink } from "../agents/capabilities";
 import { uid } from "../chat/types";
 import { toDay } from "../mastery/days";
 import { assessmentAttempts } from "../mastery/grades";
@@ -515,6 +516,13 @@ export function applyOps(
         cur[c.id] = date;
         touch("sweepDates", cur);
         lines.push(`${c.name}: deep sweep (full re-read) on the night of ${shortDate(date)}`);
+        break;
+      }
+      case "add_wish": {
+        const text = str(op.text);
+        if (!text) break;
+        touch("profile", { ...desk.profile, wishes: [...(desk.profile.wishes ?? []), { text, at: now }] });
+        lines.push(`Wish saved: "${text}" ${wishLink(text)}`);
         break;
       }
       case "set_profile": {

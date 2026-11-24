@@ -78,6 +78,16 @@ describe("re-reading a course keeps skill ids", () => {
   });
 });
 
+describe("re-reading a course keeps homework ids", () => {
+  it("keeps the id of a sheet read before and gives a second sheet with the same title its own", () => {
+    const d = desk().draft;
+    const draft = { ...d, results: { c1: { ...d.results.c1, assignments: [{ ...d.results.c1.assignments[0], id: "as_mine" }] } } };
+    const hw = "\n=== HOMEWORK ===\n### Blatt 6 | 2026-12-01\n#### 1 | s1 | 2\nTask.\n### Blatt 6 | 2026-12-08\n#### 1 | s1 | 2\nTask.\n";
+    const r = parseSetup(reply("s1 | t1 | Grenzwerte von Folgen | course | 3 | normal | 8 | 1 | -") + hw, { course, profile, today: "2026-11-28", priorFundamentals: [], draft }, new Map());
+    expect(r.assignments.map((a) => a.id)).toEqual(["as_mine", "as_mine-2"]);
+  });
+});
+
 describe("the student's dates survive a re-read", () => {
   it("keeps a moved exam as the student's own word, replacing the older one, and undo takes it back", () => {
     const a = applyOps(desk(), [{ op: "set_exam_date", course: "c1", title: "Klausur", date: "2027-02-04" }], { studentWords: "", now: 1 });
