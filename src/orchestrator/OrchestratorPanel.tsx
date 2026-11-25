@@ -43,7 +43,7 @@ import { calendarTaskSetup, QUEST_CHANGED } from "../quests/times";
 import { GoBackCard, UpdateNotice } from "../updates/UpdateCards";
 import { loadRelease, loadUpdates, markAnnounced, updateEnv } from "../platform/updateStore";
 import { goBackTarget, offer } from "../updates/plan";
-import { APP_VERSION, BUILD_SHA } from "../updates/version";
+import { APP_VERSION, BUILD_SHA, RELEASE_REPO } from "../updates/version";
 import { plainNote, whatsNewTurns } from "../updates/whatsNew";
 import { emptyState, type Change, type ChatCard, type Job, type Notification, type OrchMessage, type OrchState, type PendingConfirm } from "./types";
 
@@ -123,6 +123,8 @@ export function OrchestratorPanel(props: Props) {
   const [nightly, setNightly] = useState<"on" | "off" | "failed">("off");
   const handoffRef = useRef<HandoffSetup | null>(null);
   const routineRef = useRef<RoutineDoc | null>(null);
+  // A night that ran proves the repository is attached to the nightly task; until then, To do asks for it.
+  const [nightRan, setNightRan] = useState(true);
   /**
    * The nightly run's scheduled task, matching the student's time: made once,
    * and made again when the student changes the time (the old task then finds
@@ -174,6 +176,7 @@ export function OrchestratorPanel(props: Props) {
   const loadData = useCallback(async (e: Env) => {
     const [mastery, records, semester, routine] = await Promise.all([e.ms.load(), e.qs.loadRecords(), e.qs.loadSemester(), openRoutineStore().then((r) => r.loadRoutine()).catch(() => null)]);
     routineRef.current = routine;
+    setNightRan(!!routine?.nights.length);
     masteryRef.current = mastery;
     recordsRef.current = records;
     if (semester) semesterRef.current = semester;
@@ -338,7 +341,7 @@ export function OrchestratorPanel(props: Props) {
       status: nightly === "failed" ? "couldn't be set up (cloud sessions needed)" : st.paused ? "paused" : `every day at ${st.time} (${p?.schedule?.timeZone})`,
       parts: { grading: st.grading, coursesCheck: st.check, tomorrowsQuest: st.quest },
       deepSweeps: Object.fromEntries([...names].map(([id, n]) => [n, draftRef.current?.sweepDates?.[id] ? `${draftRef.current.sweepDates[id]} (the student's date)` : r?.org[id]?.nextDeepSweep ?? "picked at the next nightly check"])),
-      lastNight: last ? { day: last.day, log: last.lines } : null,
+      lastNight: last ? { day: last.day, log: last.lines } : `none yet: the student still has to add the repository ${RELEASE_REPO} to the scheduled task "StudyDesk nightly run" (on their To do list)`,
     };
   };
 
@@ -880,7 +883,8 @@ export function OrchestratorPanel(props: Props) {
 
   // Unseen check-ins show on Organize: a number when StudyDesk needs an answer, a dot for notes. Opening the chat marks them seen.
   const unseen = state.notifications.filter((n) => n.seenAt === null).length;
-  const needs = state.notifications.filter((n) => n.seenAt === null && n.kind === "needs_answer").length + state.confirms.filter((c) => c.status === "waiting").length;
+  const repoStep = ready && nightly === "on" && !nightRan;
+  const needs = state.notifications.filter((n) => n.seenAt === null && n.kind === "needs_answer").length + state.confirms.filter((c) => c.status === "waiting").length + (repoStep ? 1 : 0);
   const nightlyTime = profile?.schedule || nightly === "failed" ? nightlySettings(profile?.nightly).time : null;
   useEffect(() => onStatus({ needs, notes: unseen, nightly, nightlyTime }), [needs, unseen, nightly, nightlyTime, onStatus]);
   useEffect(() => {
@@ -1104,6 +1108,7 @@ export function OrchestratorPanel(props: Props) {
       {ready && draft ? (
         <TodoList
           draft={draft}
+          repoStep={repoStep}
           update={(fn) => void commitDesk({ draft: fn(draftRef.current!), profile: profileRef.current! }).catch((e) => setError(message(e)))}
           md={(id, text) => (todoBlocks.current.set(id, text), md(id, text))}
           onStart={(t) => {

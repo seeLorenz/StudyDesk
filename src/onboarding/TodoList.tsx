@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { toDay } from "../mastery/days";
 import { setupTodo, type TodoItem } from "./todo";
+import { repoTodo } from "../platform/schedule";
 import type { SemesterDraft } from "./types";
 
 type Props = {
@@ -9,11 +10,13 @@ type Props = {
   md: (blockId: string, text: string, label: string) => ReactNode;
   /** Puts the item's questions into the StudyDesk chat. */
   onStart: (item: TodoItem) => void;
+  /** The nightly task still needs its repository (src/platform/schedule.ts). */
+  repoStep: boolean;
 };
 
 /** What StudyDesk still needs from the student, one item at a time (Organize's right side). */
-export function TodoList({ draft, update, md, onStart }: Props) {
-  const todo = setupTodo(draft);
+export function TodoList({ draft, update, md, onStart, repoStep }: Props) {
+  const todo = repoStep ? [repoTodo, ...setupTodo(draft)] : setupTodo(draft);
   const left = todo.filter((t) => !t.done);
   const [openKey, setOpenKey] = useState<string | null>(null);
   // Done items fold into one line so the open ones stay in view.
@@ -35,7 +38,7 @@ export function TodoList({ draft, update, md, onStart }: Props) {
         {todo.filter((t) => showDone || !t.done).map((t) => (
           <li key={t.key} className={t.done ? "is-done" : ""}>
             <div className="setup-todo-head">
-              <input type="checkbox" checked={t.done} aria-label={`Mark "${t.title}" done`} onChange={(e) => tick(t.key, e.target.checked)} />
+              <input type="checkbox" checked={t.done} disabled={t.key === "repo"} aria-label={`Mark "${t.title}" done`} onChange={(e) => tick(t.key, e.target.checked)} />
               <button type="button" className="setup-todo-title" aria-expanded={shownKey === t.key} onClick={() => setOpenKey(shownKey === t.key ? "" : t.key)}>
                 {t.title}
               </button>
@@ -54,7 +57,7 @@ export function TodoList({ draft, update, md, onStart }: Props) {
                   </ul>
                 )}
                 <button type="button" className="mini-btn" onClick={() => (setOpenKey(t.key), onStart(t))}>
-                  {t.key === "upload" ? "Add files in the chat" : "Answer in the chat"}
+                  {t.key === "upload" ? "Add files in the chat" : t.key === "repo" ? "Ask for help in the chat" : "Answer in the chat"}
                 </button>
               </div>
             )}
