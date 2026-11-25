@@ -1,6 +1,7 @@
 // @vitest-environment node
 // (jsdom's Uint8Array differs from Node's, which confuses fflate in tests only.)
 import { describe, expect, it } from "vitest";
+import { releaseStepLines } from "../src/routine/release";
 import { strToU8, zipSync } from "fflate";
 import { compareVersions, newestRelease, parseVersion } from "../src/updates/version";
 import { countDocs, diffSnapshots, docPath, emptySnapshot, kindOf, toSnapshot, type Snapshot } from "../src/updates/layout";
@@ -8,7 +9,6 @@ import { dataVersionOf, mapDocs, upgrade, type Step } from "../src/updates/migra
 import { validateSnapshot } from "../src/updates/validate";
 import { branchFolder, checkJobBody, devBuilds, emptyUpdates, switchPlan, targetLabel, goBackTarget, keepBackups, LIST_RELEASES_SCRIPT, offer, parseCheckAnswer, planLoad, publishJobBody, readUpdates, releaseDocFrom, whatsNewList, type Pending, type UpdatesDoc } from "../src/updates/plan";
 import { contentTypeOf, parseBackupZip, prepareImport, relink } from "../src/updates/importZip";
-import { parseLatest, tagsFromLsRemote } from "../src/routine/release";
 import { whatsNewTurns, plainNote } from "../src/updates/whatsNew";
 import { host, ReadOnlyError, setReadOnly } from "../src/platform/host";
 import { zipPaths } from "../src/platform/backup";
@@ -239,11 +239,8 @@ describe("restoring an exported zip", () => {
 });
 
 describe("the nightly release check", () => {
-  it("reads latest.json and the tags", () => {
-    expect(parseLatest('{"version":"v1.1","notes":"New things","dataVersion":1}', 5)).toEqual({ latest: "v1.1", notes: "New things", dataVersion: 1, checkedAt: 5 });
-    expect(parseLatest('{"version":"main"}', 5)).toBeNull();
-    expect(parseLatest("not json", 5)).toBeNull();
-    expect(tagsFromLsRemote("abc\trefs/tags/v1\nabd\trefs/tags/v1^{}\nabe\trefs/tags/v1.2\nabf\trefs/tags/test")).toBe("v1.2");
+  it("leaves the git command to the session", () => {
+    expect(releaseStepLines("/w").join("\n")).toContain("--branch releases");
   });
 });
 

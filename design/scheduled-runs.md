@@ -30,6 +30,8 @@ Each task carries a key, and the profile keeps the key of the current one. If a 
 
 The nightly program (`routine.mjs`) is StudyDesk's own code: the same planning, grading rules, mastery counting and checks as the page, built into one file. The cloud session runs it with Node. Whenever the code needs Claude (to judge an answer, write a lesson, check a course), the program writes that request down and stops; the session, which is itself Claude, answers it; then the program runs again and continues. So Claude only does what Claude should do, and every number is still computed by code.
 
+The program never uses the network or starts other programs: it only reads and writes files in its work folder. Every download, upload and git command is a step it prints and the session runs, so each one is visible and goes through the session's normal safety check. The task's prompt says where the program comes from and that the student set it up, and tells the session to refuse any step outside download, answer, check releases and save. (On 2026-11-24 the safety check blocked `node routine.mjs` because a downloaded program that ran git on its own and told an unwatched session what to do looked like it was escaping review.)
+
 In practice a night takes three rounds: grading and the course check together, then all parts of tomorrow's quest at once, then a last pass that saves.
 
 ### Nothing the student is working on is overwritten
