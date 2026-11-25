@@ -16,7 +16,7 @@ import type { MasteryData } from "../platform/masteryStore";
 import type { OutboxDoc } from "./apply";
 import { deferredAsk, type PendingCall } from "./deferred";
 import { runNightly, type NightInput, type RoutineDoc, type ScheduleInfo, type Write } from "./nightly";
-import { checkRelease } from "./release";
+import { readReleases, releaseStepLines } from "./release";
 import { COLLECTION_KINDS, COLLECTION_KIND_LIST, DOC_KINDS, DOC_KIND_LIST, diffSnapshots, emptySnapshot, joinSnapshot, type Snapshot } from "../updates/layout";
 import { joinAll, partIdsOf, PARTS_COL, PARTS_DOC, splitDoc } from "../platform/bigDoc";
 import { dataVersionOf, upgrade } from "../updates/migrations";
@@ -387,10 +387,11 @@ async function main(): Promise<void> {
     ]);
     return;
   }
+  // Is there a newer StudyDesk? The page shows "Update to vX"; nothing updates on its own.
+  const release = readReleases(dir, night.now);
+  if (release === undefined) return say(releaseStepLines(dir));
   const versions = new Map([...all.entries()].map(([k, v]) => [k, v.version]));
   const writes: UploadWrite[] = [...result.writes];
-  // Is there a newer StudyDesk? The page shows "Update to vX"; nothing updates on its own.
-  const release = checkRelease(dir, night.now);
   if (release) writes.push({ path: ["release"], data: { ...release }, mode: "replace" });
   uploadStep(dir, url, writes, versions);
 }

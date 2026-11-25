@@ -22,13 +22,21 @@ One run instead of three separate ones, because each step needs the one before: 
 
 The page creates one **scheduled task** in the student's own Claude account ("StudyDesk nightly run"), once, when cloud sessions are turned on and the semester is set up. Its schedule is 22:00 every day in the student's time zone; daylight saving is handled by the schedule itself. The task starts a fresh cloud session each night, so it works with the page closed. These sessions don't appear in the student's regular session list.
 
-The page can only create and fire scheduled tasks, not change or delete them. So the task's own instructions are short and never need to change: find the student's StudyDesk, download its nightly program, run it, do what it says. Everything that may change lives in that program, which is published together with the page.
+The page can only create and fire scheduled tasks, not change or delete them. So the task's own instructions are short and never need to change: find the student's StudyDesk, build its nightly program from the StudyDesk repository attached to the task, run it, do what it says. Everything that may change lives in that program.
+
+**The program is built, never downloaded.** Auto mode's safety check refuses to run a program the session fetched itself (from the page or with a fresh git clone): an unwatched session obeying a downloaded program reads as escaping review. It does accept StudyDesk's own code from the repository attached to the task, built with `npm ci && npm run build:routine` (all tested 2026-11-25). So:
+
+- **One-time setup:** the student adds the repository (`seeLorenz/studydesk`) to the "StudyDesk nightly run" scheduled task. The page can't attach it, since creating a task takes no repository. Until it's added, each run stops at once and says exactly that.
+- **Same version as the page:** the page saves the commit it was built from on the profile (`schedule.build`) whenever it opens, so after an update the next night builds the new version. A page built without a commit (local build) makes the night use `main`.
+- Each student still runs it in their own account on their own plan; the repository is public and read-only to them, and their data only ever goes to their own StudyDesk.
 
 Each task carries a key, and the profile keeps the key of the current one. If a new task is ever made (the student moved to another time zone), the old one still fires but finds a different key and stops at once without doing anything.
 
 ### Agents judge, code counts, also at night
 
 The nightly program (`routine.mjs`) is StudyDesk's own code: the same planning, grading rules, mastery counting and checks as the page, built into one file. The cloud session runs it with Node. Whenever the code needs Claude (to judge an answer, write a lesson, check a course), the program writes that request down and stops; the session, which is itself Claude, answers it; then the program runs again and continues. So Claude only does what Claude should do, and every number is still computed by code.
+
+The program itself never uses the network or starts other programs: it only reads and writes files in its work folder. Every download, upload and git command is a step it prints and the session runs, so each one is visible and goes through the session's normal safety check. The task's prompt tells the session to refuse any step outside download, answer, check releases and save.
 
 In practice a night takes three rounds: grading and the course check together, then all parts of tomorrow's quest at once, then a last pass that saves.
 
