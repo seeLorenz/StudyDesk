@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-w4hfhe",
   "branch": "claude/project-thread-w4hfhe",
-  "notes": "Realistic part times: passive part clock, reading minutes from the lesson text, per-student reading rate",
+  "notes": "Merge remote-tracking branch 'origin/main' into claude/project-thread-w4hfhe",
   "dataVersion": 1,
-  "builtAt": "2026-11-25T10:46:20.389Z",
-  "commit": "e258f5d205bf656eb903374f18599f6b966db64f"
+  "builtAt": "2026-11-25T12:00:14.351Z",
+  "commit": "002d1a57ba06b498f537d16f3e41d59d1ecc29b9"
 }
