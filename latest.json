@@ -1,7 +1,7 @@
 {
-  "version": "v1.2",
-  "notes": "A new Courses tab gives every course its own page, with To do beside the Organize chat and a list of files StudyDesk isn't sure about. Quests now take your exams in the coming week into account, put tomorrow's study times into your calendar, and can include an Anki step. Anki decks for material you need to know by heart (switch them on or off, plus an Export deck button). Setup asks fewer questions, a few a day, nearest exam first. Once setup is done it hands over to the StudyDesk chat, one chat with all the tools. When StudyDesk can't do something it says so plainly and saves your wish with a Send to developer link. Homework ids and exam titles stay the same when files are read again.",
+  "version": "v1.2.1",
+  "notes": "Study blocks stay off lecture times. Quest parts get realistic times: reading minutes come from the lesson text and your own reading speed, and passive parts run on their own clock. Saving a quest only merges each page's own changes, so a second device can't wipe your answers. Attach buttons open the file picker with one tap in the Claude app. The setup page retires once the semester is set up. The nightly run is built from the attached repo and passes the safety check.",
   "dataVersion": 1,
-  "builtAt": "2026-11-24T09:10:35.759Z",
-  "commit": "75b62c993c00e6445005c2d7023a97ff47362765"
+  "builtAt": "2026-11-25T13:35:43.696Z",
+  "commit": "b8326d82bd68f89ba18e6b78dd1a60c257945af9"
 }
