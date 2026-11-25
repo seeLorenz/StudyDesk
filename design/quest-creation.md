@@ -159,7 +159,7 @@ Because grading now happens once, the gate no longer stops the quest mid-way. A 
 - **Photos survive reloads**: see the table above.
 - **Key rule in one line** at the end of each lesson: see the table above.
 - **"Too easy / just right / too hard"** on every part. The most recent rating per skill (last 14 days) goes into the prompts that write the next quests: too hard means slower, smaller steps and an easier own problem; too easy means brisker and harder.
-- **Planned against actual time** on every row of the overview, from the problem timers ("9 of 12 min"). Reading time isn't timed yet (see "Realistic part times" below).
+- **Planned against actual time** on every row of the overview, from the problem timers ("9 of 12 min"). Since 2026-11-25 reading is timed too (see "Realistic part times" below).
 - **Autosave**: every change to the work (answers, hints, key-rule lines, notes) is copied to this browser at once, and saved to the student's StudyDesk within 2 seconds, and immediately when the tab is hidden or closed. After a crash, the newer of the two is used, so at most the last keystrokes before a crash on a different device are lost. A page only saves when it has unsaved changes of its own, and when it comes back to the front it takes over newer work saved elsewhere, so an old tab or a second device never overwrites newer hand-ins.
 - **Carry-over**: homework from an unfinished earlier quest comes back automatically (tasks only count as done when handed in), and the new quest says so ("Carried over from Thursday: 4.2b").
 
@@ -173,7 +173,7 @@ For students who use Anki (asked once on the To do list, see onboarding.md; chan
 - Not chosen: `.apkg` (needs SQLite and a zip in the page for no gain to the student), live sync through AnkiConnect (only reachable on the student's own computer, not from the artifact or a phone), storing decks on the semester (it is rebuilt from the setup draft in several places; the quest records already hold the cards).
 - **Inside the budget.** The planner gets each skill's deck size (`deckSizes`) and counts the Anki step and the tests while it fills the quest: a lesson on a skill with a deck costs no reading time, and the step costs 5 min + 0.5 min per tested card once. So the Anki step never pushes a quest over its budget.
 
-## Realistic part times (proposed 2026-11-24, not built yet)
+## Realistic part times (2026-11-25)
 
 **The problem.** Lorenz's sinh/cosh/tanh lesson said 10 min: 4 min to read, 6 for its own problem. Nobody reads and understands two formula-heavy screens in 4 minutes. Three causes in today's code:
 
@@ -183,10 +183,10 @@ For students who use Anki (asked once on the To do list, see onboarding.md; chan
 
 **The fix: time passively, estimate from the real text, calibrate per student. No button.**
 
-- **One clock per open part.** A part's time runs while it's expanded and the page is in front; the 2-minute hidden-tab auto-pause and the pause button stay. In a lesson, time before its problem card scrolls into view is reading; after that it belongs to the problem. In parts with several problems, the clock follows the unanswered problem in view (typing in one still switches to it). Reading time is stored on the quest progress as `readSeconds` with the lesson's `size` (below).
+- **One clock per open part.** A part's time runs while it's expanded and the page is in front; the 2-minute hidden-tab auto-pause and the pause button stay. In a lesson, time before its problem card scrolls into view is reading; after that it belongs to the problem. In parts with several problems, the clock follows the unanswered problem in view (typing in one still switches to it). Closing a part stops its clock. Reading seconds are stored on the quest progress (`read`, by part id); the size is measured again from the lesson's text when needed.
 - **Reading minutes from the text, by code.** After Claude writes a lesson, code measures its size in word-equivalents: words, plus 15 per displayed formula and 4 per inline formula (formulas read slowly). Reading minutes = size ÷ the student's reading rate. This replaces the planned figure on the part, so the header shows what's really there.
 - **Per-student reading rate, by code.** Median of size ÷ reading minutes over the student's last 10 timed reads, starting at 60 per minute and kept between 25 and 200. Same pattern as the slowness factor; the median keeps an odd tab left open from skewing it.
-- **Claude gets a length, not a time.** The planner reserves reading time per lesson (the student's median reading minutes, 8 to start), and the writer is told the matching size ("about 300 words and at most 4 displayed formulas") instead of "about 4 minutes". `lessonMinutes` in the student's settings stays and sets that target.
+- **Claude gets a length, not a time.** The planner reserves the lesson length setting per lesson (`lessonMinutes`, now 8 by default instead of 4), and the writer is told the matching size at the student's rate ("about 480 words, a displayed formula counts as 15") instead of "about 4 minutes". The quest keeps the rate it was planned with (`readRate`).
 - **Pace counts reading.** Recent pace = problem time + reading time per day. Otherwise honest, longer estimates would make quests shrink day after day.
 - Problem estimates keep today's rules (own median, else `estMinutes` × slowness); they just get honest times now.
 
@@ -197,7 +197,9 @@ For students who use Anki (asked once on the To do list, see onboarding.md; chan
 - Asking Claude to estimate minutes: guessing times is what went wrong. Claude controls length, code measures it.
 - Pausing after N minutes without a keystroke or scroll: it would pause during paper work, the usual way to solve maths problems. The median handles the odd left-open tab.
 
-**Open question:** show a small running clock on lessons too, like problems have (with the pause button)? Proposed: yes, so the student sees time is measured and can pause.
+**Lesson clock** (Lorenz: yes): a small "Reading · about N min" clock above each open lesson, with Pause, and Resume after a pause. A paused clock stays off until the student types, presses Resume or opens a part. Hidden-tab time past 2 minutes is skipped and the clock runs on when the page is back.
+
+Code: `src/quests/reading.ts` (size, rate, reading minutes per day), `QUEST_CONFIG.reading`, the clock in `QuestPage.tsx`.
 
 ## Notes for other modules
 

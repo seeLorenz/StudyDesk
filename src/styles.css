@@ -1079,13 +1079,17 @@ label:has(> .file-pick:focus-visible) {
   font-size: 13px;
   color: var(--ink-3);
 }
-.problem-meta {
+.problem-meta,
+.read-clock {
   font-size: 13px;
   color: var(--ink-3);
   display: inline-flex;
   gap: 10px;
   align-items: center;
   font-variant-numeric: tabular-nums;
+}
+.read-clock {
+  margin: 0 0 4px;
 }
 .timer {
   display: inline-flex;

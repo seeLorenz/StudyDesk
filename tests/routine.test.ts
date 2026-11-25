@@ -60,7 +60,8 @@ async function playNight(input: NightInput, maxRounds = 6): Promise<{ result: Ni
 }
 
 function handedInRecord(): QuestRecord {
-  const sem = sampleSemester(TUE, 0);
+  // Short lessons keep the sample's three-problem check in the quest.
+  const sem = { ...sampleSemester(TUE, 0), questSettings: { lessonMinutes: 4 } };
   const r = planQuest({ semester: sem, today: TUE, nowLocal: `${TUE}T08:00`, attempts: [], reviews: [], doneTaskIds: new Set(), blockerSkillIds: [], questId: "qst_tue" });
   if (r.kind !== "quest") throw new Error(r.kind);
   const quest = r.quest;

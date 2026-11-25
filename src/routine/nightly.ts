@@ -21,6 +21,7 @@ import { syncSemester, type Desk } from "../orchestrator/changes";
 import type { Turn } from "../platform/claude";
 import { emptyProgress, handIn, ungraded } from "../quests/handin";
 import { addAnki, deckSizes } from "../quests/anki";
+import { readingOf } from "../quests/reading";
 import { carriedOver, doneTasks, planQuest, recentBlockers, recentFeel, weekdayOf } from "../quests/plan";
 import type { QuestRecord, Semester } from "../quests/types";
 import { claudeWriter, writeQuest } from "../quests/write";
@@ -406,6 +407,7 @@ async function writeTomorrow(semester: Semester | null, calendar: CalendarAhead 
     reviews: mastery.reviews,
     doneTaskIds: doneTasks(records),
     deckSizes: deckSizes(records, semester),
+    reading: readingOf(records),
     blockerSkillIds: recentBlockers(records, tomorrow),
     questId: `qst_${tomorrow}_${now.toString(36)}`,
   });
