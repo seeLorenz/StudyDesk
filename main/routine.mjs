@@ -1,6 +1,5 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, mkdirSync, writeFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { execFileSync } from "node:child_process";
 class AnswerPending extends Error {
   constructor(callId2) {
     super(`Waiting for the answer to ${callId2}`);
@@ -3045,9 +3044,6 @@ function compareVersions(a, b) {
   }
   return 0;
 }
-function newestRelease(tags) {
-  return tags.filter(isRelease).sort(compareVersions).pop() ?? null;
-}
 function releaseDocFrom(list, now) {
   const seen = /* @__PURE__ */ new Map();
   const builds = [];
@@ -3079,50 +3075,27 @@ function releaseDocFrom(list, now) {
   const main2 = m ? { commit: m.commit, builtAt: m.builtAt, notes: m.notes, dataVersion: m.dataVersion } : null;
   return newest ? { latest: newest.version, notes: newest.notes, dataVersion: newest.dataVersion, checkedAt: now, releases, main: main2, builds: sorted } : null;
 }
-const git = (args) => execFileSync("git", args, { encoding: "utf8", timeout: 9e4, stdio: ["ignore", "pipe", "ignore"] });
-function parseLatest(text, now) {
-  try {
-    const j = JSON.parse(text);
-    if (typeof j.version !== "string" || !/^v\d+(\.\d+)*$/.test(j.version)) return null;
-    return { latest: j.version, notes: typeof j.notes === "string" && j.notes.trim() ? j.notes.trim().slice(0, 4e3) : null, dataVersion: Number.isInteger(j.dataVersion) ? j.dataVersion : null, checkedAt: now };
-  } catch {
-    return null;
-  }
+const folder = (dir) => join(dir, "releases");
+function releaseStepLines(dir, repo = RELEASE_REPO) {
+  const d = folder(dir);
+  return [
+    "NEXT STEP: check whether a newer StudyDesk release exists (this only reads the public releases branch).",
+    "",
+    `Run: (git clone --quiet --depth 1 --branch ${RELEASE_BRANCH} --filter=blob:none --sparse https://github.com/${repo}.git ${d} && git -C ${d} sparse-checkout set --no-cone '/*/release.json') || mkdir -p ${d}`,
+    "Then run this program again with the same arguments."
+  ];
 }
-function tagsFromLsRemote(out) {
-  return newestRelease(out.split("\n").map((l) => l.split("refs/tags/")[1]?.replace(/\^\{\}$/, "") ?? "").filter(Boolean));
-}
-function checkRelease(dir, now, repo = RELEASE_REPO) {
-  const cache = join(dir, "release.json");
-  if (existsSync(cache)) {
+function readReleases(dir, now) {
+  const d = folder(dir);
+  if (!existsSync(d)) return void 0;
+  const list = [];
+  for (const name of readdirSync(d)) {
     try {
-      return JSON.parse(readFileSync(cache, "utf8"));
+      list.push(JSON.parse(readFileSync(join(d, name, "release.json"), "utf8")));
     } catch {
     }
   }
-  const url = `https://github.com/${repo}.git`;
-  let found = null;
-  try {
-    const into = join(dir, "releases-check");
-    if (!existsSync(into)) git(["clone", "--quiet", "--depth", "1", "--branch", RELEASE_BRANCH, "--filter=blob:none", "--no-checkout", url, into]);
-    const list = [];
-    for (const d of git(["-C", into, "ls-tree", "-d", "--name-only", "HEAD"]).split("\n").filter(Boolean)) {
-      try {
-        list.push(JSON.parse(git(["-C", into, "show", `HEAD:${d}/release.json`])));
-      } catch {
-      }
-    }
-    found = releaseDocFrom(list, now) ?? parseLatest(git(["-C", into, "show", "HEAD:latest.json"]), now);
-  } catch {
-    try {
-      const tag = tagsFromLsRemote(git(["ls-remote", "--tags", url]));
-      found = tag ? { latest: tag, notes: null, dataVersion: null, checkedAt: now } : null;
-    } catch {
-      found = null;
-    }
-  }
-  writeFileSync(cache, JSON.stringify(found));
-  return found;
+  return releaseDocFrom(list, now);
 }
 const PARTS_DOC = "parts";
 const PARTS_COL = "docs";
@@ -3690,9 +3663,10 @@ async function main() {
     ]);
     return;
   }
+  const release = readReleases(dir, night.now);
+  if (release === void 0) return say(releaseStepLines(dir));
   const versions = new Map([...all.entries()].map(([k, v]) => [k, v.version]));
   const writes = [...result.writes];
-  const release = checkRelease(dir, night.now);
   if (release) writes.push({ path: ["release"], data: { ...release }, mode: "replace" });
   uploadStep(dir, url, writes, versions);
 }
