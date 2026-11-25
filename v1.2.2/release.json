@@ -1,0 +1,7 @@
+{
+  "version": "v1.2.2",
+  "notes": "Ask StudyDesk for another quest once today's is handed in, or swap an unstarted one, with your own length and course. Focus on one course until a date you pick; other courses' deadlines show as a note. Dismiss buttons hand a quest or part to StudyDesk: dismissed parts count as done but aren't graded and earn nothing. Organize puts the chat in the middle, with To do as a side panel you can hide and finished items folded away. Send to developer has Claude write a clear, anonymous issue, and wish and quest reason texts read more cleanly.",
+  "dataVersion": 1,
+  "builtAt": "2026-11-25T14:05:43.631Z",
+  "commit": "ebc9afd491906bca021c7f5fc53d71e3f97a4dd7"
+}
