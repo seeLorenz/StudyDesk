@@ -23,7 +23,7 @@ import { TodoList } from "../onboarding/TodoList";
 import { checkHandoff, type HandoffSetup } from "../platform/handoff";
 import { openRoutineStore } from "../platform/routineStore";
 import { createSchedule, runScheduleNow, scheduleFits, studentTimeZone } from "../platform/schedule";
-import { nightlySettings, type RoutineDoc } from "../routine/nightly";
+import { nightlySettings, type RoutineDoc, type ScheduleInfo } from "../routine/nightly";
 import { applyShallow, applySweep, outboxOrder } from "../routine/apply";
 import { openMasteryStore, type MasteryData, type MasteryStore } from "../platform/masteryStore";
 import { openOnboardingStore, StaleDraft, type OnboardingStore } from "../platform/onboardingStore";
@@ -42,7 +42,7 @@ import { calendarTaskSetup } from "../quests/times";
 import { GoBackCard, UpdateNotice } from "../updates/UpdateCards";
 import { loadRelease, loadUpdates, markAnnounced, updateEnv } from "../platform/updateStore";
 import { goBackTarget, offer } from "../updates/plan";
-import { APP_VERSION } from "../updates/version";
+import { APP_VERSION, BUILD_SHA } from "../updates/version";
 import { plainNote, whatsNewTurns } from "../updates/whatsNew";
 import { emptyState, type Change, type ChatCard, type Job, type Notification, type OrchMessage, type OrchState, type PendingConfirm } from "./types";
 
@@ -129,16 +129,19 @@ export function OrchestratorPanel(props: Props) {
     if (!p) return;
     const tz = studentTimeZone();
     const time = nightlySettings(p.nightly).time;
-    if (scheduleFits(p.schedule, tz, time)) return setNightly("on");
-    if (!setup) return setNightly(p.schedule ? "failed" : "off");
-    try {
-      const schedule = await createSchedule({ ...setup, ...(p.handoff?.environmentId === setup.environmentId ? p.handoff : {}) }, tz, time);
+    const save = async (schedule: ScheduleInfo) => {
       const np = { ...(profileRef.current ?? p), schedule };
       await os.saveProfile(np);
       profileRef.current = np;
       setProfile(np);
       publish("profile", np, "orch");
       setNightly("on");
+    };
+    // The nightly session builds the same StudyDesk as this page; after an update it builds the new one.
+    if (scheduleFits(p.schedule, tz, time)) return p.schedule!.build === BUILD_SHA ? setNightly("on") : save({ ...p.schedule!, build: BUILD_SHA });
+    if (!setup) return setNightly(p.schedule ? "failed" : "off");
+    try {
+      await save(await createSchedule({ ...setup, ...(p.handoff?.environmentId === setup.environmentId ? p.handoff : {}) }, tz, time));
     } catch {
       setNightly("failed");
     }
