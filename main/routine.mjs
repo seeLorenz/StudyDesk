@@ -1000,10 +1000,44 @@ function dedupe(skills) {
   const seen = /* @__PURE__ */ new Set();
   return skills.filter((s) => seen.has(s.id) ? false : (seen.add(s.id), true));
 }
+const APP_VERSION = "dev";
+const DATA_VERSION = 1;
+const DEV_CHANNEL = "main";
+const RELEASE_REPO = "seeLorenz/StudyDesk";
+const RELEASE_BRANCH = "releases";
+function parseVersion(v) {
+  const m = /^v(\d+(?:\.\d+)*)$/.exec(String(v ?? "").trim());
+  return m ? m[1].split(".").map(Number) : null;
+}
+const isRelease = (v) => parseVersion(v) !== null;
+function compareVersions(a, b) {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  if (!pa && !pb) return 0;
+  if (!pa) return -1;
+  if (!pb) return 1;
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d) return d;
+  }
+  return 0;
+}
 const WISH_URL = "https://github.com/seeLorenz/StudyDesk/issues/new";
-const wishLink = (text) => `[Send to developer](${WISH_URL}?title=${encodeURIComponent(`Wish: ${text.slice(0, 80)}`)}&body=${encodeURIComponent(`${text}
+const wishLink = (w, chat) => {
+  const cap = (s = "", n = 600) => s.trim().slice(0, n);
+  const enc = (s) => encodeURIComponent(s).replace(/\(/g, "%28").replace(/\)/g, "%29");
+  const body = `_Sent from StudyDesk ${APP_VERSION}, ${chat} chat. Written by StudyDesk's Claude from a student's request._
 
-(Sent from StudyDesk.)`)})`;
+### What the student asked
+${cap(w.asked) || "Not given."}
+
+### What StudyDesk can't do yet
+${cap(w.missing) || "Not given."}
+
+### Proposed fix
+${cap(w.fix) || "Not given."}`;
+  return `[Send to developer](${WISH_URL}?title=${enc(cap(w.title, 80) || "Wish from StudyDesk")}&body=${enc(body)})`;
+};
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 function atLeastAsGood(scale, a, b) {
   return scale.best < scale.worst ? a <= b : a >= b;
@@ -1592,7 +1626,7 @@ function applyOps(desk0, ops, o) {
         const text = str(op.text);
         if (!text) break;
         touch("profile", { ...desk.profile, wishes: [...desk.profile.wishes ?? [], { text, at: now }] });
-        lines.push(`Wish saved: "${text}" ${wishLink(text)}`);
+        lines.push(`Wish saved: ${str(op.title) || text} ${wishLink({ ...op }, "panel")}`);
         break;
       }
       case "set_profile": {
@@ -2396,7 +2430,9 @@ function planQuest(input) {
     const mine = tasks.filter((t) => t.assignment.id === a.id);
     const lower = (x) => x.charAt(0).toLowerCase() + x.slice(1);
     const needs = [...new Set(mine.map((t) => lower(byId.get(t.task.skillId).name)))];
-    reason = `${a.title} is due ${formatDue(a.dueAt, today)}. ${mine.map((t) => t.task.label).join(" and ")} need the ${needs.join(" and the ")}.`;
+    const labels = mine.map((t) => t.task.label);
+    const who = labels.length > 3 ? `${labels.length} of its tasks` : labels.length < 3 ? labels.join(" and ") : `${labels[0]}, ${labels[1]} and ${labels[2]}`;
+    reason = `${a.title} is due ${formatDue(a.dueAt, today)}. ${who} ${labels.length === 1 ? "needs" : "need"}: ${needs.join("; ")}.`;
   } else if (gate.length) {
     reason = `Recent mistakes came from ${names(gate).join(" and ")}, so today fixes that first.`;
   } else if (reviewIds.length && !newIds.length) {
@@ -3061,27 +3097,6 @@ async function writeTomorrow(semester, calendar, records, mastery, tomorrow, now
     else log.push(`Tomorrow's quest couldn't be written (${e?.message ?? String(e)}). StudyDesk writes it when you open it.`);
   }
   return out;
-}
-const DATA_VERSION = 1;
-const DEV_CHANNEL = "main";
-const RELEASE_REPO = "seeLorenz/StudyDesk";
-const RELEASE_BRANCH = "releases";
-function parseVersion(v) {
-  const m = /^v(\d+(?:\.\d+)*)$/.exec(String(v ?? "").trim());
-  return m ? m[1].split(".").map(Number) : null;
-}
-const isRelease = (v) => parseVersion(v) !== null;
-function compareVersions(a, b) {
-  const pa = parseVersion(a);
-  const pb = parseVersion(b);
-  if (!pa && !pb) return 0;
-  if (!pa) return -1;
-  if (!pb) return 1;
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d) return d;
-  }
-  return 0;
 }
 function releaseDocFrom(list, now) {
   const seen = /* @__PURE__ */ new Map();
