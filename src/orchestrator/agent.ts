@@ -157,7 +157,7 @@ export const CHANGE_TOOL = {
 - {op:"set_nightly", time?: "HH:MM", paused?: bool, grading?: bool, check?: bool, quest?: bool} (the nightly run: when it runs, pause it, or turn off grading / the courses' check / writing tomorrow's quest)
 - {op:"set_sweep", course, date: "YYYY-MM-DD" or "none"} (when the organization agent reads a course again completely, at night)
 - {op:"add_fact", course?, text} (word for word)
-- {op:"add_wish", text} (something StudyDesk can't do yet, in the student's words)
+- {op:"add_wish", text, title, asked, missing, fix} (something StudyDesk can't do yet; see the wish rule below)
 - {op:"set_profile", school?, country?, program?, year?}
 - {op:"add_result", course, component, points, maxPoints, date, skills?: [skill ids]} (a real result from school; can't be undone)
 - {op:"add_course", name, short?, credits?, targetGrade?} (then start_job kind new_course)
