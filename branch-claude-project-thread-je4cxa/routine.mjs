@@ -1100,6 +1100,13 @@ function setupTodo(draft, today = toDay()) {
       body: "If you do, quests that teach vocabulary or other things to learn by heart come with a deck to import into Anki.",
       chatPrompt: "Next on your list: do you use Anki? If you do, quests that teach vocabulary or other things to learn by heart come with a deck you can import. You can change this any time.",
       done: draft.questSettings?.anki !== void 0 || done.has("anki")
+    },
+    {
+      key: "place",
+      title: "Where do you study?",
+      body: 'Your study times in the calendar then say where to go and what to open, like "18:00, library: open part 1". Deciding that ahead takes the decision away from your mood.',
+      chatPrompt: "Next on your list: where do you usually study? A library, home, a café, maybe different places on different days. Your study times in the calendar will then say where to go and which part to open first.",
+      done: done.has("place")
     }
   ];
   const results = draft.courses.filter((c) => draft.results[c.id]);
@@ -1132,7 +1139,7 @@ ${list}`,
       done: done.has("unsure")
     });
   }
-  let left = ASKS_PER_DAY - Object.entries(draft.todoDoneOn ?? {}).filter(([k, d]) => k !== "anki" && d === today && done.has(k)).length;
+  let left = ASKS_PER_DAY - Object.entries(draft.todoDoneOn ?? {}).filter(([k, d]) => k !== "anki" && k !== "place" && d === today && done.has(k)).length;
   const groups = /* @__PURE__ */ new Map();
   for (const x of asksOf(draft, today)) if (done.has(x.key) || done.has(x.sub) || left-- > 0) groups.set(x.key, [...groups.get(x.key) ?? [], x.text]);
   for (const [key2, lines] of groups) {
@@ -2578,7 +2585,7 @@ What the student has told StudyDesk about themselves:
 ${o.notes.trim() || "(nothing yet)"}
 
 Rules: only free time; leave about 15 min between a commitment and study; one to three blocks, none shorter than 25 min, adding up to about the quest's time; follow anything the student said about when or where they like to study; otherwise prefer daytime and the gaps between commitments, and nothing after 22:00.
-Reply with only the blocks, one per line, as HH:MM-HH:MM, or "none" if there's no good time left.`
+Reply with only the blocks, one per line, as HH:MM-HH:MM, each followed by where the student will study then if they've said where they study (for example "16:00-17:00 library"; a commitment just before it can decide which of their places), or "none" if there's no good time left.`
     }
   ];
 }
@@ -2586,11 +2593,15 @@ const hm = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
 const pad = (n) => String(n).padStart(2, "0");
 function parseTimes(reply) {
   const out = [];
-  for (const m of reply.matchAll(/(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})/g)) {
-    const [h1, m1, h2, m2] = m.slice(1).map(Number);
-    if (h1 > 23 || h2 > 23 || m1 > 59 || m2 > 59) continue;
-    const t = { start: `${pad(h1)}:${pad(m1)}`, end: `${pad(h2)}:${pad(m2)}` };
-    if (hm(t.end) > hm(t.start)) out.push(t);
+  for (const line of reply.split("\n")) {
+    const ms = [...line.matchAll(/(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})/g)];
+    for (const m of ms) {
+      const [h1, m1, h2, m2] = m.slice(1).map(Number);
+      if (h1 > 23 || h2 > 23 || m1 > 59 || m2 > 59) continue;
+      const place = ms.length === 1 ? line.slice(m.index + m[0].length).replace(/^[\s:,|–-]+/, "").trim().slice(0, 60) : "";
+      const t = { start: `${pad(h1)}:${pad(m1)}`, end: `${pad(h2)}:${pad(m2)}`, ...place && { place } };
+      if (hm(t.end) > hm(t.start)) out.push(t);
+    }
   }
   out.sort((a, b) => hm(a.start) - hm(b.start));
   return out.filter((t, i) => i === 0 || hm(t.start) >= hm(out[i - 1].end)).slice(0, 3);
@@ -2606,23 +2617,33 @@ async function pickTimes(ask, o) {
   );
 }
 function studyEntries(o) {
-  return o.times.map((t) => ({
-    day: o.day,
-    ...t,
-    title: `Study · ${o.courseName}`,
-    description: `${ENTRY_MARK} ${short(o.reason)}${o.url ? `
+  let used = 0;
+  return o.times.map(({ place, ...t }) => {
+    let left = used;
+    const i = o.quest.parts.findIndex((p) => !o.done?.includes(p.id) && (left -= partMinutes(p)) < 0);
+    used += hm(t.end) - hm(t.start);
+    const part = i < 0 ? "" : `open part ${i + 1}, "${o.quest.parts[i].title}"`;
+    const plan = part && `${t.start}${place ? `, ${place}` : ""}: ${part}. `;
+    return {
+      day: o.day,
+      ...t,
+      title: `Study · ${o.courseName}${i < 0 ? "" : ` · part ${i + 1}`}`,
+      description: `${ENTRY_MARK} ${plan}${short(o.quest.reason)}${o.url ? `
 Open StudyDesk: ${o.url}` : ""}`,
-    timeZone: o.timeZone
-  }));
+      ...place && { location: place },
+      timeZone: o.timeZone
+    };
+  });
 }
 const short = (t) => (/^.{1,200}?[.!?](\s|$)/.exec(t)?.[0] ?? t.slice(0, 200)).trim();
-const sig = (e) => `${e.day} ${e.start}-${e.end} ${e.title}`;
+const sig = (e) => `${e.day} ${e.start}-${e.end} ${e.title}${e.location ? ` @ ${e.location}` : ""}`;
 function calendarWant(day, questId, entries) {
   const sigs = entries.map(sig);
   const key2 = `${day}|${sigs.join("|")}`;
   const events = entries.map((e) => ({
     summary: e.title,
     description: e.description,
+    ...e.location && { location: e.location },
     startTime: `${e.day}T${e.start}:00`,
     endTime: `${e.day}T${e.end}:00`,
     timeZone: e.timeZone,
@@ -3066,8 +3087,8 @@ async function studyTimes(input, semester, quest, d, log) {
       log.push("No study times were picked for tomorrow, so nothing goes into your calendar.");
       return null;
     }
-    log.push(`Study times for tomorrow: ${times.map((t) => `${t.start}-${t.end}`).join(", ")}. They go into your calendar.`);
-    return calendarWant(quest.date, quest.id, studyEntries({ day: quest.date, times, courseName, reason: quest.reason, timeZone: input.profile?.schedule?.timeZone ?? "UTC", url: input.url ?? null }));
+    log.push(`Study times for tomorrow: ${times.map((t) => `${t.start}-${t.end}${t.place ? ` (${t.place})` : ""}`).join(", ")}. They go into your calendar.`);
+    return calendarWant(quest.date, quest.id, studyEntries({ day: quest.date, times, courseName, quest, timeZone: input.profile?.schedule?.timeZone ?? "UTC", url: input.url ?? null }));
   } catch (e) {
     if (isPending(e)) return "pending";
     log.push(`Tomorrow's study times couldn't be picked (${e?.message ?? String(e)}).`);
