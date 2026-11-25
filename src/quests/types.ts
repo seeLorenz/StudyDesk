@@ -173,6 +173,8 @@ export type Quest = {
   /** Short lines shown under the title: time today, what was left out. */
   notes: string[];
   parts: QuestPart[];
+  /** The student's reading rate when planned (word-equivalents per minute): sets each lesson's length and reading minutes. */
+  readRate?: number;
   createdAt: number;
 };
 
@@ -223,6 +225,8 @@ export type QuestProgress = {
   handedIn: string[];
   /** Side notes from select-to-reply anywhere in the quest. */
   notes?: Note[];
+  /** Lessons: seconds spent reading, by part id (before the problem came into view). */
+  read?: Record<string, number>;
   /** Lessons: the student's own one-line version of the key rule, by part id. */
   keyLines?: Record<string, string>;
   /** How each part felt, by part id. Fed into how the next quests are written. */

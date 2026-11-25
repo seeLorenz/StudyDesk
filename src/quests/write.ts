@@ -8,7 +8,8 @@
 
 import type { AskOptions, Turn } from "../platform/claude";
 import type { Skill } from "../mastery/types";
-import { applyQuestSettings, QUEST_CONFIG } from "./config";
+import { applyQuestSettings, partMinutes, QUEST_CONFIG } from "./config";
+import { readMinutes } from "./reading";
 import type { Card, Course, FixIt, LearnPart, ProblemPart, Quest, QuestProblem, Semester } from "./types";
 
 export type Ask = (turns: Turn[], opts?: AskOptions) => Promise<string>;
@@ -116,13 +117,17 @@ the explanation in Markdown`,
   ];
 }
 
+const rateOf = (q: Quest) => q.readRate ?? QUEST_CONFIG.reading.startRate;
+/** The lesson's length target: its planned reading minutes at the student's rate, to the nearest 10. */
+const lessonWords = (q: Quest, part: ProblemPart) => Math.round(((part.readMinutes ?? QUEST_CONFIG.lesson.readMinutes) * rateOf(q)) / 10) * 10;
+
 export function lessonTurns(quest: Quest, part: ProblemPart, ctx: Ctx): Turn[] {
   const id = part.skillIds![0];
   const p = part.problems[0];
   return [
     {
       role: "user",
-      content: `You write one short lesson of today's study quest. It teaches ONE idea in a quick cycle: a brief explanation, one worked example, then the student solves a problem on their own straight away. The student reads the explanation and example in about ${part.readMinutes ?? 4} minutes, so keep it tight: teach exactly this idea, nothing around it.
+      content: `You write one short lesson of today's study quest. It teaches ONE idea in a quick cycle: a brief explanation, one worked example, then the student solves a problem on their own straight away. Keep the explanation and worked example together to about ${lessonWords(quest, part)} words, where a displayed formula counts as ${QUEST_CONFIG.reading.displayFormula} words and an inline one as ${QUEST_CONFIG.reading.inlineFormula}: that's what this student reads in about ${part.readMinutes ?? QUEST_CONFIG.lesson.readMinutes} minutes. Teach exactly this idea, nothing around it.
 
 ${header(ctx)}
 
@@ -339,6 +344,7 @@ export async function writeQuest(
         part.body = l.body;
         if (l.keyRule) part.keyRule = l.keyRule;
         if (l.cards) part.cards = l.cards;
+        part.readMinutes = readMinutes(l.body, rateOf(plan));
         for (const f of l.problems) Object.assign(part.problems.find((p) => p.id === f.id)!, f);
       } else {
         const filled = part.kind === "practice" ? await writer.practice(plan, part) : await writer.assignment(plan, part);
@@ -356,6 +362,8 @@ export async function writeQuest(
     for (let part = queue.shift(); part && !failure; part = queue.shift()) await writeOne(part);
   };
   await Promise.all(Array.from({ length: Math.max(1, opts.concurrency ?? 2) }, worker));
+  // Lessons now carry the reading time of their real text.
+  quest.plannedMinutes = quest.parts.reduce((s, p) => s + partMinutes(p), 0);
   if (failure) throw new QuestIncomplete(quest, [...written], failure);
   return quest;
 }

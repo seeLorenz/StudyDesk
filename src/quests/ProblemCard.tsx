@@ -34,7 +34,7 @@ export function ProblemCard({ n, render, problem, skillName, work, locked, grade
   const editable = !locked && !graded;
 
   return (
-    <article className={"problem" + (graded ? ` is-${work.verdict}` : "")} aria-labelledby={`${problem.id}-h`}>
+    <article className={"problem" + (graded ? ` is-${work.verdict}` : "")} aria-labelledby={`${problem.id}-h`} data-clock={problem.id}>
       <header className="problem-head">
         <h4 id={`${problem.id}-h`}>
           {problem.label ? `Task ${problem.label}` : `Problem ${n}`}

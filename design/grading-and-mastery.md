@@ -179,7 +179,7 @@ mastery = sum(weight × credit) / sum(weight)    over skills whose tier is at or
 
 Every problem is timed, and every estimate comes from the student's own times. Quests are sized to what the student actually finished recently, so they can't pile up.
 
-**Timing.** A timer starts when the student opens a problem and stops when they hand it in. It has a pause button and pauses on its own when the tab is hidden for more than 2 minutes. Only active time is stored (`activeSeconds`).
+**Timing.** A problem's timer runs while it is the problem in view of the open part (or the one being typed in) and stops when the part is handed in or closed. It has a pause button, and time the tab spends hidden beyond 2 minutes isn't counted. Only active time is stored (`activeSeconds`). Lesson reading is timed the same way; see quest-creation.md, "Realistic part times".
 
 **Expected time per problem**
 
@@ -190,7 +190,7 @@ Every problem is timed, and every estimate comes from the student's own times. Q
 **How much fits in a day**
 
 1. Free time = daily study goal − lectures and fixed calendar events.
-2. Recent pace = average active minutes finished per day over the last 3 study days.
+2. Recent pace = average active minutes (problems and reading) per day over the last 3 study days.
 3. Quest budget = the smaller of 80% of free time and 1.2 × recent pace. A brand-new student has no pace yet, so it starts at 50% of free time.
 4. Unfinished problems go back into the pool at the end of the day. Nothing is ever overdue.
 

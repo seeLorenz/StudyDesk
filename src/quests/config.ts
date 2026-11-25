@@ -5,8 +5,8 @@ export const QUEST_CONFIG: {
   assignmentLookaheadDays: number;
   urgentWithinDays: number;
   overBudgetTolerance: number;
-  learnMinutes: { base: number; perSkill: number };
   lesson: { readMinutes: number; problemShare: number };
+  reading: { displayFormula: number; inlineFormula: number; startRate: number; minRate: number; maxRate: number; window: number; minSeconds: number };
   maxNewSkills: number;
   newBeforeExams: number;
   practiceMaxPoints: number;
@@ -21,14 +21,19 @@ export const QUEST_CONFIG: {
   urgentWithinDays: 2,
   /** A quest may run this much over its budget rather than split a task group. */
   overBudgetTolerance: 0.1,
-  /** Minutes for a learn part: base plus this much per skill it covers. Reading isn't scaled by slowness. */
-  learnMinutes: { base: 6, perSkill: 3 },
   /**
    * A lesson teaches one idea: read a short explanation and a worked example,
    * then solve a short problem straight away. Its problem is a smaller one than
-   * a full task, so it gets this share of the skill's expected time.
+   * a full task, so it gets this share of the skill's expected time. Reading
+   * minutes are the target the writer gets; the written text sets the real figure.
    */
-  lesson: { readMinutes: 4, problemShare: 0.5 },
+  lesson: { readMinutes: 8, problemShare: 0.5 },
+  /**
+   * Reading time (reading.ts). Text size in word-equivalents: words plus this
+   * much per displayed and inline formula. The student's rate is the median of
+   * their last `window` reads of at least `minSeconds`, kept between min and max.
+   */
+  reading: { displayFormula: 15, inlineFormula: 4, startRate: 60, minRate: 25, maxRate: 200, window: 10, minSeconds: 30 },
   /** At most this many brand-new skills per quest when there's no homework to prepare. */
   maxNewSkills: 2,
   /** The same in the week before an exam of the quest's course: only that exam's skills unless the student asks. */
@@ -47,10 +52,6 @@ export const QUEST_CONFIG: {
 
 /** Minutes of the "Study in Anki" step before deck tests on this many cards. */
 export const ankiMinutes = (cards: number) => (cards ? Math.round(QUEST_CONFIG.anki.baseMinutes + QUEST_CONFIG.anki.perCard * cards) : 0);
-
-export function learnMinutes(skillCount: number): number {
-  return skillCount ? QUEST_CONFIG.learnMinutes.base + QUEST_CONFIG.learnMinutes.perSkill * skillCount : 0;
-}
 
 /** Minutes for a quest part: reading plus its problems. */
 export function partMinutes(p: { kind: string; estMinutes?: number; readMinutes?: number; problems?: Array<{ expMinutes: number }> }): number {

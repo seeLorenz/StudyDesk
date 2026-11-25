@@ -21,6 +21,7 @@ import type { AnswerFile, ProblemPart, ProblemWork, Quest, QuestPart, QuestProgr
 import { claudeWriter, QuestIncomplete, writeQuest, type WriteStatus } from "./write";
 import { compressImage, dataUrlToBlob } from "./images";
 import { addAnki, deckSizes, ankiDeck } from "./anki";
+import { readingOf } from "./reading";
 import { applyChecks, checkResults, isResolved, newReviewChat, questMistakes, reviewRules } from "./review";
 import { WorkloadCard } from "../onboarding/WorkloadCard";
 import { placementWriter, planPlacement } from "../onboarding/placement";
@@ -32,6 +33,9 @@ import { mergeGrading, type GradingOutbox } from "../routine/apply";
 import { mergeProgress } from "./merge";
 import { ComingUp } from "../shell/ComingUp";
 import { QUEST_CHANGED } from "./times";
+
+/** Prefix of the clock's id while a lesson is being read. */
+const READ = "read:";
 
 // The quest page: builds today's quest on the first open of the day (the
 // in-page fallback from the design), then lets the student work through it
@@ -269,6 +273,7 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
         reviews: mastery.reviews,
         doneTaskIds: doneTasks(records),
         deckSizes: deckSizes(records, semester),
+        reading: readingOf(records),
         blockerSkillIds: recentBlockers(records, today),
         budgetOverride,
         questId: `qst_${today}_${Date.now().toString(36)}`,
@@ -636,7 +641,10 @@ function QuestView({ record, data, scroller, onRecord, onMastery, extra }: ViewP
     return record.progress;
   });
   const [openPart, setOpenPart] = useState<string | null>(null);
+  /** What the clock runs on: a problem id, or READ + a lesson's part id while it's being read. */
   const [activeId, setActiveId] = useState<string | null>(null);
+  /** The student paused the clock: it stays off until they type, press Resume or open a part. */
+  const paused = useRef(false);
   const [grading, setGrading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const images = useRef<Record<string, Blob[]>>({});
@@ -802,7 +810,7 @@ ${b?.text ?? ""}
     <AnnotatedMarkdown blockId={blockId} text={text} notes={notes.byBlock.get(blockId) ?? []} {...notes.handlers} />
   );
 
-  // ---- the timer: one problem at a time, only while the page is in front ----
+  // ---- the clock: one thing at a time, only while the page is in front ----
   useEffect(() => {
     if (!activeId) return;
     let last = Date.now();
@@ -811,14 +819,16 @@ ${b?.text ?? ""}
       const now = Date.now();
       const dt = (now - last) / 1000;
       last = now;
-      if (document.hidden) {
-        hiddenSince ??= now - dt * 1000;
-        if (now - hiddenSince > CONFIG.timing.autoPauseAfterMs) {
-          setActiveId(null);
-          return;
-        }
-      } else hiddenSince = null;
+      // Hidden for longer than the limit: that time is away, not work. It runs on once the page is back.
+      if (document.hidden) hiddenSince ??= now - dt * 1000;
+      const away = hiddenSince !== null && now - hiddenSince > CONFIG.timing.autoPauseAfterMs;
+      if (!document.hidden) hiddenSince = null;
+      if (away) return;
       setProgress((p) => {
+        if (activeId.startsWith(READ)) {
+          const id = activeId.slice(READ.length);
+          return { ...p, read: { ...p.read, [id]: (p.read?.[id] ?? 0) + dt } };
+        }
         const w = p.work[activeId] ?? emptyWork();
         return { ...p, work: { ...p.work, [activeId]: { ...w, activeSeconds: w.activeSeconds + dt } } };
       });
@@ -827,9 +837,31 @@ ${b?.text ?? ""}
     return () => clearInterval(t);
   }, [activeId, saveSoon]);
 
+  // The clock follows the open part, no button needed: a lesson counts as reading
+  // until its problem scrolls into view; then the problem in view is timed.
+  useEffect(() => {
+    paused.current = false;
+    const part = quest.parts.find((p) => p.id === openPart);
+    if (!part || part.kind === "learn" || progressRef.current.handedIn.includes(part.id)) return setActiveId(null);
+    setActiveId(part.kind === "lesson" ? READ + part.id : null);
+    const io = new IntersectionObserver((es) => es.forEach((e) => e.isIntersecting && !paused.current && activity(e.target.getAttribute("data-clock")!)), {
+      rootMargin: "0px 0px -40% 0px",
+    });
+    document.getElementById(`row-${part.id}`)?.querySelectorAll("[data-clock]").forEach((el) => io.observe(el));
+    return () => io.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openPart]);
+
+  const pause = () => {
+    paused.current = true;
+    setActiveId(null);
+    void flush();
+  };
+
   const activity = (id: string) => {
     const w = progressRef.current.work[id];
     if (w?.verdict) return;
+    paused.current = false;
     if (activeId !== id) setActiveId(id);
     if (!w?.startedAt) setWork(id, { startedAt: Date.now() });
   };
@@ -872,7 +904,6 @@ ${b?.text ?? ""}
   const toggle = (id: string) => setOpenPart((o) => (o === id ? null : id));
 
   const handInPart = (part: QuestPart) => {
-    if (part.kind !== "learn" && activeId && part.problems.some((p) => p.id === activeId)) setActiveId(null);
     commit((p) => ({ ...p, handedIn: [...p.handedIn.filter((x) => x !== part.id), part.id], updatedAt: Date.now() }));
     window.dispatchEvent(new Event(QUEST_CHANGED));
     setOpenPart(null);
@@ -918,14 +949,14 @@ ${b?.text ?? ""}
 
   // ---- rendering ----
   const nl = nowLocal();
-  const spentSeconds = Object.values(progress.work).reduce((s, w) => s + (w.activeSeconds || 0), 0);
+  const spentSeconds = [...Object.values(progress.work).map((w) => w.activeSeconds || 0), ...Object.values(progress.read ?? {})].reduce((s, x) => s + x, 0);
   const doneCount = quest.parts.filter((p) => progress.handedIn.includes(p.id)).length;
   const waiting = ungraded(quest, progress).length;
   const everythingIn = allHandedIn(quest, progress);
 
-  /** Active minutes on a part's problems (reading isn't timed). */
+  /** Active minutes on a part: reading plus its problems. */
   const tookMin = (part: QuestPart) =>
-    part.kind === "learn" ? 0 : Math.round(part.problems.reduce((s, p) => s + (progress.work[p.id]?.activeSeconds ?? 0), 0) / 60);
+    part.kind === "learn" ? 0 : Math.round(part.problems.reduce((s, p) => s + (progress.work[p.id]?.activeSeconds ?? 0), progress.read?.[part.id] ?? 0) / 60);
   const timeText = (part: QuestPart) => {
     const took = tookMin(part);
     const planned = partMinutes(part);
@@ -1001,6 +1032,32 @@ ${b?.text ?? ""}
       <div className="part-body">
         {part.kind === "lesson" && part.body && (
           <>
+            {!isIn && (
+              <p className="read-clock">
+                Reading · about {part.readMinutes} min
+                <span className={"timer" + (activeId === READ + part.id ? " is-on" : "")} title="Reading time">
+                  {clock(progress.read?.[part.id] ?? 0)}
+                  {activeId === READ + part.id ? (
+                    <button type="button" className="timer-btn" onClick={pause}>
+                      Pause
+                    </button>
+                  ) : (
+                    !activeId && (
+                      <button
+                        type="button"
+                        className="timer-btn"
+                        onClick={() => {
+                          paused.current = false;
+                          setActiveId(READ + part.id);
+                        }}
+                      >
+                        Resume
+                      </button>
+                    )
+                  )}
+                </span>
+              </p>
+            )}
             <div className="learn-text">{md(part.id, part.body)}</div>
             <h3 className="your-turn">Your turn</h3>
           </>
@@ -1025,10 +1082,7 @@ ${b?.text ?? ""}
               onChange={(patch) => setWork(problem.id, patch)}
               onAddFile={(f, b) => addFile(problem.id, f, b)}
               onActivity={() => activity(problem.id)}
-              onPause={() => {
-                setActiveId(null);
-                void flush();
-              }}
+              onPause={pause}
               onSlipAnswer={(c) => void answerSlipQ(problem.id, c)}
             />
           );

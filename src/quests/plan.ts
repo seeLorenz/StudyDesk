@@ -10,6 +10,7 @@ import { dueSkills, replay } from "../mastery/replay";
 import { expectedMinutes, questBudget, slownessFactor } from "../mastery/timing";
 import type { Attempt, Day, ReviewItem, Skill, SkillState } from "../mastery/types";
 import { ankiMinutes, applyQuestSettings, QUEST_CONFIG, partMinutes } from "./config";
+import type { Reading } from "./reading";
 import type { Assignment, AssignmentTask, KeyDate, ProblemPart, Quest, QuestProblem, Semester, TimetableEntry } from "./types";
 
 export type PlanInput = {
@@ -32,6 +33,8 @@ export type PlanInput = {
   calendarBusyMinutes?: number;
   /** Cards per skill in the student's Anki decks, when Anki is on (anki.ts). Those skills become deck tests with an Anki step first. */
   deckSizes?: Map<string, number>;
+  /** The student's reading rate and reading minutes per day (reading.ts). */
+  reading?: Reading;
 };
 
 export type PlanResult =
@@ -141,7 +144,7 @@ export function planQuest(input: PlanInput): PlanResult {
   const fixedBusy = busyMinutes(semester.timetable, weekday);
   // Today's calendar is the live source; the weekly timetable covers lectures that aren't in it.
   const busy = input.calendarBusyMinutes !== undefined ? Math.max(input.calendarBusyMinutes, fixedBusy) : fixedBusy;
-  const budget = questBudget(goal, busy, attempts, today);
+  const budget = questBudget(goal, busy, attempts, today, input.reading?.minutesByDay);
   const budgetMinutes = input.budgetOverride ?? budget.budgetMinutes;
   if (budgetMinutes <= 0) return { kind: "no_time", freeMinutes: budget.freeMinutes, goalMinutes: goal };
   const limit = budgetMinutes * (1 + QUEST_CONFIG.overBudgetTolerance);
@@ -392,6 +395,7 @@ export function planQuest(input: PlanInput): PlanResult {
       reason,
       notes,
       parts,
+      readRate: input.reading?.rate ?? QUEST_CONFIG.reading.startRate,
       createdAt: Date.now(),
     },
   };

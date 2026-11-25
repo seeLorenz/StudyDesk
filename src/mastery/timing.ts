@@ -45,12 +45,15 @@ export type Budget = { freeMinutes: number; paceMinutes: number | null; budgetMi
 /**
  * Minutes for today's quest: the smaller of 80% of free time and 1.2 × the
  * recent pace. A new student without a pace starts at half of their free time.
- * Only days before today count toward the pace.
+ * Only days before today count toward the pace. `readByDay`: reading minutes,
+ * which count toward the pace like problem time.
  */
-export function questBudget(dailyGoalMinutes: number, busyMinutes: number, attempts: Attempt[], today: Day): Budget {
+export function questBudget(dailyGoalMinutes: number, busyMinutes: number, attempts: Attempt[], today: Day, readByDay?: Map<Day, number>): Budget {
   const freeMinutes = Math.max(0, dailyGoalMinutes - busyMinutes);
-  const days = activeMinutesByDay(attempts).filter((d) => d.day < today).slice(-CONFIG.budget.paceDays);
-  const paceMinutes = days.length ? days.reduce((s, d) => s + d.minutes, 0) / days.length : null;
+  const byDay = new Map(activeMinutesByDay(attempts).map((d) => [d.day, d.minutes]));
+  for (const [day, m] of readByDay ?? []) byDay.set(day, (byDay.get(day) ?? 0) + m);
+  const days = [...byDay].filter(([day]) => day < today).sort(([a], [b]) => (a < b ? -1 : 1)).slice(-CONFIG.budget.paceDays);
+  const paceMinutes = days.length ? days.reduce((s, [, m]) => s + m, 0) / days.length : null;
   const raw =
     paceMinutes === null
       ? freeMinutes * CONFIG.budget.newStudentShare

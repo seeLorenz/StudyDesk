@@ -256,15 +256,15 @@ describe("memory", () => {
 
 describe("quest settings and rebuilding", () => {
   it("changes hints, lesson length and new skills per quest within limits, from the next quest", () => {
-    const r = applyOps(desk(), [{ op: "set_quest_settings", hints: 1, lessonMinutes: 8, newSkillsPerQuest: 9 }], { studentWords: "", now: 1 });
+    const r = applyOps(desk(), [{ op: "set_quest_settings", hints: 1, lessonMinutes: 10, newSkillsPerQuest: 9 }], { studentWords: "", now: 1 });
     expect(r.errors[0]).toMatch(/newSkillsPerQuest/);
-    expect(r.change!.lines).toEqual(["Quests: hints per task 3 → 1, lesson reading minutes 4 → 8 (from the next quest)"]);
+    expect(r.change!.lines).toEqual(["Quests: hints per task 3 → 1, lesson reading minutes 8 → 10 (from the next quest)"]);
     const sem = syncSemester(r.desk.draft, profile, null);
-    expect(sem.questSettings).toEqual({ hints: 1, lessonMinutes: 8 });
+    expect(sem.questSettings).toEqual({ hints: 1, lessonMinutes: 10 });
     applyQuestSettings(sem.questSettings);
-    expect([QUEST_CONFIG.hints, QUEST_CONFIG.lesson.readMinutes, QUEST_CONFIG.maxNewSkills]).toEqual([1, 8, 2]);
+    expect([QUEST_CONFIG.hints, QUEST_CONFIG.lesson.readMinutes, QUEST_CONFIG.maxNewSkills]).toEqual([1, 10, 2]);
     applyQuestSettings(undefined);
-    expect([QUEST_CONFIG.hints, QUEST_CONFIG.lesson.readMinutes]).toEqual([3, 4]);
+    expect([QUEST_CONFIG.hints, QUEST_CONFIG.lesson.readMinutes]).toEqual([3, 8]);
     expect(canUndo(r.desk, r.change!)).toBe(true);
   });
 

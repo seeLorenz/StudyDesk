@@ -7,9 +7,12 @@ import { addDays } from "../src/mastery/days";
 import type { Attempt } from "../src/mastery/types";
 import type { ProblemPart, Quest } from "../src/quests/types";
 import { addAnki, ankiDeck, deckSizes } from "../src/quests/anki";
+import { readingOf, readMinutes, textSize } from "../src/quests/reading";
+import { partMinutes } from "../src/quests/config";
 
 const TUE = "2026-11-03";
-const sem = sampleSemester(TUE, 0);
+// Short lessons keep the sample quest's full shape; "realistic part times" below covers the default.
+const sem = { ...sampleSemester(TUE, 0), questSettings: { lessonMinutes: 4 } };
 const base: PlanInput = { semester: sem, today: TUE, nowLocal: `${TUE}T08:00`, attempts: [] as Attempt[], reviews: [], doneTaskIds: new Set<string>(), blockerSkillIds: [] };
 
 function plan(over: Partial<PlanInput> = {}): Quest {
@@ -370,5 +373,43 @@ describe("Anki deck", () => {
     addAnki(q, records, semester);
     expect(q.parts[0].kind).toBe("learn");
     expect(q.plannedMinutes).toBeLessThanOrEqual(q.budgetMinutes * 1.1);
+  });
+});
+
+describe("realistic part times", () => {
+  it("sizes a text in word-equivalents, formulas counting extra", () => {
+    expect(textSize("The sum $a+b$ is\n\n$$x^2$$\n\nfine, and \\(y\\) too.")).toBe(6 + 2 * 4 + 15);
+  });
+
+  it("gives lessons 8 reading minutes by default, so less fits in the same budget", () => {
+    const q = plan({ semester: sampleSemester(TUE, 0) });
+    expect(q.parts.map((p) => p.kind)).toEqual(["practice", "lesson", "lesson", "assignment"]);
+    expect((q.parts[1] as ProblemPart).readMinutes).toBe(8);
+    expect(q.readRate).toBe(60);
+    expect(q.notes.join(" ")).toContain("doesn't fit today");
+  });
+
+  it("sets each lesson's reading minutes from its written text, and asks Claude for a length", async () => {
+    const planned = plan();
+    const q = await writeQuest({ ...planned, readRate: 30 }, sampleWriter(SAMPLE_SKILLS));
+    const l = q.parts.find((p) => p.kind === "lesson") as ProblemPart;
+    expect(l.readMinutes).toBe(readMinutes(l.body!, 30));
+    expect(q.plannedMinutes).toBe(q.parts.reduce((s, p) => s + partMinutes(p), 0));
+    let prompt = "";
+    const ask: Ask = async (turns) => ((prompt ||= String(turns[0].content)), "");
+    const slow = { ...planned, readRate: 30 };
+    await claudeWriter(sem, slow, [], ask).lesson(slow, slow.parts[1] as ProblemPart).catch(() => {});
+    expect(prompt).toContain("about 120 words"); // 4 min × 30
+  });
+
+  it("learns the reading rate from timed reads and counts reading per day", async () => {
+    const q = await writeQuest(plan(), sampleWriter(SAMPLE_SKILLS));
+    const lessons = q.parts.filter((p): p is ProblemPart => p.kind === "lesson");
+    const size = textSize(lessons[0].body!);
+    const progress = { ...emptyProgress(q.id), read: { [lessons[0].id]: 60 * (size / 20), [lessons[1].id]: 10 } };
+    expect(readingOf([])).toEqual({ rate: 60, minutesByDay: new Map() });
+    const r = readingOf([{ quest: q, progress }]);
+    expect(r.rate).toBe(25); // 20 per minute, kept at the lower bound; the 10-second read doesn't count
+    expect(r.minutesByDay.get(TUE)).toBeCloseTo((60 * (size / 20) + 10) / 60);
   });
 });

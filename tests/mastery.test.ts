@@ -285,6 +285,11 @@ describe("quest budget", () => {
     expect(questBudget(480, 240, attempts, D(4))).toEqual({ freeMinutes: 240, paceMinutes: 50, budgetMinutes: 60 });
     expect(questBudget(480, 420, attempts, D(4)).budgetMinutes).toBe(48);
   });
+  it("counts reading time toward the pace", () => {
+    const attempts = [att(1, { activeSeconds: 1800 }), att(2, { activeSeconds: 3000 })];
+    const read = new Map([[D(1), 20], [D(3), 50], [D(4), 99]]);
+    expect(questBudget(480, 240, attempts, D(4), read).paceMinutes).toBe(50);
+  });
   it("slowness stays between 1 and 4", () => {
     expect(slownessFactor([s], [att(1, { activeSeconds: 60 * 60 })])).toBe(4);
     expect(slownessFactor([s], [att(1, { activeSeconds: 60 })])).toBe(1);
