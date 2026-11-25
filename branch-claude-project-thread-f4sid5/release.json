@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-f4sid5",
   "branch": "claude/project-thread-f4sid5",
-  "notes": "Let the nightly run pass the safety check",
+  "notes": "Build the nightly program from the attached repo instead of downloading it",
   "dataVersion": 1,
-  "builtAt": "2026-11-25T10:38:56.962Z",
-  "commit": "2e236eafe92e0c84cdf0fef7c27ab4b92cc27fb9"
+  "builtAt": "2026-11-25T10:51:40.924Z",
+  "commit": "d0418244724ba3e7d618258714f1823728bc88cb"
 }
