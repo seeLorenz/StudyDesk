@@ -434,3 +434,16 @@ describe("dismissing parts", () => {
     expect(all.finishedAt).toBeNull();
   });
 });
+
+describe("Explain it (Feynman)", () => {
+  it("has the first skill coming back explained in the student's own words before the warm-up", () => {
+    const miss: Attempt = { id: "m1", skillId: "sk_geometric", questId: null, part: "practice", day: "2026-11-02", verdict: "not_understood", points: 0, maxPoints: 2, hintsUsed: 0, sawWorkedExample: false, activeSeconds: 0, startedAt: 0, gradedAt: 1 };
+    const q = plan({ attempts: [miss], budgetOverride: 120 });
+    const [explain, warm] = q.parts as ProblemPart[];
+    expect(explain).toMatchObject({ kind: "practice", explain: true });
+    expect(explain.problems).toMatchObject([{ skillId: "sk_geometric", expMinutes: 6 }]);
+    expect(warm.title).toContain("Warm-up");
+    expect(warm.problems.map((p) => p.skillId)).toContain("sk_geometric");
+    expect(plan().parts.some((p) => p.kind !== "learn" && p.explain)).toBe(false);
+  });
+});

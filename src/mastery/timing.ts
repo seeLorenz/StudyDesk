@@ -6,7 +6,7 @@ import { median } from "./days";
 import { sortAttempts } from "./replay";
 import type { Attempt, Day, Skill } from "./types";
 
-const timed = (attempts: Attempt[]) => sortAttempts(attempts).filter((a) => a.part !== "assessment" && a.activeSeconds > 0);
+const timed = (attempts: Attempt[]) => sortAttempts(attempts).filter((a) => a.part !== "assessment" && a.part !== "explain" && a.activeSeconds > 0);
 
 /**
  * How much slower than the organization agent's guesses this student is:

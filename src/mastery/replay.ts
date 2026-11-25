@@ -65,7 +65,7 @@ export function replay(skills: Skill[], attempts: Attempt[], reviews: ReviewItem
     if (!skill) continue; // attempt on a skill that was removed: keep it in the log, ignore it here
     const st = states.get(a.skillId)!;
     const outcome = outcomeOf(a, reviewByAttempt.get(a.id));
-    if (a.activeSeconds > 0) times.set(a.skillId, [...(times.get(a.skillId) ?? []), a.activeSeconds]);
+    if (a.activeSeconds > 0 && a.part !== "explain") times.set(a.skillId, [...(times.get(a.skillId) ?? []), a.activeSeconds]);
     step(skill, st, a, outcome, points);
   }
 
@@ -87,6 +87,8 @@ function step(skill: Skill, st: SkillState, a: Attempt, outcome: Outcome, points
     else award("solved", CONFIG.points.solved[skill.difficulty]);
   };
 
+  // An explanation can show a gap (a miss, below) but never proves a solve: a good one earns points only.
+  if (a.part === "explain" && outcome !== "miss") return void (a.verdict === "solved" && solvedPoints());
   if (outcome === "slip_ok") award("slip_confirmed", CONFIG.points.slip_confirmed);
 
   // The placement check right after onboarding is the one exception to the
@@ -186,7 +188,7 @@ export function dueSkills(
         .sort((a, b) => (a.date < b.date ? -1 : 1))[0];
       if (!exam) continue;
       const windowStart = addDays(exam.date, -CONFIG.examCheckWindowDays);
-      const checked = attempts.some((a) => a.skillId === s.id && a.part !== "assessment" && a.day >= windowStart && a.day <= today);
+      const checked = attempts.some((a) => a.skillId === s.id && a.part !== "assessment" && a.part !== "explain" && a.day >= windowStart && a.day <= today);
       if (!checked) out.push(s.id);
     }
   }

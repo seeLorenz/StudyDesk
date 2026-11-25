@@ -36,7 +36,8 @@ export type GradeScale = { name: string; best: number; worst: number };
 
 export type CourseTarget = { courseId: string; targetGrade: number; gradeScale: GradeScale };
 
-export type AttemptPart = "practice" | "assignment" | "review" | "check" | "assessment";
+/** "explain": the student explained a skill in their own words (Feynman); a gap counts as a miss, a good one never as a solve. */
+export type AttemptPart = "practice" | "assignment" | "review" | "check" | "assessment" | "explain";
 
 export type Verdict = "solved" | "slip" | "not_understood";
 

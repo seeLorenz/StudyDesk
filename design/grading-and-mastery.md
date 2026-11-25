@@ -235,6 +235,10 @@ One hard skill, "differentiate with the chain rule", over 15 days, with streak t
 
 **Time:** the first estimate was 5 × 2.0 = 10 min. After the 14, 11 and 9 minute solves, the expected time is their median, 11 min. If this skill had weight 2 in a course with 10 required skills of total weight 20, mastering it on day 4 would raise course mastery by 2 × (1 − 0.33) ÷ 20 = 6.7 percentage points.
 
+## Explanations (2026-11-25)
+
+An "Explain it" answer (quest-creation.md) is an attempt with `part: "explain"`. A "not understood" verdict counts as a miss: the streak resets and a lapse happens as usual. A "solved" verdict earns the skill's solve points but never streak or review credit, because explaining a skill isn't solving a problem with it. Explanation times don't count toward the skill's median or the slowness factor, and they don't count as the check in the week before an exam.
+
 ## Notes for the other modules
 
 These came up here but belong to modules designed later.

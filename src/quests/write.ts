@@ -165,7 +165,9 @@ worked solution with the final result${ctx.anki ? "\n=== CARDS ===\nfront | back
 export function practiceTurns(part: ProblemPart, ctx: Ctx): Turn[] {
   const slots = part.problems
     .map((p) =>
-      p.cards
+      part.explain
+        ? `${p.id}: ask the student to explain "${ctx.skills.get(p.skillId)!.name}" in their own words, as if teaching a classmate who missed it: the idea, why it works, when to use it, and a typical trap. No calculation needed. Here the ANSWER is the list of points a complete explanation covers`
+        : p.cards
         ? `${p.id}: a recall test on "${ctx.skills.get(p.skillId)!.name}" from the student's Anki deck, about ${p.expMinutes} min. Ask for exactly these cards, mixed order, some from the back to the front: ${p.cards.map((c) => `${c.front} = ${c.back}`).join("; ")}`
         : `${p.id}: skill "${ctx.skills.get(p.skillId)!.name}"${ctx.skills.get(p.skillId)!.isFundamental ? " (fundamental)" : ""}, solvable in about ${p.expMinutes} min`,
     )

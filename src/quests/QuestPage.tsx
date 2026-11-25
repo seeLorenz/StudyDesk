@@ -634,7 +634,7 @@ type ViewProps = {
 };
 
 const KIND = { learn: "Learn", lesson: "Learn & try", practice: "Practice", assignment: "Homework" } as const;
-const kindLabel = (p: QuestPart) => (p.kind !== "learn" && p.check ? "Placement check" : KIND[p.kind]);
+const kindLabel = (p: QuestPart) => (p.kind === "learn" ? KIND.learn : p.check ? "Placement check" : p.explain ? "Explain it" : KIND[p.kind]);
 
 const NOTE_RULES = `You are StudyDesk, a study assistant for high school and university students.
 The student is working through today's study quest and highlighted a passage in it to ask about.
