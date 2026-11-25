@@ -9,9 +9,6 @@ declare module "node:fs" {
   export function statSync(path: string): { isDirectory(): boolean };
   export function writeFileSync(path: string, data: string | Uint8Array): void;
 }
-declare module "node:child_process" {
-  export function execFileSync(file: string, args: string[], opts: { encoding: "utf8"; timeout?: number; stdio?: unknown }): string;
-}
 declare module "node:path" {
   export function join(...parts: string[]): string;
   export function relative(from: string, to: string): string;

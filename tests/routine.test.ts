@@ -363,6 +363,9 @@ describe("the schedule", () => {
     expect(p).toContain("--key k123");
     expect(p).toContain("routine.mjs");
     expect(p).toContain("https://claude.ai/artifact/abc");
+    // built from the attached repository, never downloaded (auto mode refuses that)
+    expect(p).toContain("npm run build:routine");
+    expect(p).not.toContain('path "routine.mjs"');
   });
 });
 

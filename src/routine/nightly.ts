@@ -40,6 +40,8 @@ export type ScheduleInfo = {
   /** "22:00" */
   time: string;
   createdAt: number;
+  /** The commit of the StudyDesk the page runs; the nightly session builds exactly this one ("" or missing: main). */
+  build?: string;
 };
 
 /** What the student can change about the nightly run (through the StudyDesk chat). */

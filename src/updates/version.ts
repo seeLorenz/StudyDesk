@@ -11,8 +11,10 @@
 export const APP_VERSION: string = (import.meta.env?.VITE_STUDYDESK_VERSION as string | undefined) || "dev";
 export const DATA_VERSION = 1;
 
-/** The commit the page was built from (set by the GitHub Action), or "" for a local build. */
-export const BUILD_COMMIT: string = ((import.meta.env?.VITE_STUDYDESK_COMMIT as string | undefined) || "").slice(0, 7);
+/** The full commit the page was built from (set by the GitHub Action), or "" for a local build. The nightly run builds this one. */
+export const BUILD_SHA: string = (import.meta.env?.VITE_STUDYDESK_COMMIT as string | undefined) || "";
+/** Its short form, for showing. */
+export const BUILD_COMMIT = BUILD_SHA.slice(0, 7);
 /** The branch a dev build was built from (set by the GitHub Action), or "". */
 export const BUILD_BRANCH: string = (import.meta.env?.VITE_STUDYDESK_BRANCH as string | undefined) || "";
 /** One exact build: the version plus its commit. Two dev builds differ only here. */

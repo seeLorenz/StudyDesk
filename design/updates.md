@@ -37,7 +37,7 @@ Release notes are the tag's message: `git tag -a v1.1 -m "Grading now shows the 
 
 ## How a student learns a new version exists
 
-The page has no internet, so it can't look. The **nightly run** already starts a cloud session every night: its program reads `latest.json` from the `releases` branch with git (falling back to the tags with `git ls-remote --tags`) and writes `{ latest: "v1.1", notes, dataVersion }` into the student's `release` document. Only built releases are in `latest.json`, so the button never points at a release that isn't there yet. The page compares that with its own built-in version and shows **"Update to v1.1"** at the top of the Orchestrator panel, with the release notes. Nothing updates on its own: the student presses the button. A release whose data version is older than the student's data (only possible coming from a development build) isn't offered.
+The page has no internet, so it can't look. The **nightly run** already starts a cloud session every night: its program asks the session to fetch every `release.json` on the `releases` branch with a sparse git clone (the program itself never uses the network; see design/scheduled-runs.md) and writes `{ latest: "v1.1", notes, dataVersion }` into the student's `release` document. Only built releases are in `latest.json`, so the button never points at a release that isn't there yet. The page compares that with its own built-in version and shows **"Update to v1.1"** at the top of the Orchestrator panel, with the release notes. Nothing updates on its own: the student presses the button. A release whose data version is older than the student's data (only possible coming from a development build) isn't offered.
 
 ### Checking by hand
 
