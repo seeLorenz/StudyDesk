@@ -422,6 +422,10 @@ svg {
 .md a {
   color: var(--accent);
 }
+/* "Send to developer" stays in one piece instead of breaking across lines. */
+.md a[href*="/issues/new"] {
+  white-space: nowrap;
+}
 /* KaTeX hides a copy of each formula for screen readers with position:
    absolute. Anchored to the formula, it stays inside the chat's own scroll
    area; unanchored, it stretched the whole page below the app. */

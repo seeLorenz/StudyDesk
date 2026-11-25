@@ -38,6 +38,7 @@ describe("planQuest", () => {
     expect(q.budgetMinutes).toBe(60);
     expect(q.plannedMinutes).toBeLessThanOrEqual(66);
     expect(q.reason).toContain("Sheet 4 is due tomorrow 11:00");
+    expect(q.reason).toMatch(/4\.2a and 4\.2b need: [a-z]/);
   });
 
   it("uses the student's own times once there are enough of them", () => {
