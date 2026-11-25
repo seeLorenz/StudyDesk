@@ -365,8 +365,8 @@ async function studyTimes(input: NightInput, semester: Semester, quest: QuestRec
       log.push("No study times were picked for tomorrow, so nothing goes into your calendar.");
       return null;
     }
-    log.push(`Study times for tomorrow: ${times.map((t) => `${t.start}-${t.end}`).join(", ")}. They go into your calendar.`);
-    return calendarWant(quest.date, quest.id, studyEntries({ day: quest.date, times, courseName, reason: quest.reason, timeZone: input.profile?.schedule?.timeZone ?? "UTC", url: input.url ?? null }));
+    log.push(`Study times for tomorrow: ${times.map((t) => `${t.start}-${t.end}${t.place ? ` (${t.place})` : ""}`).join(", ")}. They go into your calendar.`);
+    return calendarWant(quest.date, quest.id, studyEntries({ day: quest.date, times, courseName, quest, timeZone: input.profile?.schedule?.timeZone ?? "UTC", url: input.url ?? null }));
   } catch (e) {
     if (isPending(e)) return "pending" as const;
     log.push(`Tomorrow's study times couldn't be picked (${(e as Error)?.message ?? String(e)}).`);

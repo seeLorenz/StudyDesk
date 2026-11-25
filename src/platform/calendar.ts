@@ -290,7 +290,7 @@ export async function readCalendarAhead(today: Day, now = Date.now()): Promise<C
 export const ENTRY_MARK = "[StudyDesk]";
 
 /** One study entry, in local wall time of `timeZone`. */
-export type StudyEntry = { day: Day; start: string; end: string; title: string; description: string; timeZone: string };
+export type StudyEntry = { day: Day; start: string; end: string; title: string; description: string; location?: string; timeZone: string };
 
 /** Creates one entry on the primary calendar; returns its id. Rejects with the connector's error. */
 export async function createEntry(e: StudyEntry): Promise<string> {
@@ -299,6 +299,7 @@ export async function createEntry(e: StudyEntry): Promise<string> {
   const res = await m.callTool(CALENDAR_SERVER, "create_event", {
     summary: e.title,
     description: e.description,
+    ...(e.location && { location: e.location }),
     startTime: wall(e.day, `${e.start}:00`),
     endTime: wall(e.day, `${e.end}:00`),
     timeZone: e.timeZone,

@@ -255,7 +255,7 @@ export function summaryTurns(memory: Memory, messages: OrchMessage[], seed = "")
       content: `You keep StudyDesk's memory of one student: a short summary that is sent with every future message instead of the old chat.
 
 Rewrite the summary from the old summary and the new messages. Keep:
-- preferences and how they like to work ("prefers short evening sessions"),
+- preferences and how they like to work ("prefers short evening sessions"), and where they study ("library on weekdays, home on weekends"),
 - what was agreed ("no studying on Sundays in exam weeks"),
 - how they are doing and feeling, and what seems to block them,
 - open threads (waiting for an answer from a professor, something to follow up),
