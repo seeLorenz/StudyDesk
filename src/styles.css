@@ -2618,7 +2618,9 @@ label:has(> .file-pick:focus-visible) {
   gap: 18px;
 }
 .orch.is-expanded .orch-body > *,
-.orch.is-expanded .orch-composer > * {
+.orch.is-expanded .orch-composer > *,
+.orch.is-docked .orch-body > *,
+.orch.is-docked .orch-composer > * {
   width: 100%;
   max-width: 760px;
   margin-left: auto;
@@ -3109,13 +3111,12 @@ label:has(> .file-pick:focus-visible) {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(340px, 440px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 .organize-chat {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--line);
   background: var(--surface);
 }
 .orch.is-docked {
@@ -3138,10 +3139,56 @@ label:has(> .file-pick:focus-visible) {
   font-size: 22px;
   font-weight: 500;
 }
+/* To do: a side panel that can hide behind a slim strip (wide screens). */
 .organize-data {
+  width: 400px;
   min-height: 0;
   overflow-y: auto;
-  padding: 36px 40px 56px;
+  padding: 18px 20px 40px;
+  border-left: 1px solid var(--line);
+}
+@media (min-width: 1001px) {
+  .organize[data-todo-hidden] > .organize-data {
+    display: none;
+  }
+}
+.todo-rail {
+  width: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 22px 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+}
+.todo-rail:hover {
+  color: var(--ink);
+}
+.todo-rail svg {
+  width: 20px;
+  height: 20px;
+}
+/* An icon with the Organize badge on its corner (phone tab bar, To do strip). */
+.tab-icon {
+  position: relative;
+  display: flex;
+}
+.tab-icon .nav-badge,
+.tab-icon .nav-dot {
+  position: absolute;
+  top: -6px;
+  left: 12px;
+}
+.todo-rail-label {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 .desk {
   max-width: 880px;
@@ -3460,12 +3507,28 @@ label:has(> .file-pick:focus-visible) {
 .file-viewer-box > p {
   padding: 16px;
 }
-.todo-pane {
-  max-width: 640px;
-  margin: 0 auto;
+.todo-pane-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
 }
-.todo-pane .desk-title {
-  margin-bottom: 16px;
+.setup-todo-done {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.setup-todo-done:hover {
+  color: var(--ink);
 }
 @media (max-width: 760px) {
   .courses {
@@ -3486,13 +3549,23 @@ label:has(> .file-pick:focus-visible) {
     display: flex;
     margin: 10px 16px 0;
   }
+  .organize-switch .nav-badge,
+  .organize-switch .nav-dot {
+    margin-left: 6px;
+  }
   .organize-chat {
     flex: 1;
-    border-right: 0;
   }
-  .organize-data {
+  .organize .organize-data {
+    display: block;
     flex: 1;
+    width: auto;
+    border-left: 0;
     padding: 20px 16px 40px;
+  }
+  .todo-rail,
+  .todo-hide {
+    display: none;
   }
   .organize[data-narrow="chat"] > .organize-data,
   .organize[data-narrow="todo"] > .organize-chat {
@@ -3527,16 +3600,6 @@ label:has(> .file-pick:focus-visible) {
   .tabbar svg {
     width: 20px;
     height: 20px;
-  }
-  .tab-icon {
-    position: relative;
-    display: flex;
-  }
-  .tab-icon .nav-badge,
-  .tab-icon .nav-dot {
-    position: absolute;
-    top: -6px;
-    left: 12px;
   }
   .organize-kbd {
     display: none;
