@@ -282,9 +282,16 @@ const QUEST_CONFIG = {
   /**
    * A lesson teaches one idea: read a short explanation and a worked example,
    * then solve a short problem straight away. Its problem is a smaller one than
-   * a full task, so it gets this share of the skill's expected time.
+   * a full task, so it gets this share of the skill's expected time. Reading
+   * minutes are the target the writer gets; the written text sets the real figure.
    */
-  lesson: { readMinutes: 4, problemShare: 0.5 },
+  lesson: { readMinutes: 8, problemShare: 0.5 },
+  /**
+   * Reading time (reading.ts). Text size in word-equivalents: words plus this
+   * much per displayed and inline formula. The student's rate is the median of
+   * their last `window` reads of at least `minSeconds`, kept between min and max.
+   */
+  reading: { displayFormula: 15, inlineFormula: 4, startRate: 60, minRate: 25, maxRate: 200, minSeconds: 30 },
   /** At most this many brand-new skills per quest when there's no homework to prepare. */
   maxNewSkills: 2,
   /** The same in the week before an exam of the quest's course: only that exam's skills unless the student asks. */
@@ -314,6 +321,30 @@ function applyQuestSettings(s) {
 function questSettingsNow(s) {
   return { ...DEFAULTS, ...s, anki: s?.anki ?? null };
 }
+const DISPLAY = /\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]/g;
+const INLINE = /\$[^$\n]+\$|\\\([\s\S]+?\\\)/g;
+function textSize(md) {
+  const { displayFormula, inlineFormula } = QUEST_CONFIG.reading;
+  let size = 0;
+  const words = md.replace(DISPLAY, () => (size += displayFormula, " ")).replace(INLINE, () => (size += inlineFormula, " ")).split(/\s+/).filter((w) => /\w/.test(w)).length;
+  return size + words;
+}
+function readingOf(records) {
+  const { startRate, minRate, maxRate, minSeconds } = QUEST_CONFIG.reading;
+  const rates = [];
+  const minutesByDay = /* @__PURE__ */ new Map();
+  for (const r of [...records].sort((a, b) => a.quest.createdAt - b.quest.createdAt)) {
+    for (const p of r.quest.parts) {
+      const s = r.progress.read?.[p.id] ?? 0;
+      if (!s) continue;
+      minutesByDay.set(r.quest.date, (minutesByDay.get(r.quest.date) ?? 0) + s / 60);
+      if (s >= minSeconds && p.kind === "lesson" && p.body) rates.push(textSize(p.body) / (s / 60));
+    }
+  }
+  const m = median(rates.slice(-10));
+  return { rate: m === null ? startRate : Math.min(maxRate, Math.max(minRate, m)), minutesByDay };
+}
+const readMinutes = (md, rate) => Math.max(1, Math.round(textSize(md) / rate));
 const STYLE = `How to explain (StudyDesk style):
 - Start from the very beginning. Before using a word or symbol, say in plain words what it is. Use the questions a confused beginner would ask as headings ("What is a series?", "What does converge mean?").
 - Give quick reminders of prerequisites right where they're needed, with 2 or 3 tiny numeric examples.
@@ -402,13 +433,15 @@ the explanation in Markdown`
     }
   ];
 }
+const rateOf = (q) => q.readRate ?? QUEST_CONFIG.reading.startRate;
+const lessonWords = (q, part) => Math.round((part.readMinutes ?? QUEST_CONFIG.lesson.readMinutes) * rateOf(q) / 10) * 10;
 function lessonTurns(quest, part, ctx) {
   const id = part.skillIds[0];
   const p = part.problems[0];
   return [
     {
       role: "user",
-      content: `You write one short lesson of today's study quest. It teaches ONE idea in a quick cycle: a brief explanation, one worked example, then the student solves a problem on their own straight away. The student reads the explanation and example in about ${part.readMinutes ?? 4} minutes, so keep it tight: teach exactly this idea, nothing around it.
+      content: `You write one short lesson of today's study quest. It teaches ONE idea in a quick cycle: a brief explanation, one worked example, then the student solves a problem on their own straight away. Keep the explanation and worked example together to about ${lessonWords(quest, part)} words, where a displayed formula counts as ${QUEST_CONFIG.reading.displayFormula} words and an inline one as ${QUEST_CONFIG.reading.inlineFormula}: that's what this student reads in about ${part.readMinutes ?? QUEST_CONFIG.lesson.readMinutes} minutes. Teach exactly this idea, nothing around it.
 
 ${header(ctx)}
 
@@ -600,6 +633,7 @@ async function writeQuest(plan, writer, onStatus, opts = {}) {
         part.body = l.body;
         if (l.keyRule) part.keyRule = l.keyRule;
         if (l.cards) part.cards = l.cards;
+        part.readMinutes = readMinutes(l.body, rateOf(plan));
         for (const f of l.problems) Object.assign(part.problems.find((p) => p.id === f.id), f);
       } else {
         const filled = part.kind === "practice" ? await writer.practice(plan, part) : await writer.assignment(plan, part);
@@ -615,6 +649,7 @@ async function writeQuest(plan, writer, onStatus, opts = {}) {
     for (let part = queue.shift(); part && !failure; part = queue.shift()) await writeOne(part);
   };
   await Promise.all(Array.from({ length: Math.max(1, opts.concurrency ?? 2) }, worker));
+  quest.plannedMinutes = quest.parts.reduce((s, p) => s + partMinutes(p), 0);
   if (failure) throw new QuestIncomplete(quest, [...written], failure);
   return quest;
 }
@@ -2113,10 +2148,12 @@ function activeMinutesByDay(attempts) {
   for (const a of timed(attempts)) m.set(a.day, (m.get(a.day) ?? 0) + a.activeSeconds / 60);
   return [...m].sort(([a], [b]) => a < b ? -1 : 1).map(([day, minutes]) => ({ day, minutes }));
 }
-function questBudget(dailyGoalMinutes, busyMinutes2, attempts, today) {
+function questBudget(dailyGoalMinutes, busyMinutes2, attempts, today, readByDay) {
   const freeMinutes = Math.max(0, dailyGoalMinutes - busyMinutes2);
-  const days = activeMinutesByDay(attempts).filter((d) => d.day < today).slice(-3);
-  const paceMinutes = days.length ? days.reduce((s, d) => s + d.minutes, 0) / days.length : null;
+  const byDay = new Map(activeMinutesByDay(attempts).map((d) => [d.day, d.minutes]));
+  for (const [day, m] of readByDay ?? []) byDay.set(day, (byDay.get(day) ?? 0) + m);
+  const days = [...byDay].filter(([day]) => day < today).sort(([a], [b]) => a < b ? -1 : 1).slice(-3);
+  const paceMinutes = days.length ? days.reduce((s, [, m]) => s + m, 0) / days.length : null;
   const raw = paceMinutes === null ? freeMinutes * CONFIG.budget.newStudentShare : Math.min(freeMinutes * CONFIG.budget.shareOfFreeTime, paceMinutes * CONFIG.budget.paceFactor);
   return { freeMinutes, paceMinutes, budgetMinutes: Math.round(raw) };
 }
@@ -2185,7 +2222,7 @@ function planQuest(input) {
   const goal = semester.daysOff?.includes(today) ? 0 : semester.studyGoal[weekday] ?? 0;
   const fixedBusy = busyMinutes(semester.timetable, weekday);
   const busy = input.calendarBusyMinutes !== void 0 ? Math.max(input.calendarBusyMinutes, fixedBusy) : fixedBusy;
-  const budget = questBudget(goal, busy, attempts, today);
+  const budget = questBudget(goal, busy, attempts, today, input.reading?.minutesByDay);
   const budgetMinutes = input.budgetOverride ?? budget.budgetMinutes;
   if (budgetMinutes <= 0) return { kind: "no_time", freeMinutes: budget.freeMinutes, goalMinutes: goal };
   const limit = budgetMinutes * (1 + QUEST_CONFIG.overBudgetTolerance);
@@ -2399,6 +2436,7 @@ function planQuest(input) {
       reason,
       notes,
       parts,
+      readRate: input.reading?.rate ?? QUEST_CONFIG.reading.startRate,
       createdAt: Date.now()
     }
   };
@@ -2998,6 +3036,7 @@ async function writeTomorrow(semester, calendar, records, mastery, tomorrow, now
     reviews: mastery.reviews,
     doneTaskIds: doneTasks(records),
     deckSizes: deckSizes(records, semester),
+    reading: readingOf(records),
     blockerSkillIds: recentBlockers(records, tomorrow),
     questId: `qst_${tomorrow}_${now.toString(36)}`
   });

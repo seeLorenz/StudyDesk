@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-w4hfhe",
   "branch": "claude/project-thread-w4hfhe",
-  "notes": "Design: realistic part times (proposal)",
+  "notes": "Realistic part times: passive part clock, reading minutes from the lesson text, per-student reading rate",
   "dataVersion": 1,
-  "builtAt": "2026-11-24T12:33:52.955Z",
-  "commit": "35cd5e38f265bd2661a02d16724900ae8529960d"
+  "builtAt": "2026-11-25T10:46:20.389Z",
+  "commit": "e258f5d205bf656eb903374f18599f6b966db64f"
 }
