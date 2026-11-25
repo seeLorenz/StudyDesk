@@ -209,6 +209,21 @@ Code: `src/quests/reading.ts` (size, rate, reading minutes per day), `QUEST_CONF
 - **Focus:** a saved `focus` (course + end date) on the semester. `pickCourse` returns it while it runs (a course the student asks for still wins), and the quest notes list other courses' homework and exams in the planner's windows.
 - **Dismissed parts:** `progress.dismissed` (part ids), also added to `handedIn` so the quest finishes and calendar entries go. `ungraded` and the speed signal skip them, so they're never graded and earn nothing; the finishing bonus counts them as unsolved.
 
+## Why it matters to you (design, 2026-11-25)
+
+Motivation grows when the work matters to the student (the "value" lever in Piers Steel's procrastination equation). "Why today" already covers urgency. This adds one line under it that ties today's skills to what the student actually wants.
+
+> Why it matters to you: a drone's controller adds up an endless series of small corrections, and whether that series converges decides if the drone flies steady. Today's tests are how you check.
+
+- **Where the goals come from.** A profile field `goals`: free text, in the student's own words, kept across semesters (for example "I want to build drones. I'm on my university's robotics team"). Setup asks for it once, optionally (see the note in [onboarding.md](onboarding.md)). Course-specific reasons ("I need this course for my exchange") are already kept as student facts. The Orchestrator updates both whenever the student mentions a goal.
+- **Who writes it.** Claude writes it in the first call that writes the quest's parts, from the profile goals, the course's facts and today's skills. It's stored as `relevance` on the quest record, next to `reason`. There is no extra call, nothing is graded, and code only stores and shows it.
+- **Honest or nothing.** The line names a real use of today's skills. When there's no honest link to the student's goals, it says what the skill unlocks next in the course instead ("this test is what Sheet 5 and the exam's series task build on"). If even that's thin, the line is left out. A forced link ("integrals will make you a better artist") is worse than no line.
+- **No wallpaper.** The line is about today's skills, not the course, so it changes from day to day. Claude also sees the course's last line and never repeats it.
+
+Rejected:
+- **Showing the student's goal as fixed text on every quest.** It's cheaper, but the same sentence every day stops being read within a week.
+- **A goal question for every course in setup.** It's more precise, but it makes setup longer, and setup should stay short. Most students have one or two big goals, and course-specific reasons show up in the chat on their own.
+
 ## Notes for other modules
 
 - **Grading run at 22:00:** built as part of the nightly run ([scheduled-runs.md](scheduled-runs.md)), with the same `handIn` code. Still open: the grading results opening as their own window, with the mistake review in it.

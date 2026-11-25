@@ -117,6 +117,7 @@ The flow lives in `src/onboarding/`. A new student lands in it automatically; a 
 
 - **Organization agent:** replace the prompt in `src/onboarding/setup.ts` with its own design and run it in a launched Claude session that writes back the same records (`CourseSetup` in `src/onboarding/types.ts`), with web search for courses without materials and files longer than one reading.
 - **Orchestrator:** the setup chat (`src/onboarding/agent.ts`) is its first part. The same page-tool pattern (sheet in the prompt, one tool to change it) should carry over to later changes: new course, corrected date, teaching language, study goal.
+- **Quests, "why it matters to you" (2026-11-25):** step 2, "About you", ends with one optional question: "What are you working toward? A job, a project, anything that makes this worth it." The answer is kept word for word as the profile's `goals` (see quest-creation.md). It's skippable like every other step, and the Orchestrator can fill it in later from the chat. Desks set up before this get the same question pinned on To do once, like "Do you use Anki?".
 - **Quests:** should read the material catalog to open only the referenced pages of the original file when writing lessons and practice. Not used yet.
 
 ## Starting the next semester (built)
