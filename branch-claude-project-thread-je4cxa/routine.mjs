@@ -177,7 +177,7 @@ function replay(skills, attempts, reviews) {
     if (!skill) continue;
     const st = states.get(a.skillId);
     const outcome = outcomeOf(a, reviewByAttempt.get(a.id));
-    if (a.activeSeconds > 0) times.set(a.skillId, [...times.get(a.skillId) ?? [], a.activeSeconds]);
+    if (a.activeSeconds > 0 && a.part !== "explain") times.set(a.skillId, [...times.get(a.skillId) ?? [], a.activeSeconds]);
     step(skill, st, a, outcome, points);
   }
   for (const [id, st] of states) {
@@ -195,6 +195,7 @@ function step(skill, st, a, outcome, points) {
     if (a.part === "check" && skill.isFundamental) award("fundamental_cleared", CONFIG.points.fundamental_cleared);
     else award("solved", CONFIG.points.solved[skill.difficulty]);
   };
+  if (a.part === "explain" && outcome !== "miss") return void (a.verdict === "solved" && solvedPoints());
   if (outcome === "slip_ok") award("slip_confirmed", CONFIG.points.slip_confirmed);
   const placementSolve = a.part === "check" && outcome === "clean" && st.stage === "new";
   if (st.stage === "new" && outcome === "clean" && !placementSolve) st.fastTrackFrom = a.day;
@@ -265,7 +266,7 @@ function dueSkills(skills, states, attempts, exams, today) {
       const exam = exams.filter((e) => e.skillIds.includes(s.id) && e.date >= today && e.date <= addDays(today, CONFIG.examCheckWindowDays)).sort((a, b) => a.date < b.date ? -1 : 1)[0];
       if (!exam) continue;
       const windowStart = addDays(exam.date, -7);
-      const checked = attempts.some((a) => a.skillId === s.id && a.part !== "assessment" && a.day >= windowStart && a.day <= today);
+      const checked = attempts.some((a) => a.skillId === s.id && a.part !== "assessment" && a.part !== "explain" && a.day >= windowStart && a.day <= today);
       if (!checked) out.push(s.id);
     }
   }
@@ -297,6 +298,8 @@ const QUEST_CONFIG = {
   newBeforeExams: 0,
   /** Practice problems are worth this many grading points each. */
   practiceMaxPoints: 2,
+  /** Minutes for an "Explain it" part: one skill coming back, explained in the student's own words. */
+  explainMinutes: 6,
   /** Hints per assignment task before the solved similar problem is offered. */
   hints: 3,
   /** Anki step before a deck test: minutes = base + per card tested; at most this many cards per skill in one test. */
@@ -474,7 +477,7 @@ worked solution with the final result${ctx.anki ? "\n=== CARDS ===\nfront | back
 }
 function practiceTurns(part, ctx) {
   const slots = part.problems.map(
-    (p) => p.cards ? `${p.id}: a recall test on "${ctx.skills.get(p.skillId).name}" from the student's Anki deck, about ${p.expMinutes} min. Ask for exactly these cards, mixed order, some from the back to the front: ${p.cards.map((c) => `${c.front} = ${c.back}`).join("; ")}` : `${p.id}: skill "${ctx.skills.get(p.skillId).name}"${ctx.skills.get(p.skillId).isFundamental ? " (fundamental)" : ""}, solvable in about ${p.expMinutes} min`
+    (p) => part.explain ? `${p.id}: ask the student to explain "${ctx.skills.get(p.skillId).name}" in their own words, as if teaching a classmate who missed it: the idea, why it works, when to use it, and a typical trap. No calculation needed. Here the ANSWER is the list of points a complete explanation covers` : p.cards ? `${p.id}: a recall test on "${ctx.skills.get(p.skillId).name}" from the student's Anki deck, about ${p.expMinutes} min. Ask for exactly these cards, mixed order, some from the back to the front: ${p.cards.map((c) => `${c.front} = ${c.back}`).join("; ")}` : `${p.id}: skill "${ctx.skills.get(p.skillId).name}"${ctx.skills.get(p.skillId).isFundamental ? " (fundamental)" : ""}, solvable in about ${p.expMinutes} min`
   ).join("\n");
   return [
     {
@@ -1882,7 +1885,7 @@ function gradingTurns(problems) {
       p.fundamentals.length ? `Fundamentals it depends on: ${p.fundamentals.map((f) => `${f.name} (id ${f.skillId})`).join("; ")}` : "Fundamentals it depends on: none listed",
       `Max points: ${p.maxPoints}`,
       `Hints used: ${p.hintsUsed}${p.sawWorkedExample ? ", and the student saw a fully solved similar problem" : ""}`,
-      p.homeworkNotHandedIn ? "This is real homework that hasn't been handed in to school yet: in feedback, name the first wrong step and the principle, and do NOT give the full answer." : "Practice problem: feedback may show the correct result.",
+      p.part === "explain" ? 'The student explained this skill in their own words, as if teaching it. "solved" when the core idea and why it works are right, even if informal; "not_understood" only for a wrong or missing core idea; never "slip". In feedback, list each gap or vague spot against the rubric, one short point each.' : p.homeworkNotHandedIn ? "This is real homework that hasn't been handed in to school yet: in feedback, name the first wrong step and the principle, and do NOT give the full answer." : "Practice problem: feedback may show the correct result.",
       `Problem:
 """
 ${p.prompt}
@@ -2065,7 +2068,7 @@ function gradingProblem(p, part, w, skills, images, homeworkOpen) {
     skillId: p.skillId,
     skillName: s.name,
     fundamentals: s.prereqSkillIds.map((id) => skills.get(id)).filter((f) => !!f && f.isFundamental).map((f) => ({ skillId: f.id, name: f.name })),
-    part: part !== "fixit" && part.kind === "assignment" ? "assignment" : part !== "fixit" && part.check ? "check" : "practice",
+    part: part === "fixit" ? "practice" : part.kind === "assignment" ? "assignment" : part.check ? "check" : part.explain ? "explain" : "practice",
     prompt: p.prompt,
     answerKey: p.answerKey,
     maxPoints: p.maxPoints,
@@ -2187,7 +2190,7 @@ function addAnki(quest, records, semester) {
   });
   quest.plannedMinutes = quest.parts.reduce((s, p) => s + partMinutes(p), 0);
 }
-const timed = (attempts) => sortAttempts(attempts).filter((a) => a.part !== "assessment" && a.activeSeconds > 0);
+const timed = (attempts) => sortAttempts(attempts).filter((a) => a.part !== "assessment" && a.part !== "explain" && a.activeSeconds > 0);
 function slownessFactor(skills, attempts) {
   const est = new Map(skills.map((s) => [s.id, s.estMinutes]));
   const ratios = timed(attempts).filter((a) => (est.get(a.skillId) ?? 0) > 0).slice(-20).map((a) => a.activeSeconds / 60 / est.get(a.skillId));
@@ -2297,6 +2300,7 @@ function planQuest(input) {
   const tasks = [];
   const reviewIds = [];
   const newIds = [];
+  let explainId = null;
   const planned = /* @__PURE__ */ new Set();
   const leftOut = [];
   const empty = () => !gate.length && !tasks.length && !reviewIds.length && !newIds.length;
@@ -2307,6 +2311,7 @@ function planQuest(input) {
     for (const id of [...concepts, ...taskLearn, ...newIds]) m += (cards(id) ? 0 : QUEST_CONFIG.lesson.readMinutes) + lessonMin(byId.get(id));
     for (const id of [...gate, ...reviewIds]) m += expMin(byId.get(id));
     for (const t of tasks) m += expMin(byId.get(t.task.skillId));
+    if (explainId) m += QUEST_CONFIG.explainMinutes;
     return m + ankiMinutes([...concepts, ...taskLearn, ...newIds, ...gate, ...reviewIds].reduce((n, id) => n + cards(id), 0));
   };
   const tryAdd = (apply, rollback, force = false) => {
@@ -2370,6 +2375,7 @@ function planQuest(input) {
     );
     if (!ok) leftOut.push(`review: ${byId.get(id).name}`);
   }
+  if (reviewIds.length) tryAdd(() => explainId = reviewIds[0], () => explainId = null);
   const examRank = (s) => {
     const e = semester.keyDates.filter((x) => x.date >= today && x.skillIds.includes(s.id)).sort((a, b) => a.date < b.date ? -1 : 1)[0];
     return e ? daysBetween(today, e.date) : 9999;
@@ -2427,6 +2433,7 @@ function planQuest(input) {
     problems: ids.map(practiceProblem)
   });
   const parts = [];
+  if (explainId) parts.push({ ...practice([explainId], byId.get(explainId).name, false), explain: true, problems: [{ ...practiceProblem(explainId), expMinutes: QUEST_CONFIG.explainMinutes }] });
   if (reviewIds.length) parts.push(practice(reviewIds, "Warm-up: skills coming back today", false));
   if (gate.length) parts.push(practice(gate, "Quick check: the basics the next steps use", true));
   for (const id of [...concepts, ...taskLearn, ...newIds]) parts.push(lesson(id));
