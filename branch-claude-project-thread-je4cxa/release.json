@@ -1,8 +1,8 @@
 {
   "version": "branch-claude-project-thread-je4cxa",
   "branch": "claude/project-thread-je4cxa",
-  "notes": "Design note: \"why it matters to you\" line on each quest",
+  "notes": "Keep the closed value-line note out of this branch",
   "dataVersion": 1,
-  "builtAt": "2026-11-25T21:51:26.700Z",
-  "commit": "132f2048f5ba58aa173d9733f6ec4fe6f091b399"
+  "builtAt": "2026-11-25T22:00:46.221Z",
+  "commit": "7a6ef069d9420b318f746bdcb32d4f95c6294b54"
 }
