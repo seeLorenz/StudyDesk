@@ -993,7 +993,8 @@ function buildSemester(draft, profile, now = Date.now()) {
     uploads: draft.uploads,
     catalog: res.flatMap((r) => r.catalog),
     daysOff: (draft.daysOff ?? []).map((d) => d.date),
-    questSettings: draft.questSettings
+    questSettings: draft.questSettings,
+    focus: draft.focus
   };
 }
 function dedupe(skills) {
@@ -1509,6 +1510,24 @@ function applyOps(desk0, ops, o) {
           touch("questSettings", cur);
           lines.push(`Quests: ${changed.join(", ")} (from the next quest)`);
         }
+        break;
+      }
+      case "set_focus": {
+        if (/^(none|off|end)$/i.test(str(op.course))) {
+          if (!desk.draft.focus) break;
+          touch("focus", void 0);
+          lines.push("Focus ended: quests pick the most urgent course again");
+          break;
+        }
+        const c = course(op);
+        const until = str(op.until);
+        if (!c) break;
+        if (!isRealDay(until) || until < toDay(new Date(now))) {
+          errors.push(`set_focus: "${until}" must be a real date from today on (YYYY-MM-DD).`);
+          break;
+        }
+        touch("focus", { courseId: c.id, until });
+        lines.push(`Focus: only ${c.name} until ${shortDate(until)}, other courses' deadlines still show`);
         break;
       }
       case "add_fact": {
@@ -2102,7 +2121,7 @@ function allHandedIn(quest, progress) {
 }
 function ungraded(quest, progress) {
   return quest.parts.flatMap(
-    (part) => part.kind === "learn" || !progress.handedIn.includes(part.id) ? [] : part.problems.filter((p) => !progress.work[p.id]?.verdict).map((problem) => ({ problem, part }))
+    (part) => part.kind === "learn" || !progress.handedIn.includes(part.id) || progress.dismissed?.includes(part.id) ? [] : part.problems.filter((p) => !progress.work[p.id]?.verdict).map((problem) => ({ problem, part }))
   );
 }
 function isFinished(quest, progress) {
@@ -2224,8 +2243,14 @@ function examsSoon(semester, today) {
     return { ...k, skillIds };
   });
 }
+function focusNow(semester, today) {
+  const f = semester.focus;
+  return f && today <= f.until && semester.courses.some((c) => c.id === f.courseId) ? f : null;
+}
 function pickCourse(input, exam) {
   if (input.courseId) return input.courseId;
+  const focus = focusNow(input.semester, input.today);
+  if (focus) return focus.courseId;
   const hw = upcomingAssignments(input.semester, input.today, input.nowLocal, input.doneTaskIds)[0];
   const hwDay = hw?.dueAt.slice(0, 10);
   if (exam && !(hwDay && hwDay <= addDays(input.today, QUEST_CONFIG.urgentWithinDays) && hwDay < exam.date)) return exam.courseId;
@@ -2450,6 +2475,15 @@ function planQuest(input) {
     notes.push(
       budget.paceMinutes === null ? `StudyDesk doesn't know your pace yet, so this quest uses half of it.` : `You've been finishing about ${Math.round(budget.paceMinutes)} min a day, so this quest is sized to ${budgetMinutes} min.`
     );
+  }
+  const focus = focusNow(semester, today);
+  if (focus?.courseId === courseId) {
+    const of = (id) => semester.courses.find((c) => c.id === id)?.name;
+    const elsewhere = [
+      ...upcomingAssignments(semester, today, input.nowLocal, input.doneTaskIds).filter((a) => a.courseId !== courseId).map((a) => `${of(a.courseId)} ${a.title} due ${formatDue(a.dueAt, today)}`),
+      ...exams.filter((k) => k.courseId !== courseId).map((k) => `${of(k.courseId)} ${k.title} ${formatDue(k.date, today)}`)
+    ];
+    notes.push(`Only ${course.name} until ${(/* @__PURE__ */ new Date(`${focus.until}T12:00`)).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, as you asked.${elsewhere.length ? ` Still coming up in other courses: ${elsewhere.join("; ")}.` : ""}`);
   }
   for (const a of assignments) {
     const missing = openTasks(a, input.doneTaskIds).filter((t) => !tasks.some((x) => x.task.id === t.id));
