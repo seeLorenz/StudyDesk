@@ -151,6 +151,25 @@ describe("changes", () => {
     expect(plan.kind).toBe("no_time");
   });
 
+  it("a focus keeps quests on one course until its end date, and can be ended or undone", () => {
+    const plan = (sem: ReturnType<typeof syncSemester>, today = TODAY) =>
+      planQuest({ semester: sem, today, nowLocal: `${today}T09:00`, attempts: [], reviews: [], doneTaskIds: new Set(), blockerSkillIds: [] });
+    const until = "2026-11-24";
+    const r = applyOps(desk(), [{ op: "set_focus", course: "LinAlg", until }], { studentWords: "only linalg until monday", now: 1 });
+    expect(r.change!.lines[0]).toContain("only Linear Algebra until 24 Nov");
+    const sem = syncSemester(r.desk.draft, profile, null);
+    const q = plan(sem);
+    expect(q.kind === "quest" && q.quest.courseId).toBe("c2");
+    expect(q.kind === "quest" && q.quest.notes.join(" ")).toContain("Only Linear Algebra until 24 Nov");
+    // After the end date the most urgent course is back.
+    const after = plan(sem, "2026-11-25");
+    expect(after.kind === "quest" ? after.quest.notes.join(" ") : "").not.toContain("Only Linear Algebra");
+    expect(applyOps(desk(), [{ op: "set_focus", course: "c2", until: "2020-01-01" }], { studentWords: "", now: Date.parse("2026-11-20T12:00") }).errors[0]).toMatch(/from today on/);
+    const off = applyOps(r.desk, [{ op: "set_focus", course: "none" }], { studentWords: "", now: 2 });
+    expect(off.desk.draft.focus).toBeUndefined();
+    expect(undoChange(r.desk, r.change!).ok && (undoChange(r.desk, r.change!) as { desk: Desk }).desk.draft.focus).toBeUndefined();
+  });
+
   it("keeps the placement check and the workload decision when rebuilding the semester", () => {
     const d = desk();
     const current = { ...buildSemester(d.draft, profile, 1), placementQuestId: "q1", studyGoalSource: "recommended" as const, studyGoalDecidedAt: 5 };

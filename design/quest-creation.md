@@ -201,6 +201,12 @@ For students who use Anki (asked once on the To do list, see onboarding.md; chan
 
 Code: `src/quests/reading.ts` (size, rate, reading minutes per day), `QUEST_CONFIG.reading`, the clock in `QuestPage.tsx`.
 
+## Study more, focus and dismissing (2026-11-25)
+
+- **One more quest today:** once today's quest is handed in, StudyDesk can write one more on request (`new_quest`, design in [orchestrator.md](orchestrator.md)), with an optional length (`budgetOverride`) and course (`courseId`). Today's quest is graded first, so the planner sees its results. One at a time.
+- **Focus:** a saved `focus` (course + end date) on the semester. `pickCourse` returns it while it runs (a course the student asks for still wins), and the quest notes list other courses' homework and exams in the planner's windows.
+- **Dismissed parts:** `progress.dismissed` (part ids), also added to `handedIn` so the quest finishes and calendar entries go. `ungraded` and the speed signal skip them, so they're never graded and earn nothing; the finishing bonus counts them as unsolved.
+
 ## Notes for other modules
 
 - **Grading run at 22:00:** built as part of the nightly run ([scheduled-runs.md](scheduled-runs.md)), with the same `handIn` code. Still open: the grading results opening as their own window, with the mistake review in it.

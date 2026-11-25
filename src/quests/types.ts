@@ -95,7 +95,11 @@ export type Semester = {
   daysOff?: Day[];
   /** The student's own hints, lesson length and new skills per quest, set through the Orchestrator. */
   questSettings?: QuestSettings;
+  /** Quests stick to this course until `until` (inclusive), set through the Orchestrator ("only math until the exam"). */
+  focus?: Focus;
 };
+
+export type Focus = { courseId: string; until: Day };
 
 // ---------- the quest itself ----------
 
@@ -235,6 +239,8 @@ export type QuestProgress = {
   /** Gate parts the student moved past (after a fix-it, or by choice). */
   gatesCleared: string[];
   finishedAt: number | null;
+  /** Parts the student dismissed through the Orchestrator, by part id. Also in handedIn, so the quest can finish; never graded, earn nothing. */
+  dismissed?: string[];
   /** Set when the student asked for a new quest for today before starting this one (through the Orchestrator). */
   replacedAt?: number;
   updatedAt: number;

@@ -11,6 +11,7 @@ import type { Attempt, Day, ReviewItem } from "../mastery/types";
 import type { QuestRecord, Semester } from "../quests/types";
 import { addDays } from "../mastery/days";
 import { questSettingsNow } from "../quests/config";
+import { allHandedIn } from "../quests/handin";
 import type { Change, Job, Memory, OrchMessage, OrchState } from "./types";
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -86,7 +87,16 @@ export function deskSnapshot(i: SnapshotInput): string {
       courses,
       examsNext60Days: exams,
       homeworkDueNext14Days: homework,
-      todaysQuest: quest ? { course: quest.quest.courseId, plannedMinutes: quest.quest.plannedMinutes, started: questStarted(quest) } : null,
+      todaysQuest: quest
+        ? {
+            course: quest.quest.courseId,
+            plannedMinutes: quest.quest.plannedMinutes,
+            started: questStarted(quest),
+            handedIn: allHandedIn(quest.quest, quest.progress),
+            parts: quest.quest.parts.map((p) => ({ id: p.id, title: p.title, state: quest.progress.dismissed?.includes(p.id) ? "dismissed" : quest.progress.handedIn.includes(p.id) ? "done" : "open" })),
+          }
+        : null,
+      focus: draft.focus ?? null,
       questSettings: questSettingsNow(draft.questSettings),
       speedLastQuests: sp.ratio === null ? "not measured yet" : `${sp.actual} min actual vs ${sp.planned} min planned over ${sp.quests} quests`,
       openToDo: setupTodo(draft).filter((t) => !t.done).map((t) => ({ key: t.key, title: t.title, ...(t.subs ? { parts: t.subs.map((x) => ({ key: x.key, text: x.text, done: x.done })) } : {}) })),
@@ -108,7 +118,10 @@ What you do:
 - Make small changes with the change tool, right away, in the same reply: dates, homework due dates, target grades, study goal, days off, weekly slots, a course's teaching language, profile, results from school, and facts to remember (what the student says about a course, word for word). The student sees a card with what changed and an Undo button, so don't ask "are you sure?" for small things and don't repeat the card's lines in your text.
 - Start a job with start_job for bigger work: new material (files the student drops: assign them to their course in the same call), a new course (add_course first, then start_job), or re-mapping a course when the student says something that changes what the course needs ("chapter 7 isn't in the exam", "the exam is oral now"); record that statement as a fact too. New files start a job automatically; re-reading everything a course already has asks the student first (the tool shows them a yes/no card).
 - Dropping a course always needs the student's yes: call change with drop_course, and the student gets a yes/no card.
-- After a change that affects today (todaysQuest exists and started is false), you may rebuild today's quest with rebuild_quest; the change card also offers it.
+- After a change that affects today (todaysQuest exists and started is false), you may write today's quest again with new_quest; the change card also offers it.
+- The student wants to study more today: once todaysQuest is handed in, call new_quest (with minutes or course only if they said so). One quest at a time, never several, since each builds on how the last one went.
+- "Only X until Y" (one course for a while): change with set_focus. Quests then stick to that course, and other courses' deadlines show as a note on each quest. Then new_quest if today's quest isn't started.
+- Dismissing: when the student says they don't want today's quest or a part of it (a message about "Dismiss: …" comes from the Dismiss button), call dismiss at once, then act on their reason yourself in the same reply, never handing them busywork: a course they'd rather do → set_focus or new_quest with that course; too long or no time → new_quest with fewer minutes, or nothing more today; sick or busy → set_day_off; already knows it or finds it pointless → add_fact with their words, so the organization agent and future quests take it into account; too hard → add_fact, and suggest the tutor (open_ask) for that topic. If they gave no reason, ask for it in one short question after dismissing.
 - When the student asks to redo or regenerate their placement check, first ask once whether they also want to delete their past stats (mastery progress, past attempts and the mistake review) for a clean start, or keep them. Only after they answer, call redo_placement with resetStats. It shows a yes/no card; nothing happens before their yes. If the placement came out in the wrong language, fix the courses' language with the change tool first.
 - The nightly run (nightlyRun in the snapshot) grades at its time, runs the organization agent's check and deep sweeps, and writes tomorrow's quest. Change it with set_nightly (time, pause, turn parts off) and set_sweep (when a course is read again completely); start it at once with run_nightly_now only when the student asks.
 - StudyDesk's own updates: update_studydesk. "check" answers questions about the version and what's new; when the student wants the new version, "update" shows the button card (never claim it's updating before they press it); "go_back" only when they ask to undo an update.
@@ -153,6 +166,7 @@ export const CHANGE_TOOL = {
 - {op:"tick_todo", key, done?: bool} (keep the to-do list current: tick each part of an openToDo item (parts[].key: one question, one date, one disagreement) as soon as it's answered or confirmed, even one of three, in the same change that records the answer; an item ticks itself off when all its parts are done. Tick an item's own key only when it has no parts (files: once dropped and assigned). Never ask the student to tick. done:false opens it again)
 - {op:"set_language", course, language}
 - {op:"set_file_course", file (upload id, or zip id for all its files), course} (moves a file to a course, or confirms one StudyDesk wasn't sure about: same course; if the course changed, start_job new_material for it)
+- {op:"set_focus", course, until: "YYYY-MM-DD"} (quests stick to that course through that day; course "none" ends it)
 - {op:"set_quest_settings", hints?: 0-5 (per homework task), lessonMinutes?: 2-15 (reading part of a lesson), newSkillsPerQuest?: 0-4, newSkillsBeforeExams?: 0-4 (new skills not on the exam in the week before one; default 0, raise only when the student asks for new material before exams), anki?: bool (the student learns with Anki; this answers the "anki" to-do, no tick needed)}
 - {op:"set_nightly", time?: "HH:MM", paused?: bool, grading?: bool, check?: bool, quest?: bool} (the nightly run: when it runs, pause it, or turn off grading / the courses' check / writing tomorrow's quest)
 - {op:"set_sweep", course, date: "YYYY-MM-DD" or "none"} (when the organization agent reads a course again completely, at night)
@@ -333,8 +347,22 @@ export const PLACEMENT_TOOL = {
   inputSchema: { type: "object", properties: { resetStats: { type: "boolean" } }, required: ["resetStats"] },
 } as const;
 
-export const REBUILD_TOOL = {
-  name: "rebuild_quest",
-  description: "Writes today's quest again from the current desk (after a change that affects today: a nearer exam, homework due tomorrow, a different study goal). Only works while today's quest hasn't been started; a started quest is never rewritten.",
-  inputSchema: { type: "object", properties: {} },
+export const NEW_QUEST_TOOL = {
+  name: "new_quest",
+  description:
+    "Writes a new quest for today. While today's quest isn't started, it replaces it (after a change that affects today: a nearer exam, homework due tomorrow, a new focus). Once today's quest is handed in or dismissed, it adds one more (the student wants to study more today); today's is graded first so the new one builds on it. Never while today's quest is started and not handed in. Only one at a time.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      minutes: { type: "number", description: "10 to 240, only when the student names a length; otherwise the planner sizes it." },
+      course: { type: "string", description: "Course id or name, only when the student asks for one course; otherwise the planner picks (a focus counts)." },
+    },
+  },
+} as const;
+
+export const DISMISS_TOOL = {
+  name: "dismiss",
+  description:
+    "Dismisses parts of today's quest the student doesn't want to do: they count as done, earn nothing and aren't graded. Parts already handed in are still graded. Leave parts out to dismiss every open part (the whole quest).",
+  inputSchema: { type: "object", properties: { parts: { type: "array", items: { type: "string" }, description: "Part ids from todaysQuest.parts." } } },
 } as const;

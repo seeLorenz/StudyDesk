@@ -16,7 +16,7 @@ import { allHandedIn } from "./handin";
 import type { Quest, QuestRecord, TimetableEntry } from "./types";
 import type { Ask } from "./write";
 
-/** Window event the quest page sends when today's quest was written or a part handed in. */
+/** Window event when today's quest was written or a part handed in; from the Orchestrator (parts dismissed) it carries the saved record. */
 export const QUEST_CHANGED = "studydesk:quest-changed";
 
 export type CalendarWant = { day: Day; questId: string; key: string; entries: StudyEntry[]; instructions: string };

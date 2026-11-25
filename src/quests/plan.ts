@@ -11,7 +11,7 @@ import { expectedMinutes, questBudget, slownessFactor } from "../mastery/timing"
 import type { Attempt, Day, ReviewItem, Skill, SkillState } from "../mastery/types";
 import { ankiMinutes, applyQuestSettings, QUEST_CONFIG, partMinutes } from "./config";
 import type { Reading } from "./reading";
-import type { Assignment, AssignmentTask, KeyDate, ProblemPart, Quest, QuestProblem, Semester, TimetableEntry } from "./types";
+import type { Assignment, AssignmentTask, Focus, KeyDate, ProblemPart, Quest, QuestProblem, Semester, TimetableEntry } from "./types";
 
 export type PlanInput = {
   semester: Semester;
@@ -99,13 +99,21 @@ function examsSoon(semester: Semester, today: Day): KeyDate[] {
     });
 }
 
+/** The student's one-course focus, while it runs. */
+export function focusNow(semester: Semester, today: Day): Focus | null {
+  const f = semester.focus;
+  return f && today <= f.until && semester.courses.some((c) => c.id === f.courseId) ? f : null;
+}
+
 /**
- * The course that needs today's quest most. Homework due within a couple of
+ * The course that needs today's quest most. A focus the student set wins. Homework due within a couple of
  * days wins if it's due before the exam; otherwise the exam with the most open
  * skills per day left; otherwise the earliest homework, else the first course.
  */
 function pickCourse(input: PlanInput, exam: KeyDate | undefined): string {
   if (input.courseId) return input.courseId;
+  const focus = focusNow(input.semester, input.today);
+  if (focus) return focus.courseId;
   const hw = upcomingAssignments(input.semester, input.today, input.nowLocal, input.doneTaskIds)[0];
   const hwDay = hw?.dueAt.slice(0, 10);
   if (exam && !(hwDay && hwDay <= addDays(input.today, QUEST_CONFIG.urgentWithinDays) && hwDay < exam.date)) return exam.courseId;
@@ -372,6 +380,16 @@ export function planQuest(input: PlanInput): PlanResult {
         ? `StudyDesk doesn't know your pace yet, so this quest uses half of it.`
         : `You've been finishing about ${Math.round(budget.paceMinutes)} min a day, so this quest is sized to ${budgetMinutes} min.`,
     );
+  }
+  // A focus never hides other courses' deadlines.
+  const focus = focusNow(semester, today);
+  if (focus?.courseId === courseId) {
+    const of = (id: string) => semester.courses.find((c) => c.id === id)?.name;
+    const elsewhere = [
+      ...upcomingAssignments(semester, today, input.nowLocal, input.doneTaskIds).filter((a) => a.courseId !== courseId).map((a) => `${of(a.courseId)} ${a.title} due ${formatDue(a.dueAt, today)}`),
+      ...exams.filter((k) => k.courseId !== courseId).map((k) => `${of(k.courseId)} ${k.title} ${formatDue(k.date, today)}`),
+    ];
+    notes.push(`Only ${course.name} until ${new Date(`${focus.until}T12:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, as you asked.${elsewhere.length ? ` Still coming up in other courses: ${elsewhere.join("; ")}.` : ""}`);
   }
   for (const a of assignments) {
     const missing = openTasks(a, input.doneTaskIds).filter((t) => !tasks.some((x) => x.task.id === t.id));

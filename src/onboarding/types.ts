@@ -8,7 +8,7 @@
 import type { GradeRules } from "../mastery/grades";
 import type { AssessmentResult, Day, GradeScale, Skill } from "../mastery/types";
 import type { Note } from "../chat/types";
-import type { Assignment, KeyDate, TimetableEntry, Topic } from "../quests/types";
+import type { Assignment, Focus, KeyDate, TimetableEntry, Topic } from "../quests/types";
 import type { QuestSettings } from "../quests/config";
 import type { NightlySettings, ScheduleInfo } from "../routine/nightly";
 
@@ -180,6 +180,8 @@ export type SemesterDraft = {
   assessments?: AssessmentResult[];
   /** Hints, lesson length, new skills per quest, set through the Orchestrator. */
   questSettings?: QuestSettings;
+  /** One-course focus with an end date ("only math until the exam"). */
+  focus?: Focus;
   /** Deep sweep dates the student asked for, by course id (they win over the organization agent's own dates). */
   sweepDates?: Record<string, Day>;
   createdAt: number;

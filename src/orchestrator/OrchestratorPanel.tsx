@@ -30,15 +30,16 @@ import { openOnboardingStore, StaleDraft, type OnboardingStore } from "../platfo
 import { openOrchestratorStore, type OrchestratorStore } from "../platform/orchestratorStore";
 import { openQuestStore, type QuestStore } from "../platform/questStore";
 import { compressImage } from "../quests/images";
+import { allHandedIn, dismissParts } from "../quests/handin";
 import type { QuestRecord, Semester } from "../quests/types";
 import type { Profile, SemesterDraft, Upload } from "../onboarding/types";
 import { dropUnneeded, openAsks, trimPrompt } from "../onboarding/todo";
-import { NIGHTLY_TOOL, UPDATE_TOOL, ASK_TOOL, CALENDAR_TOOL, CHANGE_TOOL, checkinTurns, deskSnapshot, JOB_TOOL, jobTitle, localCheckin, LOOKUP_TOOL, needsSummary, orchTurns, questStarted, PLACEMENT_TOOL, REBUILD_TOOL, summaryTurns, todaysQuest } from "./agent";
+import { NIGHTLY_TOOL, UPDATE_TOOL, ASK_TOOL, CALENDAR_TOOL, CHANGE_TOOL, checkinTurns, deskSnapshot, JOB_TOOL, jobTitle, localCheckin, LOOKUP_TOOL, needsSummary, orchTurns, questStarted, PLACEMENT_TOOL, NEW_QUEST_TOOL, DISMISS_TOOL, summaryTurns, todaysQuest } from "./agent";
 import { PASS_ON_EVENT, type PassOn } from "./passOn";
 import { applyOps, canUndo, findCourse, syncSemester, undoChange, type Desk } from "./changes";
 import { advanceJobs, startJob, type JobFile } from "./jobs";
 import { calendarTaskNotice, checkinTriggers } from "./signals";
-import { calendarTaskSetup } from "../quests/times";
+import { calendarTaskSetup, QUEST_CHANGED } from "../quests/times";
 import { GoBackCard, UpdateNotice } from "../updates/UpdateCards";
 import { loadRelease, loadUpdates, markAnnounced, updateEnv } from "../platform/updateStore";
 import { goBackTarget, offer } from "../updates/plan";
@@ -87,6 +88,8 @@ type Props = {
   onStartTodo?: () => void;
   onOpenAsk: (question: string) => void;
   onOpenSetup: () => void;
+  /** Today writes a new quest (instead of today's unstarted one, or one more after it). */
+  onNewQuest: (o: { minutes?: number; courseId?: string }) => void;
 };
 
 const NOTE_RULES = `You are StudyDesk, a study assistant for high school and university students.
@@ -105,7 +108,7 @@ function message(e: unknown): string {
 const dayOf = (ts: number) => toDay(new Date(ts));
 
 export function OrchestratorPanel(props: Props) {
-  const { expanded, onClose, onToggleExpand, screen, quote, onClearQuote, onStatus, onOpenAsk, onOpenSetup, dock, todoDock, onStartTodo } = props;
+  const { expanded, onClose, onToggleExpand, screen, quote, onClearQuote, onStatus, onOpenAsk, onOpenSetup, onNewQuest, dock, todoDock, onStartTodo } = props;
   const open = props.open || !!dock;
   const [env, setEnv] = useState<Env | null>(null);
   const [draft, setDraft] = useState<SemesterDraft | null>(null);
@@ -388,18 +391,48 @@ export function OrchestratorPanel(props: Props) {
     [commitDesk, saveState],
   );
 
-  /** Marks today's unstarted quest as replaced; the quest page writes a new one from the current desk. */
-  const rebuildQuest = useCallback(async (): Promise<string> => {
-    if (!env) throw new Error("StudyDesk isn't loaded yet.");
-    recordsRef.current = await env.qs.loadRecords();
-    const q = todaysQuest(recordsRef.current, today);
-    if (!q) return "There's no quest for today yet: it will be written from the current desk when the student opens Today's quest.";
-    if (questStarted(q)) throw new Error("Today's quest is already started, so it isn't rewritten. Changes apply from the next quest.");
-    const replaced = await env.qs.saveRecord({ ...q, progress: { ...q.progress, replacedAt: Date.now() } }, q.progress);
-    recordsRef.current = recordsRef.current.map((r) => (r === q ? replaced : r));
-    window.dispatchEvent(new CustomEvent("studydesk:quest-replaced"));
-    return "Today's quest is being written again from the current desk; it shows on Today's quest in a minute.";
-  }, [env, today]);
+  /**
+   * Asks Today for a new quest: instead of today's while it isn't started, or one more once it's
+   * handed in. Today replaces or grades the current one first (QuestPage, "A new quest on request").
+   */
+  const newQuest = useCallback(
+    async (input: { minutes?: unknown; course?: unknown } = {}): Promise<string> => {
+      if (!env) throw new Error("StudyDesk isn't loaded yet.");
+      recordsRef.current = await env.qs.loadRecords();
+      const q = todaysQuest(recordsRef.current, today);
+      if (q && questStarted(q) && !allHandedIn(q.quest, q.progress)) throw new Error("Today's quest is started and not handed in. It's finished or dismissed first; a started quest is never rewritten.");
+      const c = input.course ? findCourse(draftRef.current!, input.course) : undefined;
+      if (input.course && !c) throw new Error(`No course "${String(input.course)}".`);
+      const minutes = input.minutes === undefined ? undefined : Math.round(Number(input.minutes));
+      if (minutes !== undefined && !(minutes >= 10 && minutes <= 240)) throw new Error("minutes must be 10 to 240.");
+      onNewQuest({ minutes, courseId: c?.id });
+      return q && allHandedIn(q.quest, q.progress)
+        ? "One more quest is being written (today's is graded first if it isn't yet); it shows on Today in a minute or two."
+        : "Today's quest is being written again from the current desk; it shows on Today in a minute.";
+    },
+    [env, today, onNewQuest],
+  );
+
+  /** Marks parts of today's quest (all open ones by default) as dismissed: they count as done, earn nothing and aren't graded. */
+  const dismiss = useCallback(
+    async (parts: unknown): Promise<string> => {
+      if (!env) throw new Error("StudyDesk isn't loaded yet.");
+      recordsRef.current = await env.qs.loadRecords();
+      const q = todaysQuest(recordsRef.current, today);
+      if (!q) throw new Error("There's no quest today to dismiss.");
+      const ids = Array.isArray(parts) && parts.length ? parts.map(String) : undefined;
+      const unknown = ids?.filter((id) => !q.quest.parts.some((p) => p.id === id));
+      if (unknown?.length) throw new Error(`No part ${unknown.join(", ")} in today's quest. Parts: ${q.quest.parts.map((p) => p.id).join(", ")}.`);
+      const next = dismissParts(q.quest, q.progress, ids);
+      if (next === q.progress) return "Nothing to dismiss: those parts are already done.";
+      const saved = await env.qs.saveRecord({ quest: q.quest, progress: next }, q.progress);
+      recordsRef.current = recordsRef.current.map((r) => (r === q ? saved : r));
+      window.dispatchEvent(new CustomEvent<QuestRecord>(QUEST_CHANGED, { detail: saved }));
+      const n = next.dismissed!.length - (q.progress.dismissed?.length ?? 0);
+      return `Dismissed ${n} ${n === 1 ? "part" : "parts"}. They earn nothing and aren't graded; parts already handed in are still graded.${allHandedIn(saved.quest, saved.progress) ? " Today's quest counts as done now." : ""} Now act on the student's reason.`;
+    },
+    [env, today],
+  );
 
   /**
    * A new placement check: the old one is set aside (today's quest too, if it
@@ -628,9 +661,14 @@ export function OrchestratorPanel(props: Props) {
               },
             },
             {
-              ...REBUILD_TOOL,
-              inputSchema: REBUILD_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema,
-              execute: () => rebuildQuest(),
+              ...NEW_QUEST_TOOL,
+              inputSchema: NEW_QUEST_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema,
+              execute: (input) => newQuest(input),
+            },
+            {
+              ...DISMISS_TOOL,
+              inputSchema: DISMISS_TOOL.inputSchema as unknown as Claude.sample.SampleToolInputSchema,
+              execute: (input) => dismiss(input.parts),
             },
             {
               ...PLACEMENT_TOOL,
@@ -923,7 +961,7 @@ export function OrchestratorPanel(props: Props) {
     return {
       label: "Rebuild today's quest",
       run: () =>
-        void rebuildQuest()
+        void newQuest()
           .then((t) => setRebuilt((r) => ({ ...r, [c.changeId]: t.startsWith("Today's quest is being") ? "Rebuilding today's quest" : t })))
           .catch((e) => setError(message(e))),
     };
@@ -1041,7 +1079,7 @@ export function OrchestratorPanel(props: Props) {
           {busy && /^(Keeping|Opening)/.test(busy) && (
             <p className="quest-muted keep-note">This takes a few minutes with a lot of files. Keep this window open until it's done; each finished zip is saved, so closing early only loses the one in progress.</p>
           )}
-          <InputBox id="orch-chat" keepAll placeholder="Ask, or tell me what changed. Drop or paste files or course zips." busy={!!busy} autoFocus={open} compact onSend={(t, f) => void send(t, f)} onStop={() => ctl.current?.abort()} />
+          <InputBox id="orch-chat" keepAll placeholder={quote?.startsWith("Dismiss") ? "Why? StudyDesk adjusts your plan from it." : "Ask, or tell me what changed. Drop or paste files or course zips."} busy={!!busy} autoFocus={open} compact onSend={(t, f) => void send(t, f)} onStop={() => ctl.current?.abort()} />
         </div>
       )}
       <SelectionReply scope={scroller} disabled={false} onAsk={notes.ask} />
