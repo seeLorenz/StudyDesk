@@ -6,7 +6,7 @@
 // semester is rebuilt from). Pure, so it is tested. Every applied change keeps
 // what it touched before and after, so it can be undone.
 
-import { wishLink } from "../agents/capabilities";
+import { wishLink, type Wish } from "../agents/capabilities";
 import { uid } from "../chat/types";
 import { toDay } from "../mastery/days";
 import { assessmentAttempts } from "../mastery/grades";
@@ -555,7 +555,7 @@ export function applyOps(
         const text = str(op.text);
         if (!text) break;
         touch("profile", { ...desk.profile, wishes: [...(desk.profile.wishes ?? []), { text, at: now }] });
-        lines.push(`Wish saved: "${text}" ${wishLink(text)}`);
+        lines.push(`Wish saved: ${str(op.title) || text} ${wishLink({ ...op, text } as Wish, "panel")}`);
         break;
       }
       case "set_profile": {

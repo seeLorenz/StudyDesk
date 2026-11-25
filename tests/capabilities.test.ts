@@ -21,15 +21,18 @@ describe("capabilities", () => {
 
   it("saves a wish from either chat on the profile", () => {
     const desk: Desk = { draft, profile };
-    const r = applyOps(desk, [{ op: "add_wish", text: "make coming calendar entries red" }], { studentWords: "", now: 1 });
+    const wish = { text: "make coming calendar entries red", title: "Color upcoming calendar entries", asked: "Upcoming entries should stand out.", missing: "Entries use one color.", fix: "Set colorId on entries in the future." };
+    const r = applyOps(desk, [{ op: "add_wish", ...wish }], { studentWords: "", now: 1 });
     expect(r.desk.profile.wishes).toEqual([{ text: "make coming calendar entries red", at: 1 }]);
-    // The card's button opens a pre-filled issue with the wish and nothing about the student.
+    // The card's button opens a pre-filled issue Claude wrote: title, why, what's missing, a fix; never the raw words or the student.
     const link = /\((https:[^)]+)\)/.exec(r.change!.lines[0])![1];
     expect(link.startsWith(WISH_URL)).toBe(true);
-    expect(decodeURIComponent(link)).toContain("make coming calendar entries red");
-    expect(decodeURIComponent(link)).not.toContain("TU");
+    const issue = decodeURIComponent(link);
+    for (const s of ["title=Color upcoming calendar entries", "### What the student asked\nUpcoming", "### What StudyDesk can't do yet\nEntries", "### Proposed fix\nSet colorId"]) expect(issue).toContain(s);
+    expect(issue).not.toContain("make coming");
+    expect(issue).not.toContain("TU");
     expect(undoChange(r.desk, r.change!).ok && profile.wishes).toBeUndefined();
-    expect(applySheetUpdate(draft, profile, { wish: "dark mode" }, 2).profile.wishes).toEqual([{ text: "dark mode", at: 2 }]);
+    expect(applySheetUpdate(draft, profile, { wish: { ...wish, text: "dark mode" } }, 2).profile.wishes).toEqual([{ text: "dark mode", at: 2 }]);
   });
 });
 

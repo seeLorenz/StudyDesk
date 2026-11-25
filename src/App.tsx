@@ -36,6 +36,7 @@ const Icon = {
   courses: <path d="M3 3h4.5v10.5H3zM8.5 3H13v10.5H8.5zM4.5 5.5h1.5M10 5.5h1.5" />,
   organize: <path d="M2.5 4h11v9.5h-11zM2.5 7h11M5.5 2.5v3M10.5 2.5v3" />,
   plus: <path d="M8 3.5v9M3.5 8h9" />,
+  todo: <path d="M2.5 2.5h11v11h-11zM5 8l2 2 4-4" />,
 };
 const Svg = ({ children }: { children: JSX.Element }) => (
   <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -63,6 +64,22 @@ export function App() {
   const [current, setCurrent] = useState<Chat>(newChat);
   // Narrow screens show Organize's chat or its to-do list, not one under the other, so the chat box stays at hand.
   const [orgView, setOrgView] = useState<"chat" | "todo">("chat");
+  // Wide screens can hide Organize's To do behind a slim strip. Remembered in this browser only.
+  const [todoHidden, setTodoHidden] = useState(() => {
+    try {
+      return localStorage.getItem("studydesk.todoHidden") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleTodo = () => {
+    try {
+      localStorage.setItem("studydesk.todoHidden", todoHidden ? "0" : "1");
+    } catch {
+      /* not remembered */
+    }
+    setTodoHidden(!todoHidden);
+  };
   // The course page open on Courses (null: the list).
   const [courseId, setCourseId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -457,17 +474,27 @@ export function App() {
         )}
         {shown === "chat" && <ChatView key={current.id} initial={current} save={save} onSaveError={onSaveError} autoSend={askSeed?.chatId === current.id ? askSeed.question : undefined} />}
         {shown === "organize" && (
-          <div className="organize" data-narrow={orgView}>
+          <div className="organize" data-narrow={orgView} data-todo-hidden={todoHidden || undefined}>
             <div className="setup-switch organize-switch" role="tablist" aria-label="Show">
               <button type="button" role="tab" aria-selected={orgView === "chat"} className={orgView === "chat" ? "is-on" : ""} onClick={() => setOrgView("chat")}>
                 Chat
               </button>
               <button type="button" role="tab" aria-selected={orgView === "todo"} className={orgView === "todo" ? "is-on" : ""} onClick={() => setOrgView("todo")}>
                 To do
+                {badge}
               </button>
             </div>
             <div className="organize-chat" ref={setDock} />
             <div className="organize-data" ref={setTodoDock} />
+            {todoHidden && (
+              <button type="button" className="todo-rail" onClick={toggleTodo} aria-label="Show To do" title="Show To do">
+                <span className="tab-icon">
+                  <Svg>{Icon.todo}</Svg>
+                  {badge}
+                </span>
+                <span className="todo-rail-label">To do</span>
+              </button>
+            )}
           </div>
         )}
         {shown === "courses" && (
@@ -516,6 +543,7 @@ export function App() {
         dock={shown === "organize" ? dock : null}
         todoDock={shown === "organize" ? todoDock : null}
         onStartTodo={() => setOrgView("chat")}
+        onHideTodo={toggleTodo}
         expanded={orchExpanded}
         onClose={() => setOrchOpen(false)}
         onToggleExpand={() => setOrchExpanded((x) => !x)}

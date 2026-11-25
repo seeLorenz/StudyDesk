@@ -13,7 +13,10 @@ Why a list in the prompt and not a lookup step: the list is in front of Claude o
 ## Wishes
 
 - Saved on the student's profile (`profile.wishes`: text and time). In the StudyDesk chat this goes through `change` with `add_wish`, so it shows a change card with Undo. On the setup page it goes through `update_sheet`'s `wish`.
-- Each wish comes with a **Send to developer** button. It opens a pre-filled GitHub issue on seeLorenz/StudyDesk that holds only the wish text, and the student presses Submit there. Nothing about the student (name, school, data) goes into it.
+- Each wish comes with a **Send to developer** button. It opens a pre-filled GitHub issue on seeLorenz/StudyDesk, and the student presses Submit there.
+- In the StudyDesk chat the change card shows the button and Claude doesn't repeat it; the card line names the issue title. The link never breaks across lines.
+- Claude writes the issue in the same tool call that saves the wish (no extra call): a title saying what to build, **what the student asked** (and why), **what StudyDesk can't do yet** (what it does today, what's missing) and a **proposed fix**. The page adds the StudyDesk version and which chat sent it.
+- The issue is public, so Claude writes it anonymously: no names, school, course names or dates, described in general terms. The student's own words stay on their desk only and never go into the link. Each part is capped so the link stays well under GitHub's URL limit.
 
 ## Keeping it in sync
 

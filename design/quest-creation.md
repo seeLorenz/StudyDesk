@@ -17,7 +17,9 @@ Typical shapes are "learn, assignment" or "learn, practice, learn, assignment".
 A calculus course with a homework sheet due tomorrow, rebuilt in the new layout. Content is shortened here, and math is shown as plain text.
 
 > **Tuesday · Calculus · about 55 minutes**
-> Why today: Sheet 4 closes Wednesday 11:00, and tasks 4.2a and 4.2b need the ratio and root tests. Your time today: 2 h free after lectures. You've been finishing about 50 min a day, so this quest is 55 min.
+> Why today: Sheet 4 closes Wednesday 11:00, and 4.2a and 4.2b need: apply the ratio test; apply the root test. Your time today: 2 h free after lectures. You've been finishing about 50 min a day, so this quest is 55 min.
+
+Skill names are verb phrases, so they follow a colon; more than three tasks become a count ("5 of its tasks need: …").
 
 **Part 1 · Learn: what does it mean for a series to converge?** (about 10 min)
 

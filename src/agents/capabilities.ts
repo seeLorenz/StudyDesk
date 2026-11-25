@@ -3,6 +3,8 @@
 // what StudyDesk can't do at all (then it says so and saves a wish).
 // design/capabilities.md.
 
+import { APP_VERSION } from "../updates/version";
+
 export type Chat = "panel" | "setup";
 const NAMES: Record<Chat, string> = { panel: "the StudyDesk chat (Ctrl J, and on the Organize page)", setup: "the semester setup page" };
 
@@ -43,9 +45,27 @@ export function toolsFor<T extends { name: string }>(chat: Chat, tools: T[]): T[
 
 export const WISH_URL = "https://github.com/seeLorenz/StudyDesk/issues/new";
 
-/** A "Send to developer" link: a pre-filled GitHub issue holding only the wish itself; the student presses Submit there. */
-export const wishLink = (text: string) =>
-  `[Send to developer](${WISH_URL}?title=${encodeURIComponent(`Wish: ${text.slice(0, 80)}`)}&body=${encodeURIComponent(`${text}\n\n(Sent from StudyDesk.)`)})`;
+/** The issue Claude writes for a wish: the developer reads it, so it's anonymous and says why StudyDesk sent it. */
+export type Wish = { text: string; title?: string; asked?: string; missing?: string; fix?: string };
+export const WISH_FIELDS = `text (the student's words, kept on their desk only), and for the developer's public GitHub issue: title (what to build, under 80 characters), asked (what the student wanted and why), missing (what StudyDesk does today and what's missing), fix (a concrete proposed change). The issue is public: no names, school, course names, dates or anything else about the student, so describe it generally ("a course with an exam this week")`;
+
+/** A "Send to developer" link: a pre-filled GitHub issue written by Claude (never the student's raw words); the student reviews it and presses Submit there. Fields are capped so the link stays well under GitHub's URL limit. */
+export const wishLink = (w: Wish, chat: Chat) => {
+  const cap = (s = "", n = 600) => s.trim().slice(0, n);
+  // Parentheses too, or the Markdown link ends at the first ")".
+  const enc = (s: string) => encodeURIComponent(s).replace(/\(/g, "%28").replace(/\)/g, "%29");
+  const body = `_Sent from StudyDesk ${APP_VERSION}, ${chat} chat. Written by StudyDesk's Claude from a student's request._
+
+### What the student asked
+${cap(w.asked) || "Not given."}
+
+### What StudyDesk can't do yet
+${cap(w.missing) || "Not given."}
+
+### Proposed fix
+${cap(w.fix) || "Not given."}`;
+  return `[Send to developer](${WISH_URL}?title=${enc(cap(w.title, 80) || "Wish from StudyDesk")}&body=${enc(body)})`;
+};
 
 /** What StudyDesk can't do, so Claude says so instead of pretending. */
 export const CANT = ["change how the app looks (colors, layout, fonts)", "send emails or messages", "open links or websites from the chat", "watch or listen to videos"];
@@ -63,5 +83,5 @@ ${other.join("\n")}
 StudyDesk can't:
 ${CANT.map((c) => `- ${c}`).join("\n")}
 
-Before acting on a request, check it against these lists. If it needs something that isn't on them, say plainly in one line that StudyDesk can't do that yet, never pretend or work around it with a fact, and save it as a wish (${chat === "panel" ? 'change with {op:"add_wish", text}' : "update_sheet's wish"}) in the student's words. Then give the student the "Send to developer" link it returns.`;
+Before acting on a request, check it against these lists. If it needs something that isn't on them, say plainly in one line that StudyDesk can't do that yet, never pretend or work around it with a fact, and save it as a wish (${chat === "panel" ? 'change with {op:"add_wish", ...}' : "update_sheet's wish"}): ${WISH_FIELDS}. ${chat === "panel" ? 'The change card already shows the "Send to developer" button, so don\'t repeat the link or the wish in your reply.' : 'Then give the student the "Send to developer" link it returns, on its own line.'}`;
 }

@@ -6,7 +6,7 @@
 // the setup run when the student confirms (start_setup). Everything Claude
 // changes is visible and editable in the sheet beside the chat.
 
-import { capabilityBlock, wishLink } from "../agents/capabilities";
+import { capabilityBlock, wishLink, WISH_FIELDS, type Wish } from "../agents/capabilities";
 import { courseFileList, filesOf, unsortedList } from "../lib/keep";
 import { uid } from "../chat/types";
 import { toDay } from "../mastery/days";
@@ -122,7 +122,7 @@ const SHEET_SCHEMA = {
     files: { type: "array", description: "Assign files to courses: uploadId is a file's id, or a zip's id (zip_…) for all files of that zip.", items: { type: "object", properties: { uploadId: { type: "string" }, course: { type: "string" }, note: { type: "string" }, unsure: { type: "string", description: "Only when you aren't sure the file belongs to this course: why, in a few words. The student is asked." } }, required: ["uploadId", "course"] } },
     studyGoalMinutes: { type: "object", description: "Minutes per weekday, lectures included, e.g. {Mon: 180, Sun: 0}. Only days that change.", properties: Object.fromEntries(DAY.map((d) => [d, { type: "number" }])) },
     todoDone: { type: "array", description: "After setup: keys of to-do items or of their parts that are now done (from toDo in the sheet, including parts[].key). Tick them yourself as soon as they're answered; the student doesn't have to.", items: { type: "string" } },
-    wish: { type: "string", description: "Something the student asked for that StudyDesk can't do yet, in their words. Saved for the developer." },
+    wish: { type: "object", description: `Something the student asked for that StudyDesk can't do yet: ${WISH_FIELDS}.`, properties: { text: { type: "string" }, title: { type: "string" }, asked: { type: "string" }, missing: { type: "string" }, fix: { type: "string" } }, required: ["text", "title", "asked", "missing", "fix"] },
     todoOpen: { type: "array", description: "After setup: keys of to-do items or parts to open again (only when the student says one isn't done after all).", items: { type: "string" } },
   },
 } as const;
@@ -282,10 +282,11 @@ export function applySheetUpdate(d: SemesterDraft, p: Profile, input: Record<str
     draft.todoDoneOn = { ...draft.todoDoneOn, ...Object.fromEntries(ticked.map((k) => [k, toDay(new Date(now))])) };
     if (ticked.length) notes.push(`Ticked off: ${ticked.join(", ")}.`);
   }
-  const wish = str(input.wish);
-  if (wish) {
-    profile = { ...profile, wishes: [...(profile.wishes ?? []), { text: wish, at: now }] };
-    notes.push(`Wish saved. Show the student this link exactly: ${wishLink(wish)}`);
+  const wish = input.wish as Wish | undefined;
+  const wishText = str(wish?.text);
+  if (wishText) {
+    profile = { ...profile, wishes: [...(profile.wishes ?? []), { text: wishText, at: now }] };
+    notes.push(`Wish saved. Show the student this link exactly: ${wishLink(wish!, "setup")}`);
   }
   draft = { ...draft, updatedAt: now };
   const parts = ["Saved."];

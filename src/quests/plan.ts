@@ -359,7 +359,10 @@ export function planQuest(input: PlanInput): PlanResult {
     const mine = tasks.filter((t) => t.assignment.id === a.id);
     const lower = (x: string) => x.charAt(0).toLowerCase() + x.slice(1);
     const needs = [...new Set(mine.map((t) => lower(byId.get(t.task.skillId)!.name)))];
-    reason = `${a.title} is due ${formatDue(a.dueAt, today)}. ${mine.map((t) => t.task.label).join(" and ")} need the ${needs.join(" and the ")}.`;
+    // Skill names are verb phrases ("Solve …"), so they follow a colon; more than three task labels become a count.
+    const labels = mine.map((t) => t.task.label);
+    const who = labels.length > 3 ? `${labels.length} of its tasks` : labels.length < 3 ? labels.join(" and ") : `${labels[0]}, ${labels[1]} and ${labels[2]}`;
+    reason = `${a.title} is due ${formatDue(a.dueAt, today)}. ${who} ${labels.length === 1 ? "needs" : "need"}: ${needs.join("; ")}.`;
   } else if (gate.length) {
     reason = `Recent mistakes came from ${names(gate).join(" and ")}, so today fixes that first.`;
   } else if (reviewIds.length && !newIds.length) {
