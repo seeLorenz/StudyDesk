@@ -1,0 +1,8 @@
+{
+  "version": "branch-claude-project-thread-mipaha",
+  "branch": "claude/project-thread-mipaha",
+  "notes": "Send to developer: Claude writes a structured, anonymous issue; cleaner wish and quest reason text",
+  "dataVersion": 1,
+  "builtAt": "2026-11-25T13:47:02.516Z",
+  "commit": "ba4517615a2a3acc21a62cd484459709600420ef"
+}
