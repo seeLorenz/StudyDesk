@@ -16,6 +16,9 @@ export function TodoList({ draft, update, md, onStart }: Props) {
   const todo = setupTodo(draft);
   const left = todo.filter((t) => !t.done);
   const [openKey, setOpenKey] = useState<string | null>(null);
+  // Done items fold into one line so the open ones stay in view.
+  const [showDone, setShowDone] = useState(false);
+  const done = todo.length - left.length;
   const shownKey = openKey ?? left[0]?.key ?? null;
   // Unticking an item opens all its parts; unticking a part opens its item.
   const tick = (key: string, on: boolean) =>
@@ -29,7 +32,7 @@ export function TodoList({ draft, update, md, onStart }: Props) {
     <>
       <p className="quest-muted setup-todo-count">{left.length ? `${left.length} left` : "All done"}</p>
       <ol className="setup-todo">
-        {todo.map((t) => (
+        {todo.filter((t) => showDone || !t.done).map((t) => (
           <li key={t.key} className={t.done ? "is-done" : ""}>
             <div className="setup-todo-head">
               <input type="checkbox" checked={t.done} aria-label={`Mark "${t.title}" done`} onChange={(e) => tick(t.key, e.target.checked)} />
@@ -58,6 +61,12 @@ export function TodoList({ draft, update, md, onStart }: Props) {
           </li>
         ))}
       </ol>
+      {done > 0 && (
+        <button type="button" className="setup-todo-done" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
+          <span>✓ {done} done</span>
+          {showDone ? "Hide" : "Show"}
+        </button>
+      )}
     </>
   );
 }

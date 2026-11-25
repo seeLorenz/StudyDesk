@@ -85,6 +85,8 @@ type Props = {
   todoDock?: HTMLElement | null;
   /** A to-do item was started: its questions are now in the chat. */
   onStartTodo?: () => void;
+  /** Hides the To do side panel (wide screens). */
+  onHideTodo?: () => void;
   onOpenAsk: (question: string) => void;
   onOpenSetup: () => void;
 };
@@ -105,7 +107,7 @@ function message(e: unknown): string {
 const dayOf = (ts: number) => toDay(new Date(ts));
 
 export function OrchestratorPanel(props: Props) {
-  const { expanded, onClose, onToggleExpand, screen, quote, onClearQuote, onStatus, onOpenAsk, onOpenSetup, dock, todoDock, onStartTodo } = props;
+  const { expanded, onClose, onToggleExpand, screen, quote, onClearQuote, onStatus, onOpenAsk, onOpenSetup, dock, todoDock, onStartTodo, onHideTodo } = props;
   const open = props.open || !!dock;
   const [env, setEnv] = useState<Env | null>(null);
   const [draft, setDraft] = useState<SemesterDraft | null>(null);
@@ -1050,8 +1052,17 @@ export function OrchestratorPanel(props: Props) {
   // On Organize, the to-do list sits beside the chat.
   const todoPane = todoDock && (
     <div className="todo-pane" ref={todoRef} data-select-scope="">
-      <p className="quest-kicker">What StudyDesk needs</p>
-      <h2 className="desk-title">To do</h2>
+      <div className="todo-pane-head">
+        <div>
+          <p className="quest-kicker">What StudyDesk needs</p>
+          <h2 className="desk-title">To do</h2>
+        </div>
+        <button type="button" className="icon-btn todo-hide" onClick={onHideTodo} aria-label="Hide To do" title="Hide To do">
+          <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 8h8M8 5l3 3-3 3M13.5 3v10" />
+          </svg>
+        </button>
+      </div>
       {ready && draft ? (
         <TodoList
           draft={draft}

@@ -27,8 +27,10 @@ Keep it uncluttered: one line of facts per card, no extra badges.
 
 ## Organize page
 
-- **Left:** the Orchestrator chat (the same conversation as the quick panel).
-- **Right:** the To do list (what StudyDesk still needs from the student). "Answer in the chat" puts an item's questions into the chat beside it. Phones switch between "Chat | To do".
+- **Main area:** the Orchestrator chat (the same conversation as the quick panel). It takes the free width; its messages and box sit in a centred column of at most 760px, like Ask, so there's no empty gap.
+- **Right:** the To do list (what StudyDesk still needs from the student) as a 400px side panel. "Answer in the chat" puts an item's questions into the chat beside it. Done items fold into one "✓ N done" line that opens them again.
+- **Hiding To do** (2026-11-25): a button in its header hides it behind a slim strip, to focus on the chat. The strip carries the same red number or dot as the Organize badge, and a click brings the panel back. Remembered in this browser, like focus mode. It doesn't open by itself when something new arrives: jumping panels mid-chat is jarring and the number already says it.
+- **Phones** switch between "Chat | To do"; the To do tab carries the same badge.
 - The semester, courses, dates, study time and files moved to **Courses** (2026-11-24). Course progress lives there and not on Today, because Today should stay about today.
 - **Setup is Organize's first state.** With no semester yet, Organize is the setup chat with its sheet. "Start a new semester" lives in the ⋯ menu, not as its own tab. Once a semester is set up, that is the only way onto the setup page; finishing setup hands over to Today.
 
