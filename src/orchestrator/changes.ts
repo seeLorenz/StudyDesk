@@ -421,6 +421,24 @@ export function applyOps(
         }
         break;
       }
+      case "set_focus": {
+        if (/^(none|off|end)$/i.test(str(op.course))) {
+          if (!desk.draft.focus) break;
+          touch("focus", undefined);
+          lines.push("Focus ended: quests pick the most urgent course again");
+          break;
+        }
+        const c = course(op);
+        const until = str(op.until);
+        if (!c) break;
+        if (!isRealDay(until) || until < toDay(new Date(now))) {
+          errors.push(`set_focus: "${until}" must be a real date from today on (YYYY-MM-DD).`);
+          break;
+        }
+        touch("focus", { courseId: c.id, until });
+        lines.push(`Focus: only ${c.name} until ${shortDate(until)}, other courses' deadlines still show`);
+        break;
+      }
       case "add_fact": {
         const text = str(op.text);
         const c = op.course ? course(op) : null;

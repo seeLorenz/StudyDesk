@@ -148,10 +148,24 @@ export function allHandedIn(quest: Quest, progress: QuestProgress): boolean {
 /** Handed-in problems still waiting for the grading run. */
 export function ungraded(quest: Quest, progress: QuestProgress): Array<{ problem: QuestProblem; part: ProblemPart }> {
   return quest.parts.flatMap((part) =>
-    part.kind === "learn" || !progress.handedIn.includes(part.id)
+    part.kind === "learn" || !progress.handedIn.includes(part.id) || progress.dismissed?.includes(part.id)
       ? []
       : part.problems.filter((p) => !progress.work[p.id]?.verdict).map((problem) => ({ problem, part })),
   );
+}
+
+/**
+ * The student dismissed these parts (or, with none named, every part not
+ * handed in yet). They count as done, so the quest can finish, but are never
+ * graded and earn nothing. Handed-in parts stay as they are.
+ */
+export function dismissParts(quest: Quest, progress: QuestProgress, partIds?: string[]): QuestProgress {
+  const ids = quest.parts.map((p) => p.id).filter((id) => !progress.handedIn.includes(id) && (!partIds || partIds.includes(id)));
+  if (!ids.length) return progress;
+  const next = { ...progress, handedIn: [...progress.handedIn, ...ids], dismissed: [...(progress.dismissed ?? []), ...ids], updatedAt: Date.now() };
+  // Finished when the rest is graded; a quest dismissed whole has nothing to sum up.
+  if (!next.finishedAt && next.dismissed.length < quest.parts.length && isFinished(quest, next)) next.finishedAt = Date.now();
+  return next;
 }
 
 /** Every part done and every problem graded. */

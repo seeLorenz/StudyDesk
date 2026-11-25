@@ -94,7 +94,8 @@ function message(e: unknown): string {
 const WEEKDAY = (day: string) => new Date(`${day}T12:00`).toLocaleDateString("en", { weekday: "long" });
 
 /** A testing tool picked in the sidebar's menu; `id` changes each time it's picked. */
-export type QuestCommand = { id: number; kind: "build" | "restart" };
+/** "build" writes a new quest: instead of today's unstarted one, or one more once it's handed in (graded first). */
+export type QuestCommand = { id: number; kind: "build" | "restart"; minutes?: number; courseId?: string };
 
 export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void; command?: QuestCommand | null }) {
   const [data, setData] = useState<Data | null>(null);
@@ -143,6 +144,11 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
   // While the page is open (say at 22:00), the night's grades arrive within a few minutes.
   const dataRef = useRef(data);
   dataRef.current = data;
+  /** Sets the data and its ref at once, so a step awaited right after sees it. */
+  const put = useCallback((d: Data) => {
+    dataRef.current = d;
+    setData(d);
+  }, []);
   useEffect(() => {
     const tick = async () => {
       const d = dataRef.current;
@@ -156,6 +162,29 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
     const every = setInterval(() => void tick(), 5 * 60_000);
     return () => clearInterval(every);
   }, []);
+  /** Grades a record's handed-in work now and saves it (earlier days the nightly run missed, or today's before one more quest). */
+  const gradeRecord = useCallback(async (r: QuestRecord) => {
+    const d = dataRef.current!;
+    const problems = ungraded(r.quest, r.progress);
+    const images: Record<string, Blob[]> = {};
+    for (const { problem } of problems) {
+      const stored = (r.progress.work[problem.id]?.files ?? []).filter((f) => f.kind === "image" && f.stored);
+      const blobs: Blob[] = [];
+      for (const f of stored) {
+        const url = await d.qs.loadImage(f.id).catch(() => null);
+        if (url) blobs.push(dataUrlToBlob(url));
+      }
+      if (blobs.length) images[problem.id] = blobs;
+    }
+    const res = await handIn({ quest: r.quest, problems, work: r.progress.work, images, semester: d.semester, today: toDay(), nowLocal: nowLocal(), ask: d.live ? askClaude : sampleGradingAsk });
+    await d.ms.appendAttempts(res.attempts);
+    for (const rv of res.reviews) await d.ms.putReview(rv);
+    const progress = { ...r.progress, work: { ...r.progress.work, ...res.work }, updatedAt: Date.now() };
+    if (!progress.finishedAt && isFinished(r.quest, progress)) progress.finishedAt = Date.now();
+    const rec = await d.qs.saveRecord({ ...r, progress }, r.progress);
+    const x = dataRef.current!;
+    put({ ...x, records: x.records.map((y) => (y.quest.id === rec.quest.id ? rec : y)), mastery: { ...x.mastery, attempts: [...x.mastery.attempts, ...res.attempts], reviews: [...x.mastery.reviews, ...res.reviews] } });
+  }, [put]);
   // Work handed in on an earlier day that no nightly run graded (no cloud sessions, or the run failed): graded now, once.
   const leftoversTried = useRef(false);
   const [leftovers, setLeftovers] = useState<string | null>(null);
@@ -167,36 +196,14 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
     void (async () => {
       setLeftovers(`Grading work from ${todo.map((r) => WEEKDAY(r.quest.date)).join(", ")} that wasn't graded overnight…`);
       try {
-        for (const r of todo) {
-          const problems = ungraded(r.quest, r.progress);
-          const images: Record<string, Blob[]> = {};
-          for (const { problem } of problems) {
-            const stored = (r.progress.work[problem.id]?.files ?? []).filter((f) => f.kind === "image" && f.stored);
-            const blobs: Blob[] = [];
-            for (const f of stored) {
-              const url = await data.qs.loadImage(f.id).catch(() => null);
-              if (url) blobs.push(dataUrlToBlob(url));
-            }
-            if (blobs.length) images[problem.id] = blobs;
-          }
-          const res = await handIn({ quest: r.quest, problems, work: r.progress.work, images, semester: data.semester, today, nowLocal: nowLocal(), ask: data.live ? askClaude : sampleGradingAsk });
-          await data.ms.appendAttempts(res.attempts);
-          for (const rv of res.reviews) await data.ms.putReview(rv);
-          const progress = { ...r.progress, work: { ...r.progress.work, ...res.work }, updatedAt: Date.now() };
-          if (!progress.finishedAt && isFinished(r.quest, progress)) progress.finishedAt = Date.now();
-          const rec = { ...r, progress };
-          await data.qs.saveRecord(rec, r.progress);
-          setData((x) =>
-            x ? { ...x, records: x.records.map((y) => (y.quest.id === rec.quest.id ? rec : y)), mastery: { ...x.mastery, attempts: [...x.mastery.attempts, ...res.attempts], reviews: [...x.mastery.reviews, ...res.reviews] } } : x,
-          );
-        }
+        for (const r of todo) await gradeRecord(r);
         setLeftovers(null);
       } catch (e) {
         setLeftovers(`Earlier work couldn't be graded yet: ${message(e)} It's tried again next time.`);
       }
     })();
-  }, [data, today]);
-  // "Rebuild today's quest" from the StudyDesk chat: reload, and the newest plan is written.
+  }, [data, today, gradeRecord]);
+  // A new placement check from the StudyDesk chat: reload, and the newest plan is written.
   useEffect(() => {
     const onReplaced = () => {
       autoBuilt.current = false;
@@ -250,7 +257,8 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
   const [reviewOpen, setReviewOpen] = useState(false);
 
   const build = useCallback(
-    async (budgetOverride?: number) => {
+    async (budgetOverride?: number, courseId?: string) => {
+      const data = dataRef.current;
       if (!data) return;
       setBuildError(null);
       setPlanNotice(null);
@@ -276,6 +284,7 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
         reading: readingOf(records),
         blockerSkillIds: recentBlockers(records, today),
         budgetOverride,
+        courseId,
         questId: `qst_${today}_${Date.now().toString(36)}`,
       });
       if (res.kind !== "quest") {
@@ -305,7 +314,7 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
         setBuildError(message(e));
       }
     },
-    [data, today],
+    [today],
   );
 
   // The placement check is written here, on the student's go. A retry carries on from the parts already written.
@@ -358,12 +367,29 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
     void build();
   };
 
+  // A new quest on request (the Orchestrator, or the testing tools): today's is set aside while
+  // it isn't started, or graded first once it's handed in, so the new one builds on it.
+  const requested = async (c: QuestCommand) => {
+    const cur = current;
+    try {
+      if (cur && !allHandedIn(cur.quest, cur.progress)) {
+        const rec = await data!.qs.saveRecord({ ...cur, progress: { ...cur.progress, replacedAt: Date.now() } }, cur.progress);
+        const x = dataRef.current!;
+        put({ ...x, records: x.records.map((y) => (y.quest.id === rec.quest.id ? rec : y)) });
+      } else if (cur && !currentDone) await gradeRecord(cur);
+    } catch (e) {
+      return setLeftovers(`No new quest yet: today's couldn't be ${cur && allHandedIn(cur.quest, cur.progress) ? "graded" : "set aside"} first (${message(e)}). Ask again in a moment.`);
+    }
+    autoBuilt.current = true;
+    void build(c.minutes, c.courseId);
+  };
+
   // Testing tools live in the sidebar's menu and arrive here as commands.
   const doneCommand = useRef<number | null>(null);
   useEffect(() => {
     if (!command || !data || doneCommand.current === command.id) return;
     doneCommand.current = command.id;
-    if (command.kind === "build" && !(building && !buildError)) void build();
+    if (command.kind === "build" && !(building && !buildError)) void requested(command);
     if (command.kind === "restart" && data.semester.source === "sample") void restartSample();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [command, data]);
@@ -495,8 +521,8 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
         />
       ) : current && currentDone && !building ? (
         <section className="quest-empty">
-          <h2>Today's quest is done</h2>
-          <p className="quest-muted">It's in the archive below{review?.record === current ? ", and the mistake review above goes through what went wrong" : ""}. Tomorrow's quest builds on today's results.</p>
+          <h2>{current.progress.dismissed?.length === current.quest.parts.length ? "Today's quest is dismissed" : "Today's quest is done"}</h2>
+          <p className="quest-muted">It's in the archive below{review?.record === current ? ", and the mistake review above goes through what went wrong" : ""}. Tomorrow's quest builds on today's results. Want to study more? Ask StudyDesk for one more quest.</p>
           <ComingUp semester={data.semester} today={today} />
         </section>
       ) : building ? (
@@ -567,7 +593,7 @@ export function QuestPage({ onStartSetup, command }: { onStartSetup: () => void;
                       </span>
                       <span className="ov-title">{r.quest.reason}</span>
                     </span>
-                    <span className="ov-status">{graded ? `${pts}/${max}` : "Not finished"}</span>
+                    <span className="ov-status">{r.progress.dismissed?.length === r.quest.parts.length ? "Dismissed" : graded ? `${pts}/${max}` : "Not finished"}</span>
                     <svg className="ov-chev" viewBox="0 0 16 16" aria-hidden="true">
                       <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
@@ -947,6 +973,19 @@ ${b?.text ?? ""}
     setTimeout(() => void flush(), 0);
   };
 
+  // Dismissing goes through StudyDesk, which acts on the reason (design/orchestrator.md, "Dismissing a quest").
+  const dismissable = quest.date === toDay() && !quest.parts.some((p) => p.kind !== "learn" && p.check);
+  const askDismiss = (what: string) => window.dispatchEvent(new CustomEvent("studydesk:ask", { detail: { quote: `Dismiss: ${what}` } }));
+  // Parts dismissed through StudyDesk arrive as the saved record.
+  useEffect(() => {
+    const onChanged = (e: Event) => {
+      const r = (e as CustomEvent<QuestRecord | undefined>).detail;
+      if (r?.quest.id === quest.id) adopt(base.current, r.progress);
+    };
+    window.addEventListener(QUEST_CHANGED, onChanged);
+    return () => window.removeEventListener(QUEST_CHANGED, onChanged);
+  }, [quest.id, adopt]);
+
   // ---- rendering ----
   const nl = nowLocal();
   const spentSeconds = [...Object.values(progress.work).map((w) => w.activeSeconds || 0), ...Object.values(progress.read ?? {})].reduce((s, x) => s + x, 0);
@@ -963,6 +1002,7 @@ ${b?.text ?? ""}
     return took > 0 ? ` · ${took} of ${planned} min` : ` · ${planned} min planned`;
   };
   const status = (part: QuestPart): { mark: string; cls: string; text: string } => {
+    if (progress.dismissed?.includes(part.id)) return { mark: "–", cls: "done", text: "Dismissed" };
     if (!progress.handedIn.includes(part.id)) {
       const took = tookMin(part);
       return { mark: "", cls: "todo", text: took > 0 ? `${took} of ${partMinutes(part)} min` : `${partMinutes(part)} min` };
@@ -1112,7 +1152,9 @@ ${b?.text ?? ""}
         )}
         {rater(part)}
         <div className="part-actions">
-          {isIn ? (
+          {progress.dismissed?.includes(part.id) ? (
+            <span className="quest-muted">Dismissed. It isn't graded and earns nothing.</span>
+          ) : isIn ? (
             !graded && (
               <>
                 <span className="quest-muted">Handed in. It's graded with the rest of today's quest.</span>
@@ -1123,6 +1165,11 @@ ${b?.text ?? ""}
             )
           ) : (
             <>
+              {dismissable && (
+                <button type="button" className="link-btn" onClick={() => askDismiss(`Part ${quest.parts.indexOf(part) + 1} · ${kindLabel(part)}: ${part.title}`)}>
+                  Dismiss this part
+                </button>
+              )}
               {empty > 0 && (
                 <span className="quest-muted">
                   {empty} {empty === 1 ? "problem has" : "problems have"} no answer yet.
@@ -1160,6 +1207,11 @@ ${b?.text ?? ""}
               More about this quest
             </button>
           ))}
+        {dismissable && !everythingIn && (
+          <button type="button" className="link-btn" onClick={() => askDismiss(`today's quest (${course?.name}: ${quest.reason})`)}>
+            Dismiss quest
+          </button>
+        )}
         {deck && (
           <button type="button" className="mini-btn" onClick={() => void offerDownload(`${course?.short || course?.name || "StudyDesk"} ${quest.date}.txt`, deck.text)}>
             Export deck ({deck.count} cards)
@@ -1214,7 +1266,9 @@ ${b?.text ?? ""}
                 ? data.nightly
                   ? `${waiting} ${waiting === 1 ? "problem is" : "problems are"} waiting. Grading runs on its own tonight at 22:00, or press the button to grade now.`
                   : `${waiting} ${waiting === 1 ? "problem is" : "problems are"} waiting. Press the button when you're done; anything left is graded the next time you open StudyDesk.`
-                : "Open a part, work through it, and hand it in. Grading happens once, for the whole quest."}
+                : everythingIn
+                  ? "Nothing left to grade."
+                  : "Open a part, work through it, and hand it in. Grading happens once, for the whole quest."}
           </span>
           {errors.grade && <p className="quest-error">{errors.grade}</p>}
         </div>

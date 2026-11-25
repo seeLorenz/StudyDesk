@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { planQuest, type PlanInput, doneTasks, recentBlockers, formatDue, busyMinutes } from "../src/quests/plan";
 import { parseCards, parseSections, writeQuest, QuestIncomplete, claudeWriter, type Ask } from "../src/quests/write";
-import { handIn, lockedParts, gateFailed, emptyProgress, isFinished, ungraded } from "../src/quests/handin";
+import { handIn, lockedParts, gateFailed, emptyProgress, isFinished, ungraded, allHandedIn, dismissParts } from "../src/quests/handin";
 import { sampleSemester, sampleWriter, sampleGradingAsk, SAMPLE_SKILLS } from "../src/quests/seed";
 import { addDays } from "../src/mastery/days";
 import type { Attempt } from "../src/mastery/types";
@@ -412,5 +412,25 @@ describe("realistic part times", () => {
     const r = readingOf([{ quest: q, progress }]);
     expect(r.rate).toBe(25); // 20 per minute, kept at the lower bound; the 10-second read doesn't count
     expect(r.minutesByDay.get(TUE)).toBeCloseTo((60 * (size / 20) + 10) / 60);
+  });
+});
+
+describe("dismissing parts", () => {
+  it("counts dismissed parts as done but never grades them; handed-in parts still are", () => {
+    const q = plan();
+    const [first, second, ...rest] = q.parts;
+    const p0 = { ...emptyProgress(q.id), handedIn: [first.id] };
+    const p1 = dismissParts(q, p0, [second.id]);
+    expect(p1.dismissed).toEqual([second.id]);
+    expect(allHandedIn(q, p1)).toBe(false);
+    const p2 = dismissParts(q, p1); // the whole rest of the quest
+    expect(p2.dismissed).toEqual([second.id, ...rest.map((p) => p.id)]);
+    expect(allHandedIn(q, p2)).toBe(true);
+    expect(new Set(ungraded(q, p2).map((x) => x.part.id))).toEqual(new Set([first.id]));
+    expect(dismissParts(q, p2)).toBe(p2); // nothing left to dismiss
+    // Dismissed whole, with nothing handed in: finished, nothing to grade, no summary.
+    const all = dismissParts(q, emptyProgress(q.id));
+    expect(isFinished(q, all)).toBe(true);
+    expect(all.finishedAt).toBeNull();
   });
 });

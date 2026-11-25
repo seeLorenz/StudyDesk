@@ -562,6 +562,10 @@ export function App() {
           go("setup");
           setOrchOpen(false);
         }}
+        onNewQuest={(o) => {
+          setTodayLoaded(true);
+          setCommand({ id: Date.now(), kind: "build", ...o });
+        }}
       />
     </div>
   );

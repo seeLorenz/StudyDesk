@@ -22,14 +22,14 @@ function merge3(b: unknown, m: unknown, t: unknown, depth: number): unknown {
   return out;
 }
 
-// Lists merged by member: hand-ins and cleared gates as sets, notes by id.
+// Lists merged by member: hand-ins, dismissed parts and cleared gates as sets, notes by id.
 const asSet = (xs?: string[]) => Object.fromEntries((xs ?? []).map((x) => [x, true]));
-const keyed = (p: QuestProgress) => ({ ...p, handedIn: asSet(p.handedIn), gatesCleared: asSet(p.gatesCleared), notes: Object.fromEntries((p.notes ?? []).map((n) => [n.id, n])) });
+const keyed = (p: QuestProgress) => ({ ...p, handedIn: asSet(p.handedIn), dismissed: asSet(p.dismissed), gatesCleared: asSet(p.gatesCleared), notes: Object.fromEntries((p.notes ?? []).map((n) => [n.id, n])) });
 
 /** `mine` (built on `base`) merged onto `theirs`, the newer stored copy. Returns `theirs` itself when mine changed nothing. */
 export function mergeProgress(base: QuestProgress, mine: QuestProgress, theirs: QuestProgress): QuestProgress {
   if (same(mine, base)) return theirs;
   // Levels: progress → work → one problem's fields.
   const r = merge3(keyed(base), keyed(mine), keyed(theirs), 3) as ReturnType<typeof keyed>;
-  return { ...r, handedIn: Object.keys(r.handedIn), gatesCleared: Object.keys(r.gatesCleared), notes: Object.values(r.notes) };
+  return { ...r, handedIn: Object.keys(r.handedIn), dismissed: Object.keys(r.dismissed), gatesCleared: Object.keys(r.gatesCleared), notes: Object.values(r.notes) };
 }

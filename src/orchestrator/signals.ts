@@ -53,7 +53,7 @@ export function speed(records: QuestRecord[], today: Day, n = ORCH_CONFIG.slowQu
       let planned = 0;
       let actual = 0;
       for (const part of r.quest.parts) {
-        if (part.kind === "learn" || !r.progress.handedIn.includes(part.id)) continue;
+        if (part.kind === "learn" || !r.progress.handedIn.includes(part.id) || r.progress.dismissed?.includes(part.id)) continue;
         for (const p of (part as ProblemPart).problems) {
           const w = r.progress.work[p.id];
           if (!w || w.activeSeconds <= 0) continue;
