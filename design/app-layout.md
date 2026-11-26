@@ -38,7 +38,7 @@ Keep it uncluttered: one line of facts per card, no extra badges.
 
 Organize shows two kinds of signal:
 
-- **A red number:** StudyDesk needs something from you. Setting up the semester, a question waiting for an answer (`needs_answer`), a change waiting for your yes.
+- **A red number:** StudyDesk needs something from you. Setting up the semester, a question waiting for an answer (`needs_answer`), a change waiting for your yes, the one-time "Turn on the nightly run" step until the first night has run (design/scheduled-runs.md).
 - **A small dot:** a new note from StudyDesk worth reading, with nothing to do (check-ins, the nightly run's summary, remarks passed on by the tutor).
 
 Learning things (mistake review, feedback on answers) stay on Today and never go on the badge.

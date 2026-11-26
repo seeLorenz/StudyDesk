@@ -16,6 +16,7 @@
 import type { ScheduleInfo } from "../routine/nightly";
 import { callRemote, findId, type HandoffSetup } from "./handoff";
 import { BUILD_SHA, RELEASE_REPO } from "../updates/version";
+import type { TodoItem } from "../onboarding/todo";
 
 export const NIGHTLY_TIME = "22:00";
 export const PROGRAM_PATH = "routine.mjs";
@@ -87,3 +88,19 @@ export async function createSchedule(setup: HandoffSetup, timeZone: string, time
 export async function runScheduleNow(s: ScheduleInfo): Promise<void> {
   await callRemote("fire_trigger", { trigger_id: s.triggerId });
 }
+
+const repoSteps = `StudyDesk grades your day and writes tomorrow's quest every night, but its scheduled task can't start until it has the StudyDesk code. One minute, once:
+
+1. Open [claude.ai/code/routines](https://claude.ai/code/routines) and click **StudyDesk nightly run**.
+2. In the menu next to its name, choose **Edit**.
+3. Under **Advanced settings**, pick **${RELEASE_REPO}** as its repository.
+4. Click **Save changes**.`;
+
+/** The one step only the student can do (creating a task takes no repository); on To do until a night has run. */
+export const repoTodo: TodoItem = {
+  key: "repo",
+  title: "Turn on the nightly run",
+  body: `${repoSteps}\n\nThis clears itself after the first night that runs.`,
+  chatPrompt: `Next on your list: turning on the nightly run. ${repoSteps}\n\nTell me if your screen looks different.`,
+  done: false,
+};
