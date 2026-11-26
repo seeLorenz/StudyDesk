@@ -32,7 +32,7 @@ export async function syncStudyEntries(qs: QuestStore, today: Day): Promise<void
       notes: orch.memory.text,
       after: now,
     });
-    plan = calendarWant(today, rec.quest.id, studyEntries({ day: today, times, courseName, reason: rec.quest.reason, timeZone: studentTimeZone(), url: profile?.handoff?.artifactUrl ?? null }));
+    plan = calendarWant(today, rec.quest.id, studyEntries({ day: today, times, courseName, quest: rec.quest, done: rec.progress.handedIn, timeZone: studentTimeZone(), url: profile?.handoff?.artifactUrl ?? null }));
   } else if (step && step !== "pick") plan = step;
   if (plan !== want) await qs.saveWant(plan!);
   const next = await applyWant(plan, written, today, { create: createEntry, remove: deleteEntries });

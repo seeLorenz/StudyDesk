@@ -162,6 +162,8 @@ export type ProblemPart = {
   cards?: Card[];
   /** Placement check: answers count as "check" attempts, and a solve masters the skill at once. */
   check?: boolean;
+  /** Explain it: the student explains a skill coming back in their own words, and grading names the gaps. */
+  explain?: boolean;
 };
 
 export type QuestPart = LearnPart | ProblemPart;

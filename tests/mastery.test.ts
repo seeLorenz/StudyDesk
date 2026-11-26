@@ -187,6 +187,14 @@ describe("streak rules", () => {
     expect(r.points.map((p) => [p.kind, p.points])).toEqual([["fundamental_cleared", 10]]);
   });
 
+  it("an explanation shows gaps but never proves a solve", () => {
+    const good = replay([s], [att(1), att(2, { part: "explain" })], []);
+    expect(good.states.get("chain")!.streak).toBe(1);
+    expect(good.points.map((p) => p.kind)).toEqual(["solved", "solved"]);
+    expect(replay([s], [att(1), att(2, { part: "explain", verdict: "not_understood" })], []).states.get("chain")!.streak).toBe(0);
+    expect(slownessFactor([s], [att(1, { part: "explain", activeSeconds: 60 * 60 })])).toBe(2);
+  });
+
   it("real exam results are evidence only", () => {
     const evidence = assessmentAttempts(
       { assessmentId: "ex1", courseId: "ana", component: "exam", points: 45, maxPoints: 50, date: D(5), skillIds: ["chain"] },

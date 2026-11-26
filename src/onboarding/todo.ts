@@ -107,6 +107,13 @@ export function setupTodo(draft: SemesterDraft, today: Day = toDay()): TodoItem[
       chatPrompt: "Next on your list: do you use Anki? If you do, quests that teach vocabulary or other things to learn by heart come with a deck you can import. You can change this any time.",
       done: draft.questSettings?.anki !== undefined || done.has("anki"),
     },
+    {
+      key: "place",
+      title: "Where do you study?",
+      body: "Your study times in the calendar then say where to go and what to open, like \"18:00, library: open part 1\". Deciding that ahead takes the decision away from your mood.",
+      chatPrompt: "Next on your list: where do you usually study? A library, home, a café, maybe different places on different days. Your study times in the calendar will then say where to go and which part to open first.",
+      done: done.has("place"),
+    },
   ];
   const results = draft.courses.filter((c) => draft.results[c.id]);
 
@@ -140,7 +147,7 @@ export function setupTodo(draft: SemesterDraft, today: Day = toDay()): TodoItem[
 
   // Disagreements and questions, a few a day, nearest exam first. Exam dates
   // aren't listed: the Orchestrator checks each one in the two weeks before it.
-  let left = ASKS_PER_DAY - Object.entries(draft.todoDoneOn ?? {}).filter(([k, d]) => k !== "anki" && d === today && done.has(k)).length;
+  let left = ASKS_PER_DAY - Object.entries(draft.todoDoneOn ?? {}).filter(([k, d]) => k !== "anki" && k !== "place" && d === today && done.has(k)).length;
   const groups = new Map<string, string[]>();
   for (const x of asksOf(draft, today)) if (done.has(x.key) || done.has(x.sub) || left-- > 0) groups.set(x.key, [...(groups.get(x.key) ?? []), x.text]);
 

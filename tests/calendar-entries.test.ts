@@ -6,7 +6,7 @@ import { toEvents } from "../src/platform/calendar";
 import { calendarTaskNotice } from "../src/orchestrator/signals";
 
 const want = (times: { start: string; end: string }[], day = "2026-11-24", questId = "q1") =>
-  calendarWant(day, questId, studyEntries({ day, times, courseName: "Analysis", reason: "Exam on Friday.", timeZone: "Europe/Vienna", url: null }));
+  calendarWant(day, questId, studyEntries({ day, times, courseName: "Analysis", quest: { reason: "Exam on Friday.", parts: [] } as never, timeZone: "Europe/Vienna", url: null }));
 const rec = (id: string, handedIn: string[] = [], date = "2026-11-24") =>
   ({ quest: { id, date, parts: [{ id: "p1" }, { id: "p2" }] }, progress: { handedIn } }) as unknown as QuestRecord;
 
@@ -93,8 +93,30 @@ describe("never on top of a lecture (24 Nov: a block sat on the Physik VU)", () 
   });
 
   it("keeps the entry's note short", () => {
-    const [e] = studyEntries({ day: "2026-11-24", times: [{ start: "13:00", end: "14:00" }], courseName: "Math", reason: "Sheet 7 is due tomorrow 11:00. Beispiel 7.1 and 7.2 need a lot.", timeZone: "Europe/Vienna", url: null });
+    const [e] = studyEntries({ day: "2026-11-24", times: [{ start: "13:00", end: "14:00" }], courseName: "Math", quest: { reason: "Sheet 7 is due tomorrow 11:00. Beispiel 7.1 and 7.2 need a lot.", parts: [] } as never, timeZone: "Europe/Vienna", url: null });
     expect(e.description).toBe("[StudyDesk] Sheet 7 is due tomorrow 11:00.");
+  });
+
+  it("makes each entry an if-then plan: time, place and the part to open first", () => {
+    const quest = {
+      reason: "Exam on Friday.",
+      parts: [
+        { id: "a", kind: "learn", title: "Series", estMinutes: 20 },
+        { id: "b", kind: "lesson", title: "Ratio test", readMinutes: 5, problems: [{ expMinutes: 25 }] },
+        { id: "c", kind: "assignment", title: "Sheet 4", problems: [{ expMinutes: 30 }] },
+      ],
+    } as never;
+    const times = parseTimes("16:00-16:50 library\n18:00-18:45");
+    expect(times).toEqual([{ start: "16:00", end: "16:50", place: "library" }, { start: "18:00", end: "18:45" }]);
+    const [a, b] = studyEntries({ day: "2026-11-24", times, courseName: "Math", quest, timeZone: "Europe/Vienna", url: null });
+    expect(a.description).toBe('[StudyDesk] 16:00, library: open part 1, "Series". Exam on Friday.');
+    expect(a.location).toBe("library");
+    expect(a.title).toBe("Study · Math · part 1");
+    expect(b.description).toBe('[StudyDesk] 18:00: open part 3, "Sheet 4". Exam on Friday.');
+    expect(b.location).toBeUndefined();
+    const [later] = studyEntries({ day: "2026-11-24", times: [times[1]], courseName: "Math", quest, done: ["a"], timeZone: "Europe/Vienna", url: null });
+    expect(later.description).toContain('open part 2, "Ratio test"');
+    expect(calendarWant("2026-11-24", "q", [a]).instructions).toContain('"location":"library"');
   });
 });
 

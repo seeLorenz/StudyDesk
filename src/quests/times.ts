@@ -12,6 +12,7 @@
 import { ENTRY_MARK, type StudyEntry } from "../platform/calendar";
 import type { Turn } from "../platform/claude";
 import type { Day } from "../mastery/types";
+import { partMinutes } from "./config";
 import { allHandedIn } from "./handin";
 import type { Quest, QuestRecord, TimetableEntry } from "./types";
 import type { Ask } from "./write";
@@ -40,7 +41,7 @@ What the student has told StudyDesk about themselves:
 ${o.notes.trim() || "(nothing yet)"}
 
 Rules: only free time; leave about 15 min between a commitment and study; one to three blocks, none shorter than 25 min, adding up to about the quest's time; follow anything the student said about when or where they like to study; otherwise prefer daytime and the gaps between commitments, and nothing after 22:00.
-Reply with only the blocks, one per line, as HH:MM-HH:MM, or "none" if there's no good time left.`,
+Reply with only the blocks, one per line, as HH:MM-HH:MM, each followed by where the student will study then if they've said where they study (for example "16:00-17:00 library"; a commitment just before it can decide which of their places), or "none" if there's no good time left.`,
     },
   ];
 }
@@ -48,14 +49,21 @@ Reply with only the blocks, one per line, as HH:MM-HH:MM, or "none" if there's n
 const hm = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
 const pad = (n: number) => String(n).padStart(2, "0");
 
-/** Pure: the blocks in a reply, sorted, valid and not overlapping (at most three). */
-export function parseTimes(reply: string): { start: string; end: string }[] {
-  const out: { start: string; end: string }[] = [];
-  for (const m of reply.matchAll(/(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})/g)) {
-    const [h1, m1, h2, m2] = m.slice(1).map(Number);
-    if (h1 > 23 || h2 > 23 || m1 > 59 || m2 > 59) continue;
-    const t = { start: `${pad(h1)}:${pad(m1)}`, end: `${pad(h2)}:${pad(m2)}` };
-    if (hm(t.end) > hm(t.start)) out.push(t);
+export type Block = { start: string; end: string; place?: string };
+
+/** Pure: the blocks in a reply, sorted, valid and not overlapping (at most three), each with its place if named. */
+export function parseTimes(reply: string): Block[] {
+  const out: Block[] = [];
+  for (const line of reply.split("\n")) {
+    const ms = [...line.matchAll(/(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})/g)];
+    for (const m of ms) {
+      const [h1, m1, h2, m2] = m.slice(1).map(Number);
+      if (h1 > 23 || h2 > 23 || m1 > 59 || m2 > 59) continue;
+      // A place only on a line with one block: "16:00-17:00 library".
+      const place = ms.length === 1 ? line.slice(m.index! + m[0].length).replace(/^[\s:,|–-]+/, "").trim().slice(0, 60) : "";
+      const t = { start: `${pad(h1)}:${pad(m1)}`, end: `${pad(h2)}:${pad(m2)}`, ...(place && { place }) };
+      if (hm(t.end) > hm(t.start)) out.push(t);
+    }
   }
   out.sort((a, b) => hm(a.start) - hm(b.start));
   return out.filter((t, i) => i === 0 || hm(t.start) >= hm(out[i - 1].end)).slice(0, 3);
@@ -75,28 +83,41 @@ export function busyLines(events: string[], timetable: TimetableEntry[], weekday
  * something fixed or starts before `after`: Claude chooses, code checks. An
  * unusable reply gives none (the quest is fine without them).
  */
-export async function pickTimes(ask: Ask, o: Parameters<typeof timesTurns>[0]): Promise<{ start: string; end: string }[]> {
+export async function pickTimes(ask: Ask, o: Parameters<typeof timesTurns>[0]): Promise<Block[]> {
   const busy = o.events.map((l) => /^(\d\d:\d\d)-(\d\d:\d\d)/.exec(l)).filter((m): m is RegExpExecArray => !!m).map((m) => [hm(m[1]), hm(m[2])]);
   return parseTimes(await ask(timesTurns(o), { tier: "default" })).filter(
     (t) => (!o.after || t.start >= o.after) && !busy.some(([s, e]) => hm(t.start) < e && hm(t.end) > s),
   );
 }
 
-/** Pure: the calendar entries for the picked times. */
-export function studyEntries(o: { day: Day; times: { start: string; end: string }[]; courseName: string; reason: string; timeZone: string; url: string | null }): StudyEntry[] {
-  return o.times.map((t) => ({
-    day: o.day,
-    ...t,
-    title: `Study · ${o.courseName}`,
-    description: `${ENTRY_MARK} ${short(o.reason)}${o.url ? `\nOpen StudyDesk: ${o.url}` : ""}`,
-    timeZone: o.timeZone,
-  }));
+/**
+ * Pure: the calendar entries for the picked times. Each one is an if-then plan:
+ * its time, its place and the part to open first, the part the quest reaches
+ * after the earlier blocks' minutes (`done`: part ids already handed in).
+ */
+export function studyEntries(o: { day: Day; times: Block[]; courseName: string; quest: Quest; done?: string[]; timeZone: string; url: string | null }): StudyEntry[] {
+  let used = 0;
+  return o.times.map(({ place, ...t }) => {
+    let left = used;
+    const i = o.quest.parts.findIndex((p) => !o.done?.includes(p.id) && (left -= partMinutes(p)) < 0);
+    used += hm(t.end) - hm(t.start);
+    const part = i < 0 ? "" : `open part ${i + 1}, "${o.quest.parts[i].title}"`;
+    const plan = part && `${t.start}${place ? `, ${place}` : ""}: ${part}. `;
+    return {
+      day: o.day,
+      ...t,
+      title: `Study · ${o.courseName}${i < 0 ? "" : ` · part ${i + 1}`}`,
+      description: `${ENTRY_MARK} ${plan}${short(o.quest.reason)}${o.url ? `\nOpen StudyDesk: ${o.url}` : ""}`,
+      ...(place && { location: place }),
+      timeZone: o.timeZone,
+    };
+  });
 }
 
 /** The quest's reason can run long; the entry keeps its first sentence. */
 const short = (t: string) => (/^.{1,200}?[.!?](\s|$)/.exec(t)?.[0] ?? t.slice(0, 200)).trim();
 
-const sig = (e: StudyEntry) => `${e.day} ${e.start}-${e.end} ${e.title}`;
+const sig = (e: StudyEntry) => `${e.day} ${e.start}-${e.end} ${e.title}${e.location ? ` @ ${e.location}` : ""}`;
 
 /** Pure: the plan to save, with the steps the calendar task follows (kept in the data, so an update can change them). */
 export function calendarWant(day: Day, questId: string, entries: StudyEntry[]): CalendarWant {
@@ -105,6 +126,7 @@ export function calendarWant(day: Day, questId: string, entries: StudyEntry[]): 
   const events = entries.map((e) => ({
     summary: e.title,
     description: e.description,
+    ...(e.location && { location: e.location }),
     startTime: `${e.day}T${e.start}:00`,
     endTime: `${e.day}T${e.end}:00`,
     timeZone: e.timeZone,

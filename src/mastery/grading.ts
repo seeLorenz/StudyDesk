@@ -53,7 +53,9 @@ export function gradingTurns(problems: GradingProblem[]): Turn[] {
         : "Fundamentals it depends on: none listed",
       `Max points: ${p.maxPoints}`,
       `Hints used: ${p.hintsUsed}${p.sawWorkedExample ? ", and the student saw a fully solved similar problem" : ""}`,
-      p.homeworkNotHandedIn
+      p.part === "explain"
+        ? 'The student explained this skill in their own words, as if teaching it. "solved" when the core idea and why it works are right, even if informal; "not_understood" only for a wrong or missing core idea; never "slip". In feedback, list each gap or vague spot against the rubric, one short point each.'
+        : p.homeworkNotHandedIn
         ? "This is real homework that hasn't been handed in to school yet: in feedback, name the first wrong step and the principle, and do NOT give the full answer."
         : "Practice problem: feedback may show the correct result.",
       `Problem:\n"""\n${p.prompt}\n"""`,

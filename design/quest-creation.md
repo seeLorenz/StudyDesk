@@ -209,6 +209,14 @@ Code: `src/quests/reading.ts` (size, rate, reading minutes per day), `QUEST_CONF
 - **Focus:** a saved `focus` (course + end date) on the semester. `pickCourse` returns it while it runs (a course the student asks for still wins), and the quest notes list other courses' homework and exams in the planner's windows.
 - **Dismissed parts:** `progress.dismissed` (part ids), also added to `handedIn` so the quest finishes and calendar entries go. `ungraded` and the speed signal skip them, so they're never graded and earn nothing; the finishing bonus counts them as unsolved.
 
+## Explain it (2026-11-25)
+
+Explaining a topic simply, as if teaching it, shows the gaps at once (the Feynman technique). So a quest with skills coming back opens with one **Explain it** part: the first of those skills (lapsed ones first), explained in the student's own words: the idea, why it works, when to use it, a typical trap. About 6 minutes (`QUEST_CONFIG.explainMinutes`), and only if it fits the budget. Then the warm-up asks a fresh problem on the same skill.
+
+- **Graded like other answers.** The writer's answer key is the list of points a full explanation covers. The grading agent says "solved" when the core idea and why it works are right, even if informal, and "not understood" only for a wrong or missing core idea. Its feedback lists each gap or vague spot as a short point.
+- **What it counts for** (`part: "explain"` attempts, [grading-and-mastery.md](grading-and-mastery.md)): a good explanation earns solve points but no streak credit, because explaining isn't solving. A gap counts as a miss, like a wrong answer, and goes into the mistake review, so only a fresh problem solved without help clears it. Its time is kept out of the skill's time estimates.
+- *Rejected:* a new part kind with its own screen. It's a practice part with `explain: true`, so the answer box, hand-in and grading stay the same. Also rejected: an explanation after a brand-new lesson. Lessons already ask for the key rule in the student's own words, and explaining a skill from memory days later is retrieval practice.
+
 ## Notes for other modules
 
 - **Grading run at 22:00:** built as part of the nightly run ([scheduled-runs.md](scheduled-runs.md)), with the same `handIn` code. Still open: the grading results opening as their own window, with the mistake review in it.

@@ -243,7 +243,7 @@ describe("check-ins", () => {
     const records = [record("2026-11-17", 10, 14), record("2026-11-18", 10, 14), record("2026-11-19", 10, 14)];
     const input = { semester, draft: d.draft, attempts: [], reviews: [], records, jobs: [], sent: [], today: TODAY };
     const t = checkinTriggers(input);
-    expect(t.map((x) => x.kind).sort()).toEqual(["check_date", "needs_answer", "needs_answer", "too_slow"]);
+    expect(t.map((x) => x.kind).sort()).toEqual(["check_date", "needs_answer", "needs_answer", "needs_answer", "too_slow"]);
     const sent = t.map((x) => ({ key: x.key, kind: x.kind, day: TODAY, at: 0, courseId: x.courseId, facts: x.facts, messageId: null, seenAt: null }));
     expect(checkinTriggers({ ...input, sent })).toEqual([]);
     // Too slow comes back after a few days, not the next day.

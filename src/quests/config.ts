@@ -10,6 +10,7 @@ export const QUEST_CONFIG: {
   maxNewSkills: number;
   newBeforeExams: number;
   practiceMaxPoints: number;
+  explainMinutes: number;
   hints: number;
   restDayMinutes: number;
   anki: { baseMinutes: number; perCard: number; cardsPerTest: number };
@@ -40,6 +41,8 @@ export const QUEST_CONFIG: {
   newBeforeExams: 0,
   /** Practice problems are worth this many grading points each. */
   practiceMaxPoints: 2,
+  /** Minutes for an "Explain it" part: one skill coming back, explained in the student's own words. */
+  explainMinutes: 6,
   /** Hints per assignment task before the solved similar problem is offered. */
   hints: 3,
   /** Minutes used when the student asks for a quest on a day their goal leaves no time. */

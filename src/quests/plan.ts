@@ -164,6 +164,7 @@ export function planQuest(input: PlanInput): PlanResult {
   const tasks: Array<{ assignment: Assignment; task: AssignmentTask }> = [];
   const reviewIds: string[] = [];
   const newIds: string[] = [];
+  let explainId: string | null = null;
   const planned = new Set<string>();
   const leftOut: string[] = [];
   const empty = () => !gate.length && !tasks.length && !reviewIds.length && !newIds.length;
@@ -176,6 +177,7 @@ export function planQuest(input: PlanInput): PlanResult {
     for (const id of [...concepts, ...taskLearn, ...newIds]) m += (cards(id) ? 0 : QUEST_CONFIG.lesson.readMinutes) + lessonMin(byId.get(id)!);
     for (const id of [...gate, ...reviewIds]) m += expMin(byId.get(id)!);
     for (const t of tasks) m += expMin(byId.get(t.task.skillId)!);
+    if (explainId) m += QUEST_CONFIG.explainMinutes;
     return m + ankiMinutes([...concepts, ...taskLearn, ...newIds, ...gate, ...reviewIds].reduce((n, id) => n + cards(id), 0));
   };
   /** Adds a group if it fits (or if `force`); rolls it back otherwise. */
@@ -251,6 +253,9 @@ export function planQuest(input: PlanInput): PlanResult {
     if (!ok) leftOut.push(`review: ${byId.get(id)!.name}`);
   }
 
+  // Explain it: the first skill coming back is explained in the student's own words before it's solved.
+  if (reviewIds.length) tryAdd(() => (explainId = reviewIds[0]), () => (explainId = null));
+
   // 4. Skills the student hasn't started, those on the nearest exam first.
   const examRank = (s: Skill) => {
     const e = semester.keyDates.filter((x) => x.date >= today && x.skillIds.includes(s.id)).sort((a, b) => (a.date < b.date ? -1 : 1))[0];
@@ -322,6 +327,7 @@ export function planQuest(input: PlanInput): PlanResult {
 
   const parts: Quest["parts"] = [];
   // Short cycles, one idea at a time, the real homework last.
+  if (explainId) parts.push({ ...practice([explainId], byId.get(explainId)!.name, false), explain: true, problems: [{ ...practiceProblem(explainId), expMinutes: QUEST_CONFIG.explainMinutes }] });
   if (reviewIds.length) parts.push(practice(reviewIds, "Warm-up: skills coming back today", false));
   if (gate.length) parts.push(practice(gate, "Quick check: the basics the next steps use", true));
   for (const id of [...concepts, ...taskLearn, ...newIds]) parts.push(lesson(id));

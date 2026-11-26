@@ -390,7 +390,7 @@ describe("setup to-do list", () => {
     expect(items[1].chatPrompt).toContain("1. When is the exam?");
   });
   it("asks for materials when a course was only estimated", () => {
-    expect(setupTodo(withQuestions([], "general")).map((i) => i.key)).toEqual(["anki", "upload"]);
+    expect(setupTodo(withQuestions([], "general")).map((i) => i.key)).toEqual(["anki", "place", "upload"]);
     expect(asksForFiles("Could you share the current UE sheets?")).toBe(true);
     expect(asksForFiles("When is the exam?")).toBe(false);
   });
@@ -398,7 +398,7 @@ describe("setup to-do list", () => {
     const d = { ...withQuestions(["When is the exam?", "How is it graded?", "Is a calculator allowed?"]), setupStep: "done" as const };
     d.results.c1.conflicts = ["file says 5 credits", "file says oral exam"];
     const open = (x: typeof d, day: string) => setupTodo(x, day).flatMap((i) => i.subs ?? []).filter((s) => !s.done);
-    expect(setupTodo(d, TODAY).map((i) => i.key)).toEqual(["anki", "conflicts", "q-c1"]);
+    expect(setupTodo(d, TODAY).map((i) => i.key)).toEqual(["anki", "place", "conflicts", "q-c1"]);
     expect(setupTodo(d, TODAY).find((i) => i.key === "conflicts")!.body).toContain("Your word was used");
     expect(open(d, TODAY)).toHaveLength(ASKS_PER_DAY);
     // what's answered today uses up today's share; tomorrow brings the next ones
